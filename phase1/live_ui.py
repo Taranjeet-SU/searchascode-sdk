@@ -99,13 +99,13 @@ def _render_attempts(r, gold):
                 st.caption("🖥️ sandbox stdout (samples/diagnostics the model saw next hop):")
                 st.code(a["stdout"], language="text")
         if a.get("samples"):
-            with st.expander("retrieved samples fed to the judge / next hop"):
-                st.code(a["samples"], language="text")
+            st.caption("retrieved samples fed to the judge / next hop:")
+            st.code(a["samples"], language="text")
         if a.get("steps"):
             st.caption("tool steps: " + " → ".join(a["steps"]))
         if a.get("prompt"):
-            with st.expander("↳ exact prompt sent to OpenAI this hop"):
-                st.code(a["prompt"], language="markdown")
+            st.caption("↳ exact prompt sent to OpenAI this hop:")
+            st.code(a["prompt"], language="markdown")
         st.caption(f"ids: {', '.join(str(x) for x in a.get('ids', [])[:10])}  "
                    f"(recall@10 {_recall(a.get('ids', []), gold)})")
         st.divider()
