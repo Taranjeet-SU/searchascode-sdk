@@ -44,29 +44,29 @@ FINAL ranked list of document ids (best first) to a variable named `evidence`.
 - Keep bulky candidate sets in variables (they stay in the sandbox); return only the final ids.
 
 ## Rules
-- Output ONLY a fenced ```python code block. No prose, no explanation outside the block.
-- Keep it short (a handful of lines). Do NOT import anything; only use `sac`, `query`, and the
-  bare helper functions listed above.
-- A good recipe: WIDEN recall first — run mode="hybrid" and fan out 2-3 query variants with
-  search_many, optionally add rephrase_search, then fuse the ResultSets and take the top 10.
+- FIRST write ONE line beginning `REASONING:` — 1-2 sentences explaining your retrieval strategy
+  (why these reformulations, which search modes, whether you rerank). THEN output exactly one
+  fenced ```python block. Nothing else.
+- Keep the code short. Do NOT import anything; only use `sac`, `query`, and the bare helpers above.
+- Reformulate the query into EXACTLY 4 formulations — the original plus 3 reformulations you write —
+  and fan out over them with search_many(mode="hybrid"); then fuse/dedup and take the top 10.
   Reranking with a cross-encoder is optional and only helps when the reranker matches the domain;
-  prefer fusion of diverse retrievals as the primary recall driver.
+  prefer fusion of the 4 diverse retrievals as the primary recall driver.
 - Always end by assigning `evidence = <ranked list of ~10 document id strings, best first>`.
 - The document ids are opaque strings; never invent ids — only use ids returned by the SDK.
 
-## Example 1 — widen recall with fan-out + fusion (primary recipe)
+## Example — 4 formulations + fusion (primary recipe)
+REASONING: The query is ambiguous, so I fan out over the original plus three rephrasings and RRF-fuse
+them for recall, then dedup and take the top 10.
 ```python
-variants = [query, "in simple terms: " + query]
+variants = [
+    query,
+    "<your reformulation 1>",
+    "<your reformulation 2>",
+    "<your reformulation 3>",
+]
 pool = sac.search_many(variants, top_k=40, mode="hybrid")   # concurrent + RRF fuse
 evidence = pool.dedup().top(10).ids()
-```
-
-## Example 2 — multi-formulation fan-out + rephrase, fuse, rerank
-```python
-variants = [query, "explain: " + query]
-pool = sac.search_many(variants, top_k=40, mode="hybrid")
-pool = sac.fuse([pool, sac.rephrase_search(query, top_k=40, mode="dense")])
-evidence = sac.rerank(query, sac.hydrate(pool), top_k=10).ids()
 ```
 
 ## Filtering and analysis (when metadata is present)
@@ -83,17 +83,48 @@ evidence = sac.rerank(query, sac.hydrate(pool), top_k=10).ids()
 - Remember: the candidate ResultSets stay in the sandbox; returning them is free, but only `evidence` is read.
 
 ## Output contract (strict)
-Return exactly one ```python block. The last statement must bind `evidence` to a Python list of
-document-id strings, ordered best-first, length ~10. Nothing else is read from your program.
+Return a single `REASONING:` line, then exactly one ```python block whose last statement binds
+`evidence` to a list of ~10 best-first document-id strings. Use exactly 4 query formulations.
 """
 
+# Sent on a retry hop after the judge rejects. Prior sandbox variables PERSIST across hops
+# (code-execution-with-MCP / search-as-code pattern: bulky state stays in the sandbox, only
+# compact feedback crosses the context boundary), so the model refines instead of restarting.
+SAC_RETRY_TEMPLATE = """The judge REJECTED your previous result.
+Judge feedback: {feedback}
+
+Your previous program is below. Its variables are STILL LIVE in the sandbox — reuse them by name
+(or via sac.recall) instead of re-running identical searches; that is how you carry context across
+hops cheaply.
+```python
+{code}
+```
+
+Write an improved program (same REASONING: line + one ```python block, ending with `evidence`).
+Try different formulations or modes (keyword/regex), fuse with the prior pools you already built,
+rerank, or filter — build on what you have."""
+
 # Tool-calling baseline: the same capabilities exposed as discrete tools (MCP-style).
-TOOLCALL_SYSTEM = """You are a retrieval agent. Find the document ids most relevant \
-to the user's query by calling the available search tools. Intermediate results are \
-returned to you. When confident, call `finish` with the final ranked list of ~10 \
-document ids (best first). Be efficient with tool calls."""
+TOOLCALL_SYSTEM = """You are a retrieval agent. Find the document ids most relevant to the user's \
+query by calling the search tools; intermediate results are returned to you. Briefly explain your \
+reasoning in text as you go (it is recorded). Workflow: call `expand` ONCE to reformulate the query \
+into 4 formulations, `search` each of the 4 formulations, then call `finish` with the final ranked \
+list of ~10 document ids (best first)."""
+
+TOOLCALL_RETRY_TEMPLATE = """The judge REJECTED that result. Feedback: {feedback}
+Refine your approach (different formulations or search modes) and call `finish` again with a better \
+ranked list."""
 
 TOOLCALL_TOOLS = [
+    {
+        "type": "function",
+        "function": {
+            "name": "expand",
+            "description": "Reformulate the query into 4 diverse formulations (the original plus 3 "
+                           "rephrasings). Returns a list of query strings.",
+            "parameters": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]},
+        },
+    },
     {
         "type": "function",
         "function": {
@@ -113,14 +144,6 @@ TOOLCALL_TOOLS = [
     {
         "type": "function",
         "function": {
-            "name": "rephrase",
-            "description": "Rewrite the query into a clearer, retrieval-optimized form.",
-            "parameters": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]},
-        },
-    },
-    {
-        "type": "function",
-        "function": {
             "name": "finish",
             "description": "Submit the final ranked list of document ids.",
             "parameters": {
@@ -131,3 +154,11 @@ TOOLCALL_TOOLS = [
         },
     },
 ]
+
+# LLM-as-judge: gates the final result; on FAIL the path retries (max 3 hops).
+JUDGE_SYSTEM = """You are a strict but fair relevance judge for a retrieval system. Given a user \
+query and the top retrieved results (id + snippet), decide whether the result set is GOOD ENOUGH to \
+answer the query. Pass if several results are clearly on-topic; fail if they are mostly irrelevant, \
+empty, or miss the obvious intent. Reply on exactly two lines:
+VERDICT: PASS or FAIL
+FEEDBACK: <one sentence; if FAIL, say what is missing or how to refine the search>"""

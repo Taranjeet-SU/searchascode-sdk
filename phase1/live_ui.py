@@ -2,7 +2,12 @@
 
     streamlit run phase1/live_ui.py --server.port 8501 --server.address 0.0.0.0
 
-Requires: OpenSearch on :9200 with FiQA ingested, and OPENAI_API_KEY (loaded from
+Two tabs:
+- Live query: run base / tool-calling / SAC now; see reasoning, generated code,
+  tool steps, LLM-as-judge verdicts, retry hops, ids, latency, cost.
+- History: click a past search and inspect exactly what happened at each hop.
+
+Requires OpenSearch on :9200 with FiQA ingested, and OPENAI_API_KEY (from
 ~/taxonomy/.env). Models load once (cached) on first query.
 """
 
@@ -12,9 +17,9 @@ import copy
 import json
 import os
 import sys
+import time
+from datetime import datetime
 
-# Streamlit puts phase1/ (the script dir) on sys.path, not the repo root — add it
-# so `from phase1 import ...` resolves when launched via `streamlit run`.
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import streamlit as st
@@ -24,9 +29,12 @@ from phase1 import agents, common
 from phase1.benchmark import _merge_gen_usage
 from phase1.llm import LLM
 
+HISTORY = common.RUNS_DIR / "live_history.jsonl"
+
 st.set_page_config(page_title="Search-as-Code — live traces", layout="wide")
-st.title("🔎 Search-as-Code — live query, 3 modes side by side")
-st.caption("base (hybrid, no LLM) · MCP tool-calling · SAC code-mode — over BEIR FiQA in OpenSearch")
+st.title("🔎 Search-as-Code — live query, 3 modes, judge loop")
+st.caption("base (hybrid, no LLM) · MCP tool-calling · SAC code-mode — over BEIR FiQA in OpenSearch. "
+           "Both LLM paths use 4 query formulations and an LLM-as-judge retry loop (max 3 hops).")
 
 
 @st.cache_resource(show_spinner="Loading embedder + reranker + LLM …")
@@ -53,71 +61,144 @@ def backend():
 
 session, chat, gen, qrels, text2qid, samples = backend()
 
-col_in, col_pick = st.columns([3, 2])
-with col_pick:
-    pick = st.selectbox("…or pick a labeled FiQA query", ["(type your own)"] + samples)
-with col_in:
-    default = "" if pick == "(type your own)" else pick
-    query = st.text_input("Query", value=default, placeholder="e.g. How to deposit a cheque issued to my business?")
 
-run = st.button("▶ Run all 3 modes", type="primary")
+def _recall(ids, gold):
+    return round(len(set(ids[:10]) & gold) / len(gold), 3) if gold else None
 
 
 def _snippets(ids, gold):
-    docs = {d.id: d for d in session.store.get(ids[:10])}
-    for did in ids[:10]:
+    docs = {d.id: d for d in session.store.get(list(ids)[:10])}
+    for did in list(ids)[:10]:
         d = docs.get(did)
-        txt = (d.text[:160] + "…") if d and d.text else ""
+        txt = (d.text[:150] + "…") if d and d.text else ""
         st.markdown(("✅ " if did in gold else "▫️ ") + f"`{did}` {txt}")
 
 
-def _run(fn, **kw):
+def _judge_badge(verdict):
+    return "🟢 PASS" if verdict == "PASS" else "🔴 FAIL"
+
+
+def _render_attempts(r, gold):
+    """Render each judge hop for a path (used in both tabs)."""
+    for a in r.get("attempts", []):
+        st.markdown(f"**Hop {a['hop']} — judge {_judge_badge(a['judge'])}**"
+                    + (f" · _{a['feedback']}_" if a.get("feedback") else ""))
+        if a.get("reasoning"):
+            st.caption("reasoning: " + a["reasoning"])
+        if a.get("code") is not None:
+            st.code(a["code"], language="python")
+            if a.get("stdout"):
+                st.caption("sandbox stdout: " + a["stdout"])
+        if a.get("steps"):
+            st.caption("tool steps: " + " → ".join(a["steps"]))
+        st.caption(f"ids: {', '.join(str(x) for x in a.get('ids', [])[:10])}  "
+                   f"(recall@10 {_recall(a.get('ids', []), gold)})")
+        st.divider()
+
+
+def _save_history(rec):
+    with open(HISTORY, "a") as f:
+        f.write(json.dumps(rec) + "\n")
+
+
+def _run(fn, query):
     before = copy.copy(gen.usage)
-    r = fn(session, query, chat=chat, **kw)
+    r = fn(session, query, chat=chat)
     _merge_gen_usage(r, gen, before)
     return r
 
 
-if run and query.strip():
-    gold = set(qrels.get(text2qid.get(query, ""), {}).keys())
-    if gold:
-        st.caption(f"Labeled query — {len(gold)} gold docs; ✅ marks a hit. Recall@10 shown per mode.")
+tab_live, tab_hist = st.tabs(["🔎 Live query", "🕘 History"])
 
-    with st.spinner("running all three…"):
-        base = agents.run_base(session, query)
-        sacr = _run(agents.run_sac)
-        tool = _run(agents.run_tool_calling)
+# ============================================================ LIVE
+with tab_live:
+    c1, c2 = st.columns([3, 2])
+    with c2:
+        pick = st.selectbox("…or pick a labeled FiQA query", ["(type your own)"] + samples)
+    with c1:
+        default = "" if pick == "(type your own)" else pick
+        query = st.text_input("Query", value=default,
+                              placeholder="e.g. How to deposit a cheque issued to my business?")
+    go = st.button("▶ Run all 3 modes", type="primary")
 
-    def recall(r):
-        return round(len(set(r["ids"][:10]) & gold) / len(gold), 3) if gold else None
+    if go and query.strip():
+        gold = set(qrels.get(text2qid.get(query, ""), {}).keys())
+        if gold:
+            st.caption(f"Labeled query — {len(gold)} gold docs; ✅ marks a hit.")
+        with st.spinner("running base → SAC → tool-calling (with judge loop)…"):
+            base = agents.run_base(session, query)
+            sacr = _run(agents.run_sac, query)
+            tool = _run(agents.run_tool_calling, query)
 
-    m1, m2, m3 = st.columns(3)
-    for c, r, name in ((m1, base, "base"), (m2, sacr, "SAC"), (m3, tool, "tool-calling")):
-        with c:
-            st.metric(f"{name} · latency", f"{r['latency_s']:.2f}s")
-            rc = recall(r)
-            st.caption(f"{'Recall@10 ' + str(rc) + ' · ' if rc is not None else ''}"
-                       f"${r['usage']['cost_usd']:.4f} · {r['usage']['calls']} LLM call(s) · "
-                       f"{r['usage']['input_tokens']:,} in-tok")
+        cols = st.columns(3)
+        for col, r, name in ((cols[0], base, "base"), (cols[1], sacr, "SAC"), (cols[2], tool, "tool-calling")):
+            with col:
+                rc = _recall(r["ids"], gold)
+                st.metric(f"{name} · Recall@10", rc if rc is not None else "—")
+                st.caption(f"{r['latency_s']:.2f}s · ${r['usage']['cost_usd']:.4f} · "
+                           f"{r['usage']['calls']} LLM call(s) · {r.get('hops',1)} hop(s)")
 
-    cb, cs, ct = st.columns(3)
-    with cb:
-        st.subheader("base (hybrid)")
-        _snippets(base["ids"], gold)
-    with cs:
-        st.subheader("SAC (code-mode)")
-        st.code(sacr.get("code", ""), language="python")
-        if sacr.get("trace"):
-            with st.expander("sandbox trace"):
-                for s in sacr["trace"]:
-                    st.text("• " + s.get("op", "") + (f"  {s['stdout']}" if s.get("stdout") else ""))
-        _snippets(sacr["ids"], gold)
-    with ct:
-        st.subheader("tool-calling (MCP)")
-        with st.expander("tool-call steps", expanded=True):
-            for s in tool.get("trace", []):
-                st.text("• " + s.get("op", "") + (f"  → {s.get('returned', s.get('out',''))}"))
-        _snippets(tool["ids"], gold)
+        cb, cs, ct = st.columns(3)
+        with cb:
+            st.subheader("base (hybrid)")
+            _snippets(base["ids"], gold)
+        with cs:
+            st.subheader("SAC (code-mode)")
+            if sacr.get("reasoning"):
+                st.info("💡 " + sacr["reasoning"])
+            with st.expander(f"{sacr['hops']} hop(s) — reasoning, code, judge", expanded=True):
+                _render_attempts(sacr, gold)
+            _snippets(sacr["ids"], gold)
+        with ct:
+            st.subheader("tool-calling (MCP)")
+            if tool.get("reasoning"):
+                st.info("💡 " + tool["reasoning"])
+            with st.expander(f"{tool['hops']} hop(s) — reasoning, tool steps, judge", expanded=True):
+                _render_attempts(tool, gold)
+            _snippets(tool["ids"], gold)
+
+        # persist to history
+        _save_history({
+            "ts": datetime.now().isoformat(timespec="seconds"), "query": query, "gold": list(gold),
+            "base": {"ids": base["ids"], "latency_s": base["latency_s"], "recall": _recall(base["ids"], gold)},
+            "sac": {**{kk: sacr[kk] for kk in ("ids", "latency_s", "usage", "hops", "attempts", "reasoning")},
+                    "recall": _recall(sacr["ids"], gold)},
+            "tool_calling": {**{kk: tool[kk] for kk in ("ids", "latency_s", "usage", "hops", "attempts", "reasoning")},
+                             "recall": _recall(tool["ids"], gold)},
+        })
+        st.success("Saved to History tab.")
+
+# ============================================================ HISTORY
+with tab_hist:
+    if not HISTORY.exists():
+        st.info("No history yet — run a query in the Live tab.")
+    else:
+        recs = [json.loads(l) for l in HISTORY.read_text().splitlines() if l.strip()][::-1]
+        st.caption(f"{len(recs)} past searches")
+        idx = st.selectbox("Past search", range(len(recs)),
+                           format_func=lambda i: f"{recs[i]['ts']} — {recs[i]['query'][:70]}")
+        rec = recs[idx]
+        gold = set(rec.get("gold", []))
+        st.markdown(f"**Query:** {rec['query']}")
+
+        m = st.columns(3)
+        m[0].metric("base Recall@10", rec["base"].get("recall") or "—")
+        m[1].metric("SAC Recall@10", rec["sac"].get("recall") or "—",
+                    help=f"{rec['sac']['hops']} hop(s) · ${rec['sac']['usage']['cost_usd']:.4f}")
+        m[2].metric("tool-calling Recall@10", rec["tool_calling"].get("recall") or "—",
+                    help=f"{rec['tool_calling']['hops']} hop(s) · ${rec['tool_calling']['usage']['cost_usd']:.4f}")
+
+        cs, ct = st.columns(2)
+        with cs:
+            st.subheader("SAC — what happened at each hop")
+            if rec["sac"].get("reasoning"):
+                st.info("💡 " + rec["sac"]["reasoning"])
+            _render_attempts(rec["sac"], gold)
+        with ct:
+            st.subheader("tool-calling — what happened at each hop")
+            if rec["tool_calling"].get("reasoning"):
+                st.info("💡 " + rec["tool_calling"]["reasoning"])
+            _render_attempts(rec["tool_calling"], gold)
 
 st.divider()
 st.caption("Static 100-query benchmark view: `streamlit run phase1/ui.py`")

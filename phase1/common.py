@@ -28,6 +28,10 @@ INDEX = "fiqa"
 OS_HOST = {"host": "127.0.0.1", "port": 9200}
 LLM_MODEL = "gpt-4.1-mini"
 
+# Fairness knob: both SAC and tool-calling reformulate the query into exactly this
+# many formulations (original + N-1 rephrasings), so query expansion is controlled.
+N_QUERY_VARIANTS = 4
+
 # gpt-4.1-mini pricing (USD per 1M tokens) — for cost accounting in the benchmark
 LLM_PRICE = {"input": 0.40, "cached_input": 0.10, "output": 1.60}
 
