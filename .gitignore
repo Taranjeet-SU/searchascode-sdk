@@ -11,3 +11,6 @@ htmlcov/
 venv/
 *.so
 .DS_Store
+phase1/data/
+phase1/runs/
+.env

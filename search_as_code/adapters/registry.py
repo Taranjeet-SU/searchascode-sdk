@@ -36,11 +36,18 @@ def _load_pgvector(**opts: Any) -> VectorStore:
     return PgVectorStore(**opts)
 
 
+def _load_opensearch(**opts: Any) -> VectorStore:
+    from .opensearch import OpenSearchStore
+
+    return OpenSearchStore(**opts)
+
+
 _REGISTRY: dict[str, Callable[..., VectorStore]] = {
     "memory": MemoryStore,
     "qdrant": _load_qdrant,
     "chroma": _load_chroma,
     "pgvector": _load_pgvector,
+    "opensearch": _load_opensearch,
 }
 
 

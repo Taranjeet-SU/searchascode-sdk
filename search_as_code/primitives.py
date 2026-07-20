@@ -159,6 +159,18 @@ def expand(query: str, generate: Callable[[str], list[str]], n: int = 4) -> list
     return [query, *[v for v in variants if v != query]]
 
 
+def rephrase(query: str, generate: Callable[[str], list[str]]) -> str:
+    """Rewrite a query into a single retrieval-optimized, standalone formulation
+    (Rewrite-Retrieve-Read). Returns the original if the model yields nothing."""
+    prompt = (
+        "Rewrite the following search query to be clearer and more retrieval-effective "
+        "while preserving its exact information need. Return only the rewritten query.\n"
+        f"Query: {query}"
+    )
+    out = [q.strip() for q in generate(prompt) if q.strip()]
+    return out[0] if out else query
+
+
 def decompose(query: str, generate: Callable[[str], list[str]]) -> list[str]:
     """Break a complex query into answerable sub-questions (least-to-most,
     LlamaIndex sub-question, Haystack decomposition)."""

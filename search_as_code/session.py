@@ -156,6 +156,11 @@ class Session:
         subs = P.decompose(query, self._require_generator())
         return self.search_many(subs or [query], top_k=top_k, mode=mode)
 
+    def rephrase_search(self, query: str, top_k: int = 10, mode: str = "dense") -> ResultSet:
+        """Rewrite the query with the LLM, then search with the improved form."""
+        better = P.rephrase(query, self._require_generator())
+        return self.search(better, top_k=top_k, mode=mode)
+
     def hyde_search(self, query: str, top_k: int = 10) -> ResultSet:
         """HyDE — generate a hypothetical answer document, embed it, and search
         with that vector instead of the bare query (Gao et al. 2023)."""
