@@ -36,17 +36,18 @@ State across hops:  sac.remember(key, value) / sac.recall(key)
 ResultSet: .top(k) .ids() .texts() .where(pred) .dedup() .to_evidence(fields, max_chars)
 Bare helpers also in scope: fuse, rerank, dedup, mmr
 
-## Do DEEP retrieval — do NOT shortcut to a single mode
-1. Reformulate the query into EXACTLY 4 formulations (original + 3 rephrasings you write).
-2. Retrieve with MULTIPLE strategies and compare — at minimum run dense AND keyword AND hybrid.
-   If the query has names/numbers/tickers/codes, also try mode="regex". If it is multi-part, also
-   sac.decompose_search(...). Keep each pool in its own variable.
-3. INSPECT SAMPLES so you can judge exploration quality: print the top ~5 (id + first 100 chars) from
-   each strategy, and print how much dense vs keyword overlap (e.g. len(set(dense.ids()) & set(kw.ids()))).
-   Low overlap => the modes disagree => fuse them; high overlap => confident.
-4. Fuse the diverse pools (sac.fuse), dedup, then rerank the wide fused pool (top 30-50) and/or apply
-   mmr for diversity.
-5. evidence = final top ~10 ids.
+## Do DEEP retrieval — but keep it FAST (avoid extra LLM round-trips)
+1. Write EXACTLY 4 formulations INLINE as plain Python strings (original + 3 rephrasings). Do NOT call
+   sac.expand_search / sac.rephrase_search / sac.decompose_search — each makes a slow extra LLM call.
+   Only use sac.decompose_search for a genuinely multi-part question.
+2. Retrieve with COMPLEMENTARY modes and compare: run dense AND keyword (hybrid is just their RRF, so
+   fuse dense+keyword yourself instead of a third pass). Add mode="regex" only if the query has exact
+   tokens (names/tickers/codes). Keep each pool in its own variable.
+3. INSPECT SAMPLES to judge exploration: print the top ~5 (id + first 100 chars) and the dense/keyword
+   overlap (len(set(dense.ids()) & set(kw.ids()))). Low overlap => modes disagree => fusion helps.
+4. Fuse the pools (sac.fuse), dedup, then rerank the fused top ~30 and/or mmr for diversity.
+5. evidence = final top ~10 ids. Prefer ~2-4 SDK calls total; these run locally and are cheap, but
+   don't call the LLM-backed helpers in a loop.
 
 ## Output contract (strict)
 - FIRST a line `REASONING:` — 2-3 sentences on your strategy and what the samples told you.
@@ -54,18 +55,17 @@ Bare helpers also in scope: fuse, rerank, dedup, mmr
 - Do NOT import anything. Never invent ids — only use ids returned by the SDK.
 - End with `evidence = <list of ~10 best-first id strings>`.
 
-## Example (deep, multi-strategy, inspects samples)
-REASONING: I fan out 4 formulations, compare dense/keyword/hybrid, print samples and their overlap to
-gauge agreement, fuse the diverse pools, and rerank the wide pool for precision.
+## Example (deep, multi-strategy, inspects samples — no extra LLM calls)
+REASONING: I fan out 4 inline formulations, compare dense vs keyword, print samples and their overlap
+to gauge agreement, fuse the two pools, and rerank the fused top for precision.
 ```python
 variants = [query, "<reformulation 1>", "<reformulation 2>", "<reformulation 3>"]
-dense  = sac.search_many(variants, top_k=40, mode="dense")
-kw     = sac.search_many(variants, top_k=40, mode="keyword")
-hybrid = sac.search_many(variants, top_k=40, mode="hybrid")
+dense = sac.search_many(variants, top_k=30, mode="dense")
+kw    = sac.search_many(variants, top_k=30, mode="keyword")
 print("dense/keyword overlap:", len(set(dense.ids()) & set(kw.ids())))
-for h in hybrid.top(5): print("sample", h.id, (h.text or "")[:100])
-pool = sac.fuse([dense, kw, hybrid]).dedup()
-evidence = sac.rerank(query, sac.hydrate(pool.top(40)), top_k=10).ids()
+for h in dense.top(5): print("sample", h.id, (h.text or "")[:100])
+pool = sac.fuse([dense, kw]).dedup()
+evidence = sac.rerank(query, sac.hydrate(pool.top(30)), top_k=10).ids()
 ```
 """
 

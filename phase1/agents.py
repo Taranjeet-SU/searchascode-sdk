@@ -116,8 +116,11 @@ def run_sac(session, query: str, chat=None, k: int = 10, judge_chat=None, max_re
         reasoning, code = _split_reasoning_code(_text(resp))
         result = box.run(code)            # prior variables (dense, kw, pool, ...) still live here
         ids = [str(x) for x in (result.evidence or [])][:k] if isinstance(result.evidence, list) else []
-        accept, feedback = judge(judge_chat, query, ids, session, usage)
-        verdict = "PASS" if accept else "FAIL"
+        if max_retries == 0:              # fast mode: single pass, skip the judge LLM call
+            accept, feedback, verdict = True, "", "SKIPPED"
+        else:
+            accept, feedback = judge(judge_chat, query, ids, session, usage)
+            verdict = "PASS" if accept else "FAIL"
         prev_stdout = (result.stdout or "")[:1200]
         prev_samples = _samples(session, ids)
         attempts.append({"hop": hop, "reasoning": reasoning, "code": code, "ok": result.ok,
@@ -167,7 +170,10 @@ def run_tool_calling(session, query: str, chat=None, k: int = 10, judge_chat=Non
             if name == "finish":
                 ids = [str(x) for x in args.get("doc_ids", [])][:k]
                 msgs.append(ToolMessage(content="ok", tool_call_id=cid))
-                accept, fb = judge(judge_chat, query, ids, session, usage)
+                if max_retries == 0:      # fast mode: accept first finish, skip judge LLM call
+                    accept, fb = True, ""
+                else:
+                    accept, fb = judge(judge_chat, query, ids, session, usage)
                 attempts.append({"hop": retries, "ids": ids, "judge": "PASS" if accept else "FAIL",
                                  "feedback": fb, "reasoning": " ".join(reasoning_acc)[:500],
                                  "steps": [t["op"] for t in trace]})

@@ -17,7 +17,7 @@ Quickstart:
 from .adapters import MemoryStore, VectorStore, available, connect, register
 from .embeddings import Embedder, HashEmbedder, as_embedder, get_embedder
 from .primitives import (
-    dedup, decompose, expand, extract, fan_out, freshness, fuse, mmr, rephrase, rerank,
+    dedup, decompose, expand, extract, fan_out, freshness, fuse, mmr, rephrase, rerank, rrf,
 )
 from .rerankers import CrossEncoderReranker
 from .sandbox import ExecResult, LocalExecutor, Sandbox
@@ -37,7 +37,7 @@ __all__ = [
     "Session", "route", "Sandbox", "LocalExecutor", "ExecResult",
     # primitives
     "fan_out", "fuse", "dedup", "rerank", "freshness", "extract",
-    "mmr", "expand", "decompose", "rephrase",
+    "mmr", "expand", "decompose", "rephrase", "rrf",
     # rerankers
     "CrossEncoderReranker",
 ]

@@ -55,6 +55,10 @@ def fuse(
     return ResultSet(fused)
 
 
+# RRF is exactly the fusion primitive above; `rrf` is an explicit, discoverable alias.
+rrf = fuse
+
+
 def dedup(results: ResultSet, key: Optional[Callable[[Hit], Any]] = None) -> ResultSet:
     return results.dedup(key)
 

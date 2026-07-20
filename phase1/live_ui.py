@@ -60,6 +60,12 @@ def backend():
                           embedder=embed, reranker=sac.CrossEncoderReranker("cross-encoder/ms-marco-MiniLM-L-12-v2"),
                           generator=gen.as_generator())
     chat = agents.lc_chat()
+    # warm up the GPU models once so the first real query isn't slow
+    try:
+        embed(["warm up"])
+        session.reranker("warm up", ["a", "b"])
+    except Exception:
+        pass
     q = json.loads((common.DATA_DIR / "queries.json").read_text()) if (common.DATA_DIR / "queries.json").exists() else {}
     qr = json.loads((common.DATA_DIR / "qrels.json").read_text()) if (common.DATA_DIR / "qrels.json").exists() else {}
     text2qid = {v: k for k, v in q.items()}
@@ -116,9 +122,9 @@ def _save_history(rec):
         f.write(json.dumps(rec) + "\n")
 
 
-def _run(fn, query):
+def _run(fn, query, max_retries):
     before = copy.copy(gen.usage)
-    r = fn(session, query, chat=chat)
+    r = fn(session, query, chat=chat, max_retries=max_retries)
     _merge_gen_usage(r, gen, before)
     return r
 
@@ -134,16 +140,27 @@ with tab_live:
         default = "" if pick == "(type your own)" else pick
         query = st.text_input("Query", value=default,
                               placeholder="e.g. How to deposit a cheque issued to my business?")
+    sc1, sc2 = st.columns([1, 3])
+    with sc1:
+        retries = st.slider("Judge retries", 0, 3, 1,
+                            help="0 = fast single pass (no judge). Higher = deeper judge-driven refinement, slower.")
     go = st.button("▶ Run all 3 modes", type="primary")
 
     if go and query.strip():
         gold = set(qrels.get(text2qid.get(query, ""), {}).keys())
         if gold:
             st.caption(f"Labeled query — {len(gold)} gold docs; ✅ marks a hit.")
-        with st.spinner("running base → SAC → tool-calling (with judge loop)…"):
+        with st.status("Running…", expanded=True) as status:
+            status.update(label="base (hybrid, no LLM)…")
             base = agents.run_base(session, query)
-            sacr = _run(agents.run_sac, query)
-            tool = _run(agents.run_tool_calling, query)
+            status.write(f"✅ base — {base['latency_s']:.2f}s")
+            status.update(label="SAC (code-mode)…")
+            sacr = _run(agents.run_sac, query, retries)
+            status.write(f"✅ SAC — {sacr['latency_s']:.1f}s · {sacr['hops']} hop(s) · ${sacr['usage']['cost_usd']:.4f}")
+            status.update(label="tool-calling (MCP)…")
+            tool = _run(agents.run_tool_calling, query, retries)
+            status.write(f"✅ tool-calling — {tool['latency_s']:.1f}s · {tool['hops']} hop(s) · ${tool['usage']['cost_usd']:.4f}")
+            status.update(label="done", state="complete", expanded=False)
 
         cols = st.columns(3)
         for col, r, name in ((cols[0], base, "base"), (cols[1], sacr, "SAC"), (cols[2], tool, "tool-calling")):
