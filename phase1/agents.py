@@ -87,6 +87,11 @@ def run_base(session, query: str, k: int = 10, mode: str = "hybrid") -> dict:
 
 
 # ---------------------------------------------------------------- SAC code-gen (+judge loop)
+def _samples(session, ids, n: int = 5) -> str:
+    docs = session.store.get([i for i in ids[:n]])
+    return "\n".join(f"[{d.id}] {(d.text or '')[:140]}" for d in docs) or "(none)"
+
+
 def run_sac(session, query: str, chat=None, k: int = 10, judge_chat=None, max_retries: int = 3) -> dict:
     from langchain_core.messages import SystemMessage, HumanMessage
 
@@ -97,26 +102,33 @@ def run_sac(session, query: str, chat=None, k: int = 10, judge_chat=None, max_re
     box = LocalExecutor(session)          # ONE executor → namespace persists across hops
     box._globals["query"] = query
     attempts, feedback, ids, code, reasoning = [], None, [], "", ""
+    prev_stdout, prev_samples, verdict = "", "", ""
 
     for hop in range(max_retries + 1):
-        msgs = [SystemMessage(content=sac_surface.SAC_SYSTEM), HumanMessage(content=f"Query: {query}")]
-        if hop > 0:
-            msgs.append(HumanMessage(content=sac_surface.SAC_RETRY_TEMPLATE.format(feedback=feedback, code=code)))
+        user_msg = f"Query: {query}"
+        if hop > 0:  # feed samples + stdout + judge verdict back so the model deepens its exploration
+            user_msg = sac_surface.SAC_RETRY_TEMPLATE.format(
+                verdict=verdict, feedback=feedback, samples=prev_samples,
+                stdout=prev_stdout or "(none)", code=code)
+        msgs = [SystemMessage(content=sac_surface.SAC_SYSTEM), HumanMessage(content=user_msg)]
         resp = chat.invoke(msgs)
         _account(usage, resp)
         reasoning, code = _split_reasoning_code(_text(resp))
-        result = box.run(code)            # prior variables (pool, cands, ...) still live here
+        result = box.run(code)            # prior variables (dense, kw, pool, ...) still live here
         ids = [str(x) for x in (result.evidence or [])][:k] if isinstance(result.evidence, list) else []
         accept, feedback = judge(judge_chat, query, ids, session, usage)
+        verdict = "PASS" if accept else "FAIL"
+        prev_stdout = (result.stdout or "")[:1200]
+        prev_samples = _samples(session, ids)
         attempts.append({"hop": hop, "reasoning": reasoning, "code": code, "ok": result.ok,
-                         "error": result.error, "stdout": (result.stdout or "")[:300],
-                         "ids": ids, "judge": "PASS" if accept else "FAIL", "feedback": feedback})
+                         "error": result.error, "stdout": prev_stdout, "samples": prev_samples,
+                         "prompt": user_msg, "ids": ids, "judge": verdict, "feedback": feedback})
         if accept or hop == max_retries:
             break
 
     return {"path": "sac", "ids": ids, "latency_s": time.time() - t0, "usage": usage.as_dict(),
             "code": code, "reasoning": reasoning, "ok": attempts[-1]["ok"], "hops": len(attempts),
-            "attempts": attempts,
+            "attempts": attempts, "system_prompt": sac_surface.SAC_SYSTEM,
             "trace": [{"op": f"hop {a['hop']} · judge {a['judge']}", "returned": len(a["ids"])} for a in attempts]}
 
 
@@ -181,4 +193,6 @@ def run_tool_calling(session, query: str, chat=None, k: int = 10, judge_chat=Non
 
     return {"path": "tool_calling", "ids": ids, "latency_s": time.time() - t0, "usage": usage.as_dict(),
             "reasoning": attempts[-1]["reasoning"] if attempts else " ".join(reasoning_acc)[:500],
-            "hops": len(attempts) or 1, "attempts": attempts, "trace": trace}
+            "hops": len(attempts) or 1, "attempts": attempts, "trace": trace,
+            "system_prompt": sac_surface.TOOLCALL_SYSTEM,
+            "tools": [t["function"]["name"] for t in sac_surface.TOOLCALL_TOOLS]}

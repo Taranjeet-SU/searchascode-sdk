@@ -25,7 +25,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import streamlit as st
 
 import search_as_code as sac
-from phase1 import agents, common
+from phase1 import agents, common, sac_surface
 from phase1.benchmark import _merge_gen_usage
 from phase1.llm import LLM
 
@@ -35,6 +35,14 @@ st.set_page_config(page_title="Search-as-Code — live traces", layout="wide")
 st.title("🔎 Search-as-Code — live query, 3 modes, judge loop")
 st.caption("base (hybrid, no LLM) · MCP tool-calling · SAC code-mode — over BEIR FiQA in OpenSearch. "
            "Both LLM paths use 4 query formulations and an LLM-as-judge retry loop (max 3 hops).")
+
+with st.expander("🔧 View the exact code-prompt sent to OpenAI (the primitive surface)"):
+    st.markdown("**SAC system prompt** — the code-API surface the LLM writes against "
+                "(a stable, prompt-cached prefix):")
+    st.code(sac_surface.SAC_SYSTEM, language="markdown")
+    st.markdown("**Tool-calling system prompt** + tools exposed:")
+    st.code(sac_surface.TOOLCALL_SYSTEM + "\n\ntools: "
+            + ", ".join(t["function"]["name"] for t in sac_surface.TOOLCALL_TOOLS), language="markdown")
 
 
 @st.cache_resource(show_spinner="Loading embedder + reranker + LLM …")
@@ -88,9 +96,16 @@ def _render_attempts(r, gold):
         if a.get("code") is not None:
             st.code(a["code"], language="python")
             if a.get("stdout"):
-                st.caption("sandbox stdout: " + a["stdout"])
+                st.caption("🖥️ sandbox stdout (samples/diagnostics the model saw next hop):")
+                st.code(a["stdout"], language="text")
+        if a.get("samples"):
+            with st.expander("retrieved samples fed to the judge / next hop"):
+                st.code(a["samples"], language="text")
         if a.get("steps"):
             st.caption("tool steps: " + " → ".join(a["steps"]))
+        if a.get("prompt"):
+            with st.expander("↳ exact prompt sent to OpenAI this hop"):
+                st.code(a["prompt"], language="markdown")
         st.caption(f"ids: {', '.join(str(x) for x in a.get('ids', [])[:10])}  "
                    f"(recall@10 {_recall(a.get('ids', []), gold)})")
         st.divider()
