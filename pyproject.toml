@@ -1,0 +1,36 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "search-as-code"
+version = "0.0.1"
+description = "A unified 'search as code' agentic harness — one API, any vector database."
+readme = "README.md"
+requires-python = ">=3.10"
+license = { text = "Apache-2.0" }
+authors = [{ name = "search-as-code contributors" }]
+keywords = ["rag", "retrieval", "agents", "vector-search", "code-mode", "search-as-code"]
+dependencies = [
+    "numpy>=1.24",
+]
+
+[project.optional-dependencies]
+qdrant = ["qdrant-client>=1.7"]
+chroma = ["chromadb>=0.5"]
+pgvector = ["psycopg[binary]>=3.1", "pgvector>=0.2"]
+providers = ["openai>=1.0"]
+dev = ["pytest>=7", "pytest-cov"]
+all = [
+    "qdrant-client>=1.7",
+    "chromadb>=0.5",
+    "psycopg[binary]>=3.1",
+    "pgvector>=0.2",
+    "openai>=1.0",
+]
+
+[tool.setuptools.packages.find]
+include = ["search_as_code*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
