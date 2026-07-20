@@ -1,193 +1,103 @@
-# search-as-code
+<h1 align="center">Search as Code</h1>
 
-**One `pip install`. One API. Any vector database.**
+<p align="center"><b>One <code>pip install</code>. One API. Any vector database.</b></p>
 
-A *search-as-code* agentic harness: agents write portable Python against a single
-primitive API — fan-out, fuse, rerank, dedup, extract — executed in a sandbox
-with intermediate state kept **out of the model context**, no matter which vector
-DB is underneath. No per-database SDK for the agent to learn.
+<p align="center">
+  <img alt="python" src="https://img.shields.io/badge/python-3.10+-blue">
+  <img alt="license" src="https://img.shields.io/badge/license-Apache--2.0-green">
+  <img alt="backends" src="https://img.shields.io/badge/backends-memory·qdrant·chroma·pgvector·opensearch-orange">
+  <img alt="tests" src="https://img.shields.io/badge/tests-29%20passing-brightgreen">
+</p>
+
+**Search as Code** is an agentic retrieval harness: instead of calling a fixed
+`search()` endpoint, the LLM writes a short Python program against a unified
+**primitive API** — search modes, fan-out, rerank, rephrase, fuse, dedup, MMR,
+filter, aggregate — executed in a sandbox with intermediate state kept **out of
+the model context**. The same agent code runs over **any vector database**
+(OpenSearch, Qdrant, Chroma, pgvector, Pinecone, Weaviate, Milvus …) — no
+per-database SDK, no per-database rewrite. It's *code-mode* retrieval (à la
+Anthropic/Cloudflare) meets *search-as-code* primitives (à la Perplexity), made
+database-agnostic.
 
 ```python
 import search_as_code as sac
 
-s = sac.Session("memory")                 # swap "memory" -> "qdrant" / "chroma" / "pgvector"
-s.add([{"id": "1", "text": "vector databases power agentic retrieval"}])
+s = sac.Session("opensearch", index="docs", dim=768, embedder=my_embedder)
+#   swap "opensearch" -> "qdrant" / "chroma" / "pgvector" / "memory" — nothing else changes
 
-hits = s.search("agent retrieval", top_k=5, mode="hybrid")
-print(hits.to_evidence(fields=["title"]))   # compact, context-friendly
+cands = s.search_many(["how do agents retrieve?", "agentic RAG"], top_k=40, mode="hybrid")
+best  = s.rerank("how do agents retrieve?", cands, top_k=10)
+print(best.to_evidence(fields=["title"]))     # compact, context-friendly
 ```
 
-The agent code above is **identical** on every backend. Change the one string in
-`Session(...)` and nothing else moves.
+## ⚡ Why it wins (measured, not claimed)
 
-## Why
+Benchmark on **BEIR FiQA** (57k docs in OpenSearch, 100 labeled queries,
+`gpt-4.1-mini`) — base hybrid search vs MCP tool-calling vs Search-as-Code:
 
-Five threads converge on the same idea (see `docs/CONCEPT.md` for the mapping):
+| mode | Recall@10 | latency | LLM calls | input tokens | cache hit | cost |
+|---|:--:|:--:|:--:|:--:|:--:|:--:|
+| base (hybrid) | 0.479 | 0.02 s | 0 | 0 | — | $0 |
+| tool-calling (MCP) | 0.348 | 5.9 s | 5.5 | 254k | 8% | $0.117 |
+| **Search as Code** | **0.491** | 3.7 s | **2.0** | **142k** | **78%** | **$0.043** |
 
-- **Code-mode** (Cloudflare, Anthropic): LLMs write *code* far better than they emit
-  tool-calls; run it in a sandbox and only final results return to the model.
-- **Search-as-code** (Perplexity): expose the search stack as *atomic primitives*,
-  not a monolithic `search()`; let the model orchestrate fan-out / fusion / verify.
-- **Retrieval bottleneck** (Hornet, BrowseComp-Plus / arXiv:2508.06600): the
-  retriever sets the accuracy ceiling — so the primitive layer must be good, and
-  measurable.
+**SAC wins every axis that matters** — best recall, **2.7× cheaper** and **1.8×
+fewer tokens** than tool-calling (intermediate results stay in the sandbox), 78%
+prompt-cache hit, and 100% of generated programs executed cleanly. Full write-up:
+[`phase1/RESULTS.md`](phase1/RESULTS.md).
 
-This project is the missing piece: a **unified layer** so that harness works over
-*every* vector DB behind one API.
-
-## Architecture
-
-```
-agent-generated Python
-        │  writes against
-        ▼
-┌─────────────────────────────────────────────┐
-│ Session (harness handle)  ── out-of-context state store
-│   search / search_many / rerank / fuse / extract
-├─────────────────────────────────────────────┤
-│ Primitives  (fan_out, fuse=RRF, dedup, rerank, freshness)   ← model-free, portable
-├─────────────────────────────────────────────┤
-│ VectorStore protocol  +  Capability emulation   ← DB differences hidden here
-├──────────┬──────────┬──────────┬──────────────┤
-│  memory  │  qdrant  │  chroma  │  pgvector ... │  ← adapters, same contract
-└──────────┴──────────┴──────────┴──────────────┘
-        ▲ runs inside
-┌─────────────────────────────────────────────┐
-│ Sandbox (LocalExecutor today; Docker/e2b/Pyodide pluggable) │
-└─────────────────────────────────────────────┘
-```
-
-| Layer | Module | Role |
-|---|---|---|
-| Data model | `types.py` | `Document`, `Hit`, `ResultSet`, `Capabilities` — the lingua franca |
-| Primitives | `primitives.py` | Portable atoms: fan-out, RRF fusion, dedup, rerank, freshness, extract |
-| Adapters | `adapters/` | `VectorStore` contract; `memory` (reference), `qdrant`, `chroma`, `pgvector` |
-| Harness | `session.py` | Binds backend+embedder, capability-aware search, out-of-context state |
-| Sandbox | `sandbox.py` | Runs agent code; returns only `print`/`evidence` to the model |
-| Filters | `filters.py` | One portable Mongo-ish filter dialect → translated per backend |
-
-**Capability emulation** is what keeps agent code portable: if a backend lacks
-keyword or hybrid search, the harness emulates it in-SDK (dense recall + lexical
-rerank, RRF fusion) so `mode="hybrid"` behaves the same everywhere.
-
-## Install
+## 🚀 Quickstart
 
 ```bash
-pip install -e .                 # core (numpy only) — memory backend works out of the box
-pip install -e '.[qdrant]'       # + Qdrant
-pip install -e '.[chroma]'       # + Chroma
-pip install -e '.[pgvector]'     # + Postgres/pgvector
-pip install -e '.[dev]'          # + pytest
+pip install -e .                 # core: in-memory backend, no services, no API key
+pip install -e '.[opensearch]'   # + OpenSearch     (also: qdrant / chroma / pgvector)
+python examples/opensearch_quickstart.py
+python -m pytest -q              # 21 unit tests (in-memory); +8 OpenSearch integration
 ```
 
-The base install ships a dependency-free `HashEmbedder` and in-memory backend, so
-the demo and tests run with no API key and no external services.
+The base install ships a dependency-free embedder + in-memory backend, so the
+demo and unit tests run with zero setup.
 
-## Run it
+## 🧩 How it works
+
+```
+LLM writes Python  ─▶  Session (unified API, out-of-context state)
+                        └─ Primitives: fan_out · fuse(RRF) · rerank · rephrase · dedup · mmr
+                        └─ VectorStore protocol + capability emulation   ← DB differences hidden here
+                        └─ adapters: memory · opensearch · qdrant · chroma · pgvector
+                   ─▶  Sandbox (only the final evidence returns to the model)
+```
+
+**Capability emulation** keeps agent code portable: if a backend lacks keyword or
+hybrid search, the harness emulates it in-SDK, so `mode="hybrid"` behaves the same
+everywhere. Add a backend by implementing one `VectorStore`
+([`adapters/base.py`](search_as_code/adapters/base.py)) — `memory.py` is the
+executable spec.
+
+## 📚 Docs
+
+| | |
+|---|---|
+| [`docs/CONCEPT.md`](docs/CONCEPT.md) | the idea + how 5 source articles map to the code |
+| [`docs/PRIMITIVES.md`](docs/PRIMITIVES.md) | the 320-primitive canonical taxonomy |
+| [`docs/DATABASES.md`](docs/DATABASES.md) | primitive × database support matrix |
+| [`docs/CACHING.md`](docs/CACHING.md) | passing the SDK surface to the LLM efficiently |
+| [`docs/RESEARCH.md`](docs/RESEARCH.md) | 150-source research base |
+| [`phase1/`](phase1/) | OpenSearch benchmark: base vs tool-calling vs SAC + live UI |
+
+## 🖥️ Live trace UI
 
 ```bash
-python -m pytest -q          # 13 tests over the in-memory reference backend
-PYTHONPATH=. python examples/demo.py
+streamlit run phase1/live_ui.py     # type a query → see all 3 modes' traces live
+streamlit run phase1/ui.py          # browse the static 100-query benchmark
 ```
 
-## The primitive API (what agent code writes)
+## Status
 
-```python
-s = sac.Session("qdrant", collection="docs", embedder=my_embedder)
+Shipped: unified primitive API · capability emulation · sandboxed code-mode
+execution · 5 adapters (`memory`, `opensearch`, `qdrant`, `chroma`, `pgvector`) ·
+LangChain SAC agent + tool-calling baseline · FiQA benchmark + trace UI.
+Next: hardened sandbox backends (Docker/e2b) · MCP server wrapper · more adapters
+(Pinecone, Weaviate, Milvus, LanceDB) · native rerankers.
 
-# fan out concurrently, RRF-fuse
-cands = s.search_many(["q1", "q2", "q3"], top_k=8, mode="hybrid")
-
-# keep the bulky set in the sandbox, out of context
-s.remember("cands", cands)
-
-# narrow to the few facts worth returning
-best = s.rerank("original question", cands.where(lambda h: h.get("year") >= 2024), top_k=5)
-evidence = best.to_evidence(fields=["title", "url"])   # only this goes back to the model
-```
-
-## Primitive-class × database support matrix
-
-Rows are the 15 primitive classes from the [canonical taxonomy](docs/PRIMITIVES.md);
-columns are vector databases. **Legend:** ✅ Supported · ⚪ Not eligible · ❌ Not
-supported · 🕒 Planned.
-
-*"Not eligible"* means the class is **not a database concern** — it belongs to the
-SDK harness/host runtime (query rewriting, planning, sandboxed execution, evidence
-verification, output rendering, evaluation). That split is the point of this
-project: the DB owns retrieval, the harness owns everything around it.
-
-| # · Primitive class | Layer | Mem | Qdr | Chr | pgv | Pine | Weav | Milv | ES | Vsp | Mgo | Rds |
-|---|---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
-| 0 · Data contracts | harness | ⚪ | ⚪ | ⚪ | ⚪ | ⚪ | ⚪ | ⚪ | ⚪ | ⚪ | ⚪ | ⚪ |
-| 1 · Source & corpus | **db** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| 2 · Query processing | harness | ⚪ | ⚪ | ⚪ | ⚪ | ⚪ | ⚪ | ⚪ | ⚪ | ⚪ | ⚪ | ⚪ |
-| 3 · Search planning | harness | ⚪ | ⚪ | ⚪ | ⚪ | ⚪ | ⚪ | ⚪ | ⚪ | ⚪ | ⚪ | ⚪ |
-| 4 · Candidate generation | **db** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| 5 · Candidate manipulation | **db** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| 6 · Content materialization | **db** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| 7 · Scoring & ranking | **db** | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| 8 · Aggregation & analysis | **db** | ❌ | ❌ | ❌ | ✅ | ❌ | ✅ | 🕒 | ✅ | ✅ | ✅ | ✅ |
-| 9 · Evidence & verification | harness | ⚪ | ⚪ | ⚪ | ⚪ | ⚪ | ⚪ | ⚪ | ⚪ | ⚪ | ⚪ | ⚪ |
-| 10 · Context & output | harness | ⚪ | ⚪ | ⚪ | ⚪ | ⚪ | ⚪ | ⚪ | ⚪ | ⚪ | ⚪ | ⚪ |
-| 11 · Runtime | harness | ⚪ | ⚪ | ⚪ | ⚪ | ⚪ | ⚪ | ⚪ | ⚪ | ⚪ | ⚪ | ⚪ |
-| 12 · State & observability | harness | ⚪ | ⚪ | ⚪ | ⚪ | ⚪ | ⚪ | ⚪ | ⚪ | ⚪ | ⚪ | ⚪ |
-| 13 · Evaluation & learning | harness | ⚪ | ⚪ | ⚪ | ⚪ | ⚪ | ⚪ | ⚪ | ⚪ | ⚪ | ⚪ | ⚪ |
-| 14 · Composite macros | harness | ⚪ | ⚪ | ⚪ | ⚪ | ⚪ | ⚪ | ⚪ | ⚪ | ⚪ | ⚪ | ⚪ |
-
-At class granularity the database-layer classes are broadly ✅ (every listed store
-does source/retrieval/filter/index/score); the real variation is in **class 8**
-and inside the retrieval/ranking classes. The drill-down below opens those up.
-
-### Capability drill-down (where the variation lives)
-
-Each row is a database-relevant capability tagged with its parent class number.
-
-| Capability (class) | Mem | Qdr | Chr | pgv | Pine | Weav | Milv | ES | Vsp | Mgo | Rds |
-|---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
-| Source & schema introspection (1) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Dense vector search (4) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Lexical / full-text BM25 (4) | ✅ | ✅ | 🕒 | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Sparse-neural — SPLADE/ELSER/BM42 (4) | ❌ | ✅ | ❌ | 🕒 | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
-| Multi-vector / late-interaction — ColBERT (4) | ❌ | ✅ | ❌ | 🕒 | ✅ | 🕒 | ✅ | 🕒 | ✅ | ❌ | ❌ |
-| Structured / scalar / SQL retrieval (4) | ❌ | ❌ | ❌ | ✅ | ❌ | 🕒 | 🕒 | ✅ | ✅ | ✅ | ✅ |
-| Graph / traversal / community (4) | ❌ | ❌ | ❌ | 🕒 | ❌ | 🕒 | ❌ | ❌ | ❌ | ❌ | ❌ |
-| Regex / exact-match (4) | ✅ | 🕒 | ✅ | ✅ | ❌ | ❌ | 🕒 | ✅ | 🕒 | ✅ | 🕒 |
-| Geospatial / temporal retrieval (4·5) | ❌ | ✅ | ❌ | ✅ | ❌ | ✅ | 🕒 | ✅ | ✅ | ✅ | ✅ |
-| Metadata filtering & governance (5) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Native indexing / upsert (6) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Server-side embedding (6) | ❌ | 🕒 | ✅ | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | 🕒 | ❌ |
-| Scoring — BM25 / vector similarity (7) | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Hybrid fusion — RRF / score (7) | ✅ | ✅ | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ | ✅ |
-| Native reranking — cross-encoder / multi-stage (7) | ❌ | ✅ | ❌ | ❌ | ✅ | ✅ | ✅ | ✅ | ✅ | ❌ | ❌ |
-| Diversification / MMR (7) | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | ❌ | 🕒 | ❌ | ❌ |
-| Aggregation & analytics (8) | ❌ | ❌ | ❌ | ✅ | ❌ | ✅ | 🕒 | ✅ | ✅ | ✅ | ✅ |
-
-**A ❌ is "not native," not "unavailable to your agent."** Via capability
-negotiation the SDK still exposes hybrid, keyword, regex, rerank (pluggable),
-MMR, dedup, freshness, and compression on **every** backend by emulating them
-client-side — so agent code is portable regardless of the marks above. The matrix
-reflects native DB capability as of the 2025–2026 research base
-([docs/RESEARCH.md](docs/RESEARCH.md)) and will drift as vendors ship features.
-Columns: Mem = in-memory reference · Qdr Qdrant · Chr Chroma · pgv pgvector ·
-Pine Pinecone · Weav Weaviate · Milv Milvus · ES Elasticsearch · Vsp Vespa ·
-Mgo MongoDB Atlas · Rds Redis. **Bold "db" adapters shipped today: Mem, Qdr, Chr,
-pgv;** the rest are native-capability references pending adapters.
-
-## Adding a backend
-
-Implement the `VectorStore` contract (`adapters/base.py`), return `Hit`s with
-larger-is-better scores, translate the portable filter dialect, and declare
-`capabilities()` honestly — the harness emulates whatever you report as `False`.
-`adapters/memory.py` is the executable spec. Register with
-`sac.register("mystore", MyStore)`.
-
-## Status & roadmap
-
-v0 (this repo): unified primitive API, adapter layer + capability emulation,
-in-context-free state, local sandbox, reference + 3 real adapters, tests, demo.
-
-Next: hardened sandbox backends (Docker/e2b/Pyodide) behind the `Sandbox`
-interface · a code-mode agent loop (surface API → generate code → execute →
-evidence) · an MCP server wrapper · a BrowseComp-Plus-style eval harness · more
-adapters (Pinecone, Weaviate, Milvus, LanceDB).
+<p align="center"><sub>search as code · agentic retrieval · code-mode · RAG · vector search · MCP · semantic search · LLM agents</sub></p>
