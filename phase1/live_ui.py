@@ -10,6 +10,12 @@ from __future__ import annotations
 
 import copy
 import json
+import os
+import sys
+
+# Streamlit puts phase1/ (the script dir) on sys.path, not the repo root — add it
+# so `from phase1 import ...` resolves when launched via `streamlit run`.
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import streamlit as st
 

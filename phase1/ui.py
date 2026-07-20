@@ -10,7 +10,11 @@ ids, per-path latency, token cost, and recall@10.
 from __future__ import annotations
 
 import json
+import os
+import sys
 from pathlib import Path
+
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import pandas as pd
 import streamlit as st
