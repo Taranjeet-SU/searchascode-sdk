@@ -58,7 +58,7 @@ def run_shard(args):
     embed = lambda ts: em.encode(list(ts), normalize_embeddings=True, convert_to_numpy=True,
                                  show_progress_bar=False).tolist()
     gen = LLM()
-    rr = sac.CrossEncoderReranker("cross-encoder/ms-marco-MiniLM-L-12-v2")
+    rr = sac.QwenReranker()
     s = sac.Session("opensearch", index=common.INDEX, dim=common.DIM, hosts=[common.OS_HOST],
                     embedder=embed, reranker=rr, generator=gen.as_generator())
     rr("warm", ["a", "b"])
