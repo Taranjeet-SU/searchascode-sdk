@@ -52,7 +52,7 @@ from .primitives import (
     score_cutoff,
     topics,
 )
-from .rerankers import CrossEncoderReranker
+from .rerankers import CrossEncoderReranker, QwenReranker
 from .sandbox import ExecResult, LocalExecutor, Sandbox
 from .session import Session, route
 from .types import Capabilities, Document, Hit, ResultSet
@@ -73,7 +73,7 @@ __all__ = [
     "mmr", "expand", "decompose", "rephrase", "rrf", "topics", "auto_filter", "score_cutoff",
     "normalize_scores", "relative_score_fusion", "diversity_quota", "confidence", "abstain",
     # rerankers
-    "CrossEncoderReranker",
+    "CrossEncoderReranker", "QwenReranker",
     # errors
     "SacError", "ConfigurationError", "BackendNotFoundError", "MissingDependencyError",
     "InvalidArgumentError", "InvalidModeError", "InvalidFilterError",
