@@ -59,14 +59,32 @@ def _split_reasoning_code(raw: str) -> tuple[str, str]:
     return (reasoning or " ".join(pre.split())[:300]), code
 
 
+def _semantic_signals(session, query: str, docs) -> str:
+    """Quantitative signals to ground the judge beyond snippet-reading: cosine
+    similarity of the top results to the query (mean/max/min)."""
+    import numpy as np
+
+    texts = [d.text for d in docs if d.text]
+    if not texts:
+        return "cosine-to-query: n/a (no results)"
+    qv = np.asarray(session._embed_query(query), dtype=np.float32)
+    qv = qv / (np.linalg.norm(qv) or 1.0)
+    dv = np.asarray(session.embedder.embed(texts), dtype=np.float32)
+    dv = dv / (np.linalg.norm(dv, axis=1, keepdims=True) + 1e-9)
+    sims = (dv @ qv)
+    return (f"cosine-to-query over top {len(texts)}: mean={sims.mean():.2f} "
+            f"max={sims.max():.2f} min={sims.min():.2f}")
+
+
 def judge(judge_chat, query: str, ids, session, usage: Usage) -> tuple[bool, str, float]:
-    """Calibrated LLM-as-judge. Returns (accept, feedback, confidence 0-1)."""
+    """Calibrated LLM-as-judge with semantic signals. Returns (accept, feedback, confidence)."""
     from langchain_core.messages import SystemMessage, HumanMessage
 
     docs = session.store.get([i for i in ids[:6]])
     body = "\n".join(f"[{d.id}] {(d.text or '')[:200]}" for d in docs) or "(no results returned)"
+    signals = _semantic_signals(session, query, docs)
     resp = judge_chat.invoke([SystemMessage(content=sac_surface.JUDGE_SYSTEM),
-                              HumanMessage(content=f"Query: {query}\n\nResults:\n{body}")])
+                              HumanMessage(content=f"Query: {query}\n\nSIGNALS: {signals}\n\nResults:\n{body}")])
     _account(usage, resp)
     text = _text(resp)
     accept, conf, fb = True, 0.5, ""

@@ -170,6 +170,10 @@ JUDGE_SYSTEM = """You are a relevance judge deciding whether a retrieval result 
 should be refined. Refinement is EXPENSIVE and frequently makes results WORSE, so bias toward PASS \
 and only FAIL when the results are clearly bad. Given the query and the top results (id + snippet):
 
+You also receive SIGNALS: the cosine similarity of the top results to the query (mean/max/min). High
+mean similarity (>~0.8) supports PASS; near-zero max similarity supports FAIL. Weigh these together with
+the snippets — the signals guard against snippets that merely look plausible.
+
 Count how many of the shown results are relevant to the query, then reply on exactly these lines:
 RELEVANT: <integer count of relevant results among those shown>
 CONFIDENCE: <0.0-1.0 — how well the top results answer the query>
