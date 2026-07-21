@@ -262,8 +262,10 @@ def expand(query: str, generate: Callable[[str], list[str]], n: int = 4) -> list
     QueryExpander).  ``generate(prompt) -> list[str]`` is your LLM; the original
     query is always included so recall never drops below the baseline."""
     prompt = (
-        f"Generate {n} alternative search queries that capture different phrasings "
-        f"and facets of this query. Return one per line.\nQuery: {query}"
+        f"Generate {n} alternative search queries. Crucially, include SYNONYMS, EUPHEMISMS, and "
+        f"domain aliases (e.g. 'disappear'->'die', 'hobbyist'->'hobby', 'CD'->'certificate of "
+        f"deposit'), not just reworded questions — paraphrases alone retrieve the same documents. "
+        f"Return one per line.\nQuery: {query}"
     )
     variants = [q.strip() for q in generate(prompt) if q.strip()]
     return [query, *[v for v in variants if v != query]]
@@ -324,6 +326,46 @@ def auto_filter(query: str, generate: Callable[[str], list[str]],
         return out if isinstance(out, dict) else {}
     except Exception:
         return {}
+
+
+import re as _re
+
+# Spelling / acronym normalization (extend per domain). Fixes the cheque↔check class.
+DEFAULT_ALIASES = {
+    "cheque": "check", "cheques": "checks", "favour": "favor", "colour": "color",
+    "organisation": "organization", "cancelled": "canceled", "cheque's": "check's",
+}
+
+
+def normalize_query(query: str, aliases: Optional[dict] = None) -> str:
+    """Normalize spelling/acronym variants so query and doc share tokens
+    (cheque→check, US/UK, domain aliases). Apply to query AND at index time."""
+    aliases = aliases or DEFAULT_ALIASES
+    return "".join(aliases.get(t.lower(), t) if t.strip() else t
+                   for t in _re.findall(r"\w+|\W+", query))
+
+
+def rare_terms(query: str) -> list[str]:
+    """High-signal exact tokens worth boosting in a keyword pass: quoted phrases,
+    ALL-CAPS acronyms (CD, EIN, SEC, LLC), numbers/$amounts/versions, Proper Bigrams."""
+    terms: list[str] = []
+    terms += _re.findall(r'"([^"]+)"', query)                       # quoted phrases
+    terms += _re.findall(r"\b[A-Z]{2,}\b", query)                   # acronyms
+    terms += _re.findall(r"\$?\d[\d,.]*[kKmM%]?", query)            # numbers / $ / versions
+    terms += _re.findall(r"\b[A-Z][a-z]+\s+[A-Z][a-z]+\b", query)   # Proper Bigrams
+    seen: set = set()
+    out: list[str] = []
+    for t in terms:
+        t = t.strip()
+        if t and t.lower() not in seen:
+            seen.add(t.lower())
+            out.append(t)
+    return out
+
+
+def quality_filter(results: ResultSet, min_chars: int = 40) -> ResultSet:
+    """Drop empty / near-empty docs (label & parse artifacts, pure noise)."""
+    return ResultSet(h for h in results if h.text and len(h.text.strip()) >= min_chars)
 
 
 def extract(

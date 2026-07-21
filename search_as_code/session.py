@@ -167,6 +167,25 @@ class Session:
     def extract(self, results: ResultSet, schema: dict, instruction: str) -> list[dict]:
         return P.extract(results, schema, instruction, extractor=self.extractor)
 
+    def smart_search(self, query: str, top_k: int = 10) -> ResultSet:
+        """Spelling/acronym-normalize the query, and if it carries rare exact tokens
+        (acronyms, quoted phrases, numbers) boost them via a keyword pass fused with
+        dense — otherwise fall back to dense. Targets the exact-token miss slice."""
+        q = P.normalize_query(query)
+        terms = P.rare_terms(query)
+        dense = self.search(q, top_k=top_k * 4, mode="dense")
+        if not terms:
+            return dense.top(top_k)
+        kwb = self.search(" ".join(terms), top_k=top_k * 4, mode="keyword")
+        return P.fuse([dense, kwb], weights=[0.6, 0.4]).dedup().top(top_k)
+
+    def retrieve_rerank(self, query: str, pool_k: int = 500, top_k: int = 10,
+                        mode: str = "dense") -> ResultSet:
+        """Wide-pool retrieve → rerank → top_k. The near-miss recovery pipeline
+        (gold at rank 100-500 pulled forward by the reranker). Needs a reranker set."""
+        pool = self.search(query, top_k=pool_k, mode=mode)
+        return self.rerank(query, self.hydrate(pool), top_k=top_k)
+
     def adaptive_search(self, query: str, mode: str = "dense", max_k: int = 100,
                         min_k: int = 10, rel_band: float = 0.1, method: str = "band",
                         filter: Optional[dict] = None) -> ResultSet:

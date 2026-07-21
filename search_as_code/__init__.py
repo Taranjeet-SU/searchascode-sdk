@@ -46,7 +46,10 @@ from .primitives import (
     abstain,
     confidence,
     diversity_quota,
+    normalize_query,
     normalize_scores,
+    quality_filter,
+    rare_terms,
     relative_score_fusion,
     rrf,
     score_cutoff,
@@ -72,6 +75,7 @@ __all__ = [
     "fan_out", "fuse", "dedup", "rerank", "freshness", "extract",
     "mmr", "expand", "decompose", "rephrase", "rrf", "topics", "auto_filter", "score_cutoff",
     "normalize_scores", "relative_score_fusion", "diversity_quota", "confidence", "abstain",
+    "normalize_query", "rare_terms", "quality_filter",
     # rerankers
     "CrossEncoderReranker", "QwenReranker",
     # errors
