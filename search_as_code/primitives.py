@@ -12,6 +12,7 @@ from __future__ import annotations
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable, Optional, Sequence
 
+from .errors import ExtractorRequiredError
 from .types import Hit, ResultSet
 
 
@@ -100,7 +101,6 @@ def freshness(
     ``now``/``half_life`` are caller-supplied (seconds) because the sandbox
     forbids wall-clock nondeterminism; pass ``time.time()`` from the harness.
     """
-    import math
 
     out = []
     for h in results:
@@ -133,6 +133,7 @@ def mmr(
     novec = [h for h in results if not (h.document and h.document.vector is not None)]
     vecs = {}
     for h in withvec:
+        assert h.document is not None  # guaranteed by the withvec filter above
         v = np.asarray(h.document.vector, dtype=np.float32)
         vecs[h.id] = v / (np.linalg.norm(v) or 1.0)
 
@@ -185,6 +186,41 @@ def decompose(query: str, generate: Callable[[str], list[str]]) -> list[str]:
     return [q.strip() for q in generate(prompt) if q.strip()]
 
 
+def topics(query: str, generate: Callable[[str], list[str]], n: int = 5) -> list[str]:
+    """LLM topic/entity extraction — the key concepts to search or filter on."""
+    prompt = (
+        f"List up to {n} key topics or named entities in this search query, "
+        f"one per line, no numbering or extra text.\nQuery: {query}"
+    )
+    return [t.strip(" -*\t") for t in generate(prompt) if t.strip()][:n]
+
+
+def auto_filter(query: str, generate: Callable[[str], list[str]],
+                fields: Optional[Sequence[str]] = None) -> dict[str, Any]:
+    """Self-query: the LLM infers a metadata filter implied by the query
+    (LangChain SelfQueryRetriever / LlamaIndex auto-retrieval). Returns a filter
+    dict in the portable dialect, or {} if the query implies no constraint."""
+    import json
+    import re
+
+    fdesc = f"Available metadata fields: {', '.join(fields)}.\n" if fields else ""
+    prompt = (
+        "Infer a metadata filter that this query implies, as a JSON object in this dialect: "
+        '{"field": value} or {"field": {"$gte": n}} / {"$in": [...]} etc. '
+        "Return ONLY the JSON object, or {} if the query implies no filter.\n"
+        f"{fdesc}Query: {query}"
+    )
+    raw = "\n".join(generate(prompt))
+    m = re.search(r"\{.*\}", raw, re.DOTALL)
+    if not m:
+        return {}
+    try:
+        out = json.loads(m.group(0))
+        return out if isinstance(out, dict) else {}
+    except Exception:
+        return {}
+
+
 def extract(
     results: ResultSet,
     schema: dict[str, Any],
@@ -197,7 +233,7 @@ def extract(
     an LLM call.  Kept pluggable so the core stays model-agnostic.
     """
     if extractor is None:
-        raise RuntimeError(
+        raise ExtractorRequiredError(
             "extract() needs an extractor callable (e.g. an LLM). "
             "Pass Session(..., extractor=fn) or extract(..., extractor=fn)."
         )

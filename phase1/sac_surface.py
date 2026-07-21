@@ -18,15 +18,18 @@ sets stay in the sandbox for free — keep them in variables and build on them a
 
 ## Full `sac` API (everything you may call)
 Retrieval modes (all return a ResultSet; hits have .id, .score, .text, .metadata):
-- sac.search(query, top_k=10, mode="dense"|"keyword"|"hybrid"|"regex", filter=None)
-    dense = semantic ANN · keyword = BM25 exact terms · hybrid = RRF of both · regex = exact/pattern
+- sac.search(query, top_k=10, mode="dense"|"keyword"|"hybrid"|"regex", filter=None, alpha=0.5)
+    dense = semantic ANN · keyword = BM25 · hybrid = weighted RRF of both · regex = exact/pattern
+    alpha (hybrid only) = dense weight: 1.0 pure dense, 0.0 pure keyword, 0.8 dense-dominant (best here)
 - sac.search_many(queries: list[str], top_k=10, mode=..., fuse=True)   # concurrent fan-out + RRF
-Query reformulation (same neighborhood):
-- sac.rephrase_search(query, top_k, mode)      # 1 LLM rewrite then search
-- sac.expand_search(query, top_k, n, mode)     # n LLM variants, fan out + fuse
-Neighborhood-SHIFTING (reach docs a paraphrase can't):
+LLM-backed query understanding (each calls the LLM at run time — use sparingly, not in loops):
+- sac.rephrase(query) -> str                   # improved standalone query
+- sac.topics(query, n=5) -> list[str]          # key topics/entities (for routing/filtering)
+- sac.auto_filter(query, fields=[...]) -> dict # self-query: infer a metadata filter from the query
+- sac.rephrase_search / sac.expand_search(query, top_k, n, mode)   # rewrite/expand then search
+Multi-representation / neighborhood-SHIFTING (reach docs a paraphrase can't):
 - sac.prf_search(query, top_k, feedback_k=5)   # Rocchio: move query toward retrieved docs' centroid
-- sac.hyde_search(query, top_k)                # search the ANSWER's embedding region
+- sac.hyde_search(query, top_k)                # embed a hypothetical ANSWER, search that region
 - sac.decompose_search(query, top_k, mode)     # per sub-question (new sub-topics)
 Refinement over ResultSets:
 - sac.rerank(query, results, top_k)            # cross-encoder re-score (run on a WIDE pool)

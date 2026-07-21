@@ -15,12 +15,40 @@ from __future__ import annotations
 
 from typing import Any, Callable, Optional, Sequence
 
+from . import filters as F
 from . import primitives as P
 from .adapters.base import VectorStore
 from .adapters.registry import connect
 from .embeddings import Embedder, HashEmbedder, as_embedder
+from .errors import (
+    DimensionMismatchError,
+    GeneratorRequiredError,
+    InvalidArgumentError,
+    InvalidModeError,
+)
 from .filters import normalize
-from .types import Document, Hit, ResultSet
+from .types import Capabilities, Document, Hit, ResultSet
+
+_MODES = ("dense", "keyword", "hybrid", "regex")
+
+
+def _check_query(query: Any) -> None:
+    if not isinstance(query, str) or not query.strip():
+        raise InvalidArgumentError("query must be a non-empty string", query=query)
+
+
+def _check_top_k(top_k: Any, caps: Capabilities) -> None:
+    if isinstance(top_k, bool) or not isinstance(top_k, int) or top_k < 1:
+        raise InvalidArgumentError("top_k must be a positive integer", top_k=top_k)
+    if caps.max_top_k is not None and top_k > caps.max_top_k:
+        raise InvalidArgumentError(
+            "top_k exceeds backend maximum", top_k=top_k, max_top_k=caps.max_top_k
+        )
+
+
+def _check_mode(mode: Any) -> None:
+    if mode not in _MODES:
+        raise InvalidModeError("unknown search mode", mode=mode, allowed=list(_MODES))
 
 
 class Session:
@@ -45,12 +73,32 @@ class Session:
     def add(self, docs: Sequence[Document | dict]) -> None:
         """Upsert documents, embedding any that lack a vector."""
         norm = [d if isinstance(d, Document) else Document(**d) for d in docs]
+        for d in norm:
+            if not d.id:
+                raise InvalidArgumentError("every document needs a non-empty id")
         missing = [d for d in norm if d.vector is None and d.text]
         if missing and not self._caps.server_side_embedding:
-            vecs = self.embedder.embed([d.text for d in missing])  # type: ignore[arg-type]
+            vecs = self.embedder.embed([d.text or "" for d in missing])
             for d, v in zip(missing, vecs):
                 d.vector = v
+        self._check_dims(norm)
         self.store.upsert(norm)
+
+    def _check_dims(self, docs: Sequence[Document]) -> None:
+        """Guardrail: all supplied/embedded vectors must share one dimension, and
+        match the backend's declared ``dim`` when it has one."""
+        vecs = [d for d in docs if d.vector is not None]
+        if not vecs:
+            return
+        want = getattr(self.store, "dim", None) or getattr(self.store, "_dim", None)
+        seen = len(vecs[0].vector)  # type: ignore[arg-type]
+        for d in vecs:
+            n = len(d.vector)  # type: ignore[arg-type]
+            if n != seen or (want is not None and n != want):
+                raise DimensionMismatchError(
+                    "vector dimensionality mismatch", id=d.id, dim=n,
+                    expected=want if want is not None else seen,
+                )
 
     # ---- core search primitives (capability-aware) -----------------------
     def search(
@@ -59,14 +107,22 @@ class Session:
         top_k: int = 10,
         filter: Optional[dict] = None,
         mode: str = "dense",
+        alpha: float = 0.5,
     ) -> ResultSet:
-        """Single search. ``mode`` is dense | keyword | hybrid; unsupported modes
-        are emulated in-SDK so agent code is identical on every backend."""
+        """Single search. ``mode`` is dense | keyword | hybrid | regex; unsupported
+        modes are emulated in-SDK so agent code is identical on every backend.
+
+        ``alpha`` (hybrid only) is the dense weight in the dense↔keyword fusion:
+        alpha=1.0 → pure dense, 0.0 → pure keyword, 0.8 → dense-dominant (best on FiQA)."""
+        _check_query(query)
+        _check_mode(mode)
+        _check_top_k(top_k, self._caps)
+        F.validate(filter)
         flt = normalize(filter)
         if mode == "keyword":
             return self._keyword(query, top_k, flt)
         if mode == "hybrid":
-            return self._hybrid(query, top_k, flt)
+            return self._hybrid(query, top_k, flt, alpha)
         if mode == "regex":
             return self._regex(query, top_k, flt)
         vec = self._embed_query(query)
@@ -83,6 +139,10 @@ class Session:
     ) -> ResultSet:
         """Fan out over many queries concurrently, then RRF-fuse (or return the
         flat union). The primitive that replaces N serial model turns."""
+        if not queries:
+            raise InvalidArgumentError("queries must be a non-empty sequence")
+        if concurrency < 1:
+            raise InvalidArgumentError("concurrency must be >= 1", concurrency=concurrency)
         sets = P.fan_out(lambda q: self.search(q, top_k, filter, mode), queries, concurrency)
         for q, rs in zip(queries, sets):
             for h in rs:
@@ -156,10 +216,24 @@ class Session:
         subs = P.decompose(query, self._require_generator())
         return self.search_many(subs or [query], top_k=top_k, mode=mode)
 
+    def rephrase(self, query: str) -> str:
+        """LLM rewrite of the query (returns the improved string, does not search)."""
+        return P.rephrase(query, self._require_generator())
+
     def rephrase_search(self, query: str, top_k: int = 10, mode: str = "dense") -> ResultSet:
         """Rewrite the query with the LLM, then search with the improved form."""
         better = P.rephrase(query, self._require_generator())
         return self.search(better, top_k=top_k, mode=mode)
+
+    def topics(self, query: str, n: int = 5) -> list[str]:
+        """LLM-extracted key topics/entities in the query (for routing or filtering)."""
+        return P.topics(query, self._require_generator(), n=n)
+
+    def auto_filter(self, query: str, fields: Optional[Sequence[str]] = None) -> dict:
+        """Self-query: LLM infers a metadata filter implied by the query. Feed the
+        result to search(filter=...). Pass ``fields`` (the metadata keys in your
+        corpus) to constrain what the LLM may filter on."""
+        return P.auto_filter(query, self._require_generator(), fields=fields)
 
     def hyde_search(self, query: str, top_k: int = 10) -> ResultSet:
         """HyDE — generate a hypothetical answer document, embed it, and search
@@ -183,14 +257,14 @@ class Session:
         flt = normalize(filter)
         qv = np.asarray(self._embed_query(query), dtype=np.float32)
         qv = qv / (np.linalg.norm(qv) or 1.0)
-        seed = self.hydrate(self.store.query_vector(qv, top_k=feedback_k, flt=flt))
+        seed = self.hydrate(self.store.query_vector(qv.tolist(), top_k=feedback_k, flt=flt))
         texts = [h.text for h in seed if h.text]
         if not texts:
-            return self.store.query_vector(qv, top_k=top_k, flt=flt)
+            return self.store.query_vector(qv.tolist(), top_k=top_k, flt=flt)
         dvecs = np.asarray(self.embedder.embed(texts), dtype=np.float32)
         new_q = alpha * qv + beta * dvecs.mean(axis=0)
         new_q = new_q / (np.linalg.norm(new_q) or 1.0)
-        return self.store.query_vector(new_q, top_k=top_k, flt=flt)
+        return self.store.query_vector(new_q.tolist(), top_k=top_k, flt=flt)
 
     def hydrate(self, results: ResultSet) -> ResultSet:
         """Fetch full documents for hits that only carry ids (e.g. after fusion
@@ -231,13 +305,13 @@ class Session:
         pool = self.store.query_vector(self._embed_query(query), top_k=top_k * 5, flt=flt)
         return P.rerank(query, pool, top_k=top_k)
 
-    def _hybrid(self, query: str, top_k: int, flt: dict) -> ResultSet:
+    def _hybrid(self, query: str, top_k: int, flt: dict, alpha: float = 0.5) -> ResultSet:
         vec = self._embed_query(query)
         if self._caps.hybrid:
-            return self.store.query_hybrid(vec, query, top_k=top_k, flt=flt)
+            return self.store.query_hybrid(vec, query, top_k=top_k, flt=flt, alpha=alpha)
         dense = self.store.query_vector(vec, top_k=top_k * 3, flt=flt)
         kw = self._keyword(query, top_k * 3, flt)
-        return P.fuse([dense, kw]).top(top_k)
+        return P.fuse([dense, kw], weights=[alpha, 1 - alpha]).top(top_k)
 
     def _regex(self, pattern: str, top_k: int, flt: dict) -> ResultSet:
         if self._caps.regex:
@@ -253,7 +327,7 @@ class Session:
 
     def _require_generator(self) -> Callable[[str], list[str]]:
         if self.generator is None:
-            raise RuntimeError(
+            raise GeneratorRequiredError(
                 "This primitive needs an LLM. Pass Session(..., generator=fn) where "
                 "fn(prompt: str) -> list[str]."
             )
