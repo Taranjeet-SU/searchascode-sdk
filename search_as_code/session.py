@@ -167,6 +167,16 @@ class Session:
     def extract(self, results: ResultSet, schema: dict, instruction: str) -> list[dict]:
         return P.extract(results, schema, instruction, extractor=self.extractor)
 
+    def adaptive_search(self, query: str, mode: str = "dense", max_k: int = 100,
+                        min_k: int = 10, rel_band: float = 0.1, method: str = "band",
+                        filter: Optional[dict] = None) -> ResultSet:
+        """Retrieve a wide pool then size it by the score distribution: return MORE
+        results when similarity stays flat past the top (many near-equally-relevant
+        docs), FEWER when it drops off. Recovers gold that a hard top-10 cut misses
+        (higher recall-in-context) without a reranker. See primitives.score_cutoff."""
+        pool = self.search(query, top_k=max_k, mode=mode, filter=filter)
+        return P.score_cutoff(pool, method=method, rel_band=rel_band, min_k=min_k, max_k=max_k)
+
     def mmr(self, query: str, results: ResultSet, lambda_: float = 0.5, top_k: int = 10) -> ResultSet:
         """Diversify results with Maximal Marginal Relevance (embeds ``query``)."""
         results = self.hydrate(results)

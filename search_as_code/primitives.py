@@ -64,6 +64,37 @@ def dedup(results: ResultSet, key: Optional[Callable[[Hit], Any]] = None) -> Res
     return results.dedup(key)
 
 
+def score_cutoff(results: ResultSet, method: str = "band", rel_band: float = 0.1,
+                 min_k: int = 10, max_k: int = 100) -> ResultSet:
+    """Adaptive result-set sizing from the score distribution — keep MORE when the
+    similarity curve is flat (many near-equally-relevant hits), FEWER when it drops
+    off sharply. This is the "don't hard-cut at k" idea from score-based retrieval.
+
+    method="band": keep hits within ``rel_band`` of the top score (relative), i.e.
+      score >= top*(1-rel_band). Flat curve → keeps a large pool; peaked → keeps few.
+    method="knee": cut at the largest score gap between consecutive ranks (elbow).
+    Always returns between ``min_k`` and ``max_k`` hits.
+    """
+    hits = sorted(results, key=lambda h: h.score, reverse=True)[:max_k]
+    if not hits:
+        return ResultSet()
+    if method == "knee":
+        scores = [h.score for h in hits]
+        best_i, best_gap = len(hits), -1.0
+        for i in range(min_k, len(scores)):
+            gap = scores[i - 1] - scores[i]
+            if gap > best_gap:
+                best_gap, best_i = gap, i
+        kept = hits[:best_i]
+    else:  # band (relative to the top score)
+        top = hits[0].score
+        cut = top * (1 - rel_band) if top > 0 else top - rel_band
+        kept = [h for h in hits if h.score >= cut]
+    if len(kept) < min_k:
+        kept = hits[:min_k]
+    return ResultSet(kept[:max_k])
+
+
 def rerank(
     query: str,
     results: ResultSet,

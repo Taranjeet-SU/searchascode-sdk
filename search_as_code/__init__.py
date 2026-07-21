@@ -44,6 +44,7 @@ from .primitives import (
     rephrase,
     rerank,
     rrf,
+    score_cutoff,
     topics,
 )
 from .rerankers import CrossEncoderReranker
@@ -64,7 +65,7 @@ __all__ = [
     "Session", "route", "Sandbox", "LocalExecutor", "ExecResult",
     # primitives
     "fan_out", "fuse", "dedup", "rerank", "freshness", "extract",
-    "mmr", "expand", "decompose", "rephrase", "rrf", "topics", "auto_filter",
+    "mmr", "expand", "decompose", "rephrase", "rrf", "topics", "auto_filter", "score_cutoff",
     # rerankers
     "CrossEncoderReranker",
     # errors
