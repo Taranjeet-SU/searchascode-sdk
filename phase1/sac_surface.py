@@ -36,18 +36,26 @@ State across hops:  sac.remember(key, value) / sac.recall(key)
 ResultSet: .top(k) .ids() .texts() .where(pred) .dedup() .to_evidence(fields, max_chars)
 Bare helpers also in scope: fuse, rerank, dedup, mmr
 
-## Do DEEP retrieval — but keep it FAST (avoid extra LLM round-trips)
+## Retrieve smart — DENSE-FIRST, add other modes only when they earn their place
+Dense (semantic) retrieval is the strongest signal for natural-language questions. Keyword/BM25 helps
+ONLY when the query hinges on exact tokens (names, tickers, codes, error strings). Fusing a weak mode
+in with equal weight DILUTES a strong dense ranking and lowers recall — so weight by evidence, do not
+fuse blindly.
+
 1. Write EXACTLY 4 formulations INLINE as plain Python strings (original + 3 rephrasings). Do NOT call
-   sac.expand_search / sac.rephrase_search / sac.decompose_search — each makes a slow extra LLM call.
-   Only use sac.decompose_search for a genuinely multi-part question.
-2. Retrieve with COMPLEMENTARY modes and compare: run dense AND keyword (hybrid is just their RRF, so
-   fuse dense+keyword yourself instead of a third pass). Add mode="regex" only if the query has exact
-   tokens (names/tickers/codes). Keep each pool in its own variable.
-3. INSPECT SAMPLES to judge exploration: print the top ~5 (id + first 100 chars) and the dense/keyword
-   overlap (len(set(dense.ids()) & set(kw.ids()))). Low overlap => modes disagree => fusion helps.
-4. Fuse the pools (sac.fuse), dedup, then rerank the fused top ~30 and/or mmr for diversity.
-5. evidence = final top ~10 ids. Prefer ~2-4 SDK calls total; these run locally and are cheap, but
-   don't call the LLM-backed helpers in a loop.
+   sac.expand_search / sac.rephrase_search / sac.decompose_search (each is a slow extra LLM call).
+2. Get the dense pool first: dense = sac.search_many(variants, top_k=30, mode="dense"). This is your
+   backbone. Then get keyword = sac.search_many(variants, top_k=30, mode="keyword") as a CANDIDATE
+   supplement. Add mode="regex" only if the query has exact tokens.
+3. USE THE SAMPLES to decide whether keyword is trustworthy on THIS query:
+   - print the dense/keyword overlap: overlap = len(set(dense.ids()) & set(keyword.ids()))
+   - print keyword's top ~5 snippets and check if they are on-topic.
+   - If keyword looks off-topic or overlap is ~0, TRUST DENSE: use `evidence = dense.top(10).ids()` (or
+     fuse with a small keyword weight). If keyword clearly adds on-topic docs, fuse it in.
+4. Fuse with WEIGHTS that favor the reliable mode, e.g.
+   pool = sac.fuse([dense, keyword], weights=[0.8, 0.2]).dedup()   # dense-dominant
+   Reranking (sac.rerank) is OPTIONAL and often neutral on this corpus — only add it if it clearly helps.
+5. evidence = final top ~10 ids. Keep it to ~2-4 cheap local SDK calls; never call LLM helpers in a loop.
 
 ## Output contract (strict)
 - FIRST a line `REASONING:` — 2-3 sentences on your strategy and what the samples told you.
@@ -55,17 +63,20 @@ Bare helpers also in scope: fuse, rerank, dedup, mmr
 - Do NOT import anything. Never invent ids — only use ids returned by the SDK.
 - End with `evidence = <list of ~10 best-first id strings>`.
 
-## Example (deep, multi-strategy, inspects samples — no extra LLM calls)
-REASONING: I fan out 4 inline formulations, compare dense vs keyword, print samples and their overlap
-to gauge agreement, fuse the two pools, and rerank the fused top for precision.
+## Example (dense-first, sample-driven, weighted fusion — no extra LLM calls)
+REASONING: Dense is the backbone; I fan out 4 formulations, then use the keyword samples + overlap to
+decide how much to trust keyword and fuse it in dense-dominant, rather than diluting dense equally.
 ```python
 variants = [query, "<reformulation 1>", "<reformulation 2>", "<reformulation 3>"]
 dense = sac.search_many(variants, top_k=30, mode="dense")
 kw    = sac.search_many(variants, top_k=30, mode="keyword")
-print("dense/keyword overlap:", len(set(dense.ids()) & set(kw.ids())))
-for h in dense.top(5): print("sample", h.id, (h.text or "")[:100])
-pool = sac.fuse([dense, kw]).dedup()
-evidence = sac.rerank(query, sac.hydrate(pool.top(30)), top_k=10).ids()
+overlap = len(set(dense.ids()) & set(kw.ids()))
+print("dense/keyword overlap:", overlap)
+for h in kw.top(5): print("kw sample", h.id, (h.text or "")[:90])
+if overlap == 0:
+    evidence = dense.top(10).ids()                       # keyword unreliable here -> trust dense
+else:
+    evidence = sac.fuse([dense, kw], weights=[0.8, 0.2]).dedup().top(10).ids()
 ```
 """
 
