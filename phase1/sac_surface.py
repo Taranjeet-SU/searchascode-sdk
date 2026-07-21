@@ -21,11 +21,13 @@ Retrieval modes (all return a ResultSet; hits have .id, .score, .text, .metadata
 - sac.search(query, top_k=10, mode="dense"|"keyword"|"hybrid"|"regex", filter=None)
     dense = semantic ANN · keyword = BM25 exact terms · hybrid = RRF of both · regex = exact/pattern
 - sac.search_many(queries: list[str], top_k=10, mode=..., fuse=True)   # concurrent fan-out + RRF
-Query reformulation:
+Query reformulation (same neighborhood):
 - sac.rephrase_search(query, top_k, mode)      # 1 LLM rewrite then search
 - sac.expand_search(query, top_k, n, mode)     # n LLM variants, fan out + fuse
-- sac.decompose_search(query, top_k, mode)     # split multi-part question into sub-questions
-- sac.hyde_search(query, top_k)                # hypothetical-document embedding retrieval
+Neighborhood-SHIFTING (reach docs a paraphrase can't):
+- sac.prf_search(query, top_k, feedback_k=5)   # Rocchio: move query toward retrieved docs' centroid
+- sac.hyde_search(query, top_k)                # search the ANSWER's embedding region
+- sac.decompose_search(query, top_k, mode)     # per sub-question (new sub-topics)
 Refinement over ResultSets:
 - sac.rerank(query, results, top_k)            # cross-encoder re-score (run on a WIDE pool)
 - sac.mmr(query, results, lambda_, top_k)      # diversify (relevance vs redundancy)
@@ -97,9 +99,17 @@ sac.recall; do not re-run identical searches):
 {code}
 ```
 
-Go DEEPER: inspect the samples above, then try strategies you have not yet used (keyword vs dense vs
-regex, decompose the query, hyde, rerank a wider pool, mmr for diversity), fuse with the pools you
-already built, and improve `evidence`. Same output contract: a REASONING: line then one ```python block."""
+IMPORTANT — rephrasing the question stays in the SAME embedding neighborhood and re-finds the SAME
+docs. To surface NEW documents, move on a DIFFERENT retrieval axis:
+- sac.prf_search(query, top_k=30): pseudo-relevance feedback — shifts the query TOWARD the docs you
+  already retrieved (Rocchio), reaching their neighbors.
+- sac.hyde_search(query, top_k=30): searches the ANSWER's embedding region, not the question's.
+- sac.decompose_search(query, top_k=30): retrieves per sub-question (new sub-topics).
+- mode="keyword" or mode="regex": the exact-term axis (names, numbers, tickers, codes).
+
+KEEP your previous best pool (it is still in a sandbox variable) and FUSE the new finds into it — never
+discard good earlier results. Then set `evidence` to the fused top ~10.
+Same output contract: a REASONING: line then one ```python block."""
 
 # Tool-calling baseline: the same capabilities exposed as discrete tools (MCP-style).
 TOOLCALL_SYSTEM = """You are a retrieval agent. Find the document ids most relevant to the user's \
@@ -153,10 +163,19 @@ TOOLCALL_TOOLS = [
     },
 ]
 
-# LLM-as-judge: gates the final result; on FAIL the path retries (max 3 hops).
-JUDGE_SYSTEM = """You are a strict but fair relevance judge for a retrieval system. Given a user \
-query and the top retrieved results (id + snippet), decide whether the result set is GOOD ENOUGH to \
-answer the query. Pass if several results are clearly on-topic; fail if they are mostly irrelevant, \
-empty, or miss the obvious intent. Reply on exactly two lines:
+# LLM-as-judge: gates the final result; on FAIL the path retries. Calibrated to be
+# CONSERVATIVE — refinement is expensive and often lowers recall, so only FAIL when the
+# results are clearly bad. Emits a graded confidence used to keep the best hop.
+JUDGE_SYSTEM = """You are a relevance judge deciding whether a retrieval result is good enough or \
+should be refined. Refinement is EXPENSIVE and frequently makes results WORSE, so bias toward PASS \
+and only FAIL when the results are clearly bad. Given the query and the top results (id + snippet):
+
+Count how many of the shown results are relevant to the query, then reply on exactly these lines:
+RELEVANT: <integer count of relevant results among those shown>
+CONFIDENCE: <0.0-1.0 — how well the top results answer the query>
 VERDICT: PASS or FAIL
-FEEDBACK: <one sentence; if FAIL, say what is missing or how to refine the search>"""
+FEEDBACK: <if FAIL, name what is missing or a NEW retrieval angle to try (a different sub-topic, exact
+terms, or the answer's likely wording) — not just a paraphrase>
+
+Rule: VERDICT = PASS whenever RELEVANT >= 2, or CONFIDENCE >= 0.5. Only FAIL when the set is empty or \
+almost entirely off-topic. When unsure, PASS."""

@@ -59,8 +59,8 @@ def _split_reasoning_code(raw: str) -> tuple[str, str]:
     return (reasoning or " ".join(pre.split())[:300]), code
 
 
-def judge(judge_chat, query: str, ids, session, usage: Usage) -> tuple[bool, str]:
-    """LLM-as-judge over the top retrieved snippets. Returns (accept, feedback)."""
+def judge(judge_chat, query: str, ids, session, usage: Usage) -> tuple[bool, str, float]:
+    """Calibrated LLM-as-judge. Returns (accept, feedback, confidence 0-1)."""
     from langchain_core.messages import SystemMessage, HumanMessage
 
     docs = session.store.get([i for i in ids[:6]])
@@ -69,12 +69,22 @@ def judge(judge_chat, query: str, ids, session, usage: Usage) -> tuple[bool, str
                               HumanMessage(content=f"Query: {query}\n\nResults:\n{body}")])
     _account(usage, resp)
     text = _text(resp)
-    verdict = "PASS" in text.split("FEEDBACK")[0].upper()
-    fb = ""
+    accept, conf, fb = True, 0.5, ""
     for line in text.splitlines():
-        if line.strip().upper().startswith("FEEDBACK"):
-            fb = line.split(":", 1)[-1].strip()
-    return verdict, fb
+        s = line.strip()
+        u = s.upper()
+        if u.startswith("VERDICT"):
+            accept = "PASS" in u
+        elif u.startswith("CONFIDENCE"):
+            try:
+                conf = float(s.split(":", 1)[-1].strip().split()[0])
+            except Exception:
+                pass
+        elif u.startswith("FEEDBACK"):
+            fb = s.split(":", 1)[-1].strip()
+    if not ids:
+        accept, conf = False, 0.0
+    return accept, fb, conf
 
 
 # ---------------------------------------------------------------- base
@@ -103,6 +113,7 @@ def run_sac(session, query: str, chat=None, k: int = 10, judge_chat=None, max_re
     box._globals["query"] = query
     attempts, feedback, ids, code, reasoning = [], None, [], "", ""
     prev_stdout, prev_samples, verdict = "", "", ""
+    best_ids, best_conf = [], -1.0            # keep the highest-confidence hop, never lose a good one
 
     for hop in range(max_retries + 1):
         user_msg = f"Query: {query}"
@@ -117,18 +128,22 @@ def run_sac(session, query: str, chat=None, k: int = 10, judge_chat=None, max_re
         result = box.run(code)            # prior variables (dense, kw, pool, ...) still live here
         ids = [str(x) for x in (result.evidence or [])][:k] if isinstance(result.evidence, list) else []
         if max_retries == 0:              # fast mode: single pass, skip the judge LLM call
-            accept, feedback, verdict = True, "", "SKIPPED"
+            accept, feedback, verdict, conf = True, "", "SKIPPED", 1.0
         else:
-            accept, feedback = judge(judge_chat, query, ids, session, usage)
+            accept, feedback, conf = judge(judge_chat, query, ids, session, usage)
             verdict = "PASS" if accept else "FAIL"
+        if ids and conf > best_conf:      # keep the best hop so refinement can't destroy a good result
+            best_conf, best_ids = conf, ids
         prev_stdout = (result.stdout or "")[:1200]
         prev_samples = _samples(session, ids)
         attempts.append({"hop": hop, "reasoning": reasoning, "code": code, "ok": result.ok,
                          "error": result.error, "stdout": prev_stdout, "samples": prev_samples,
-                         "prompt": user_msg, "ids": ids, "judge": verdict, "feedback": feedback})
-        if accept or hop == max_retries:
+                         "prompt": user_msg, "ids": ids, "judge": verdict,
+                         "confidence": round(conf, 2), "feedback": feedback})
+        if accept or conf >= 0.75 or hop == max_retries:   # short-circuit when confident
             break
 
+    ids = best_ids or ids                 # return the highest-confidence hop, not necessarily the last
     return {"path": "sac", "ids": ids, "latency_s": time.time() - t0, "usage": usage.as_dict(),
             "code": code, "reasoning": reasoning, "ok": attempts[-1]["ok"], "hops": len(attempts),
             "attempts": attempts, "system_prompt": sac_surface.SAC_SYSTEM,
@@ -173,7 +188,7 @@ def run_tool_calling(session, query: str, chat=None, k: int = 10, judge_chat=Non
                 if max_retries == 0:      # fast mode: accept first finish, skip judge LLM call
                     accept, fb = True, ""
                 else:
-                    accept, fb = judge(judge_chat, query, ids, session, usage)
+                    accept, fb, _ = judge(judge_chat, query, ids, session, usage)
                 attempts.append({"hop": retries, "ids": ids, "judge": "PASS" if accept else "FAIL",
                                  "feedback": fb, "reasoning": " ".join(reasoning_acc)[:500],
                                  "steps": [t["op"] for t in trace]})

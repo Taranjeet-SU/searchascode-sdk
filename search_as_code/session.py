@@ -163,12 +163,34 @@ class Session:
 
     def hyde_search(self, query: str, top_k: int = 10) -> ResultSet:
         """HyDE — generate a hypothetical answer document, embed it, and search
-        with that vector instead of the bare query (Gao et al. 2023)."""
+        with that vector instead of the bare query (Gao et al. 2023). Reaches the
+        answer region of embedding space, a DIFFERENT neighborhood than the query."""
         gen = self._require_generator()
         prompt = f"Write a short passage that directly answers this query.\nQuery: {query}"
         doc = (gen(prompt) or [query])[0]
         vec = self.embedder.embed([doc])[0]
         return self.store.query_vector(vec, top_k=top_k)
+
+    def prf_search(self, query: str, top_k: int = 10, feedback_k: int = 5,
+                   alpha: float = 1.0, beta: float = 0.7, filter: Optional[dict] = None) -> ResultSet:
+        """Pseudo-relevance feedback (Rocchio): retrieve, then MOVE the query vector
+        toward the centroid of the top ``feedback_k`` retrieved docs and re-search.
+        This literally shifts the query into a NEW embedding neighborhood (the region
+        where the pseudo-relevant docs live) — reaching neighbors a paraphrase can't.
+        """
+        import numpy as np
+
+        flt = normalize(filter)
+        qv = np.asarray(self._embed_query(query), dtype=np.float32)
+        qv = qv / (np.linalg.norm(qv) or 1.0)
+        seed = self.hydrate(self.store.query_vector(qv, top_k=feedback_k, flt=flt))
+        texts = [h.text for h in seed if h.text]
+        if not texts:
+            return self.store.query_vector(qv, top_k=top_k, flt=flt)
+        dvecs = np.asarray(self.embedder.embed(texts), dtype=np.float32)
+        new_q = alpha * qv + beta * dvecs.mean(axis=0)
+        new_q = new_q / (np.linalg.norm(new_q) or 1.0)
+        return self.store.query_vector(new_q, top_k=top_k, flt=flt)
 
     def hydrate(self, results: ResultSet) -> ResultSet:
         """Fetch full documents for hits that only carry ids (e.g. after fusion
