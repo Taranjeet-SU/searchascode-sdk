@@ -43,6 +43,11 @@ from .primitives import (
     mmr,
     rephrase,
     rerank,
+    abstain,
+    confidence,
+    diversity_quota,
+    normalize_scores,
+    relative_score_fusion,
     rrf,
     score_cutoff,
     topics,
@@ -66,6 +71,7 @@ __all__ = [
     # primitives
     "fan_out", "fuse", "dedup", "rerank", "freshness", "extract",
     "mmr", "expand", "decompose", "rephrase", "rrf", "topics", "auto_filter", "score_cutoff",
+    "normalize_scores", "relative_score_fusion", "diversity_quota", "confidence", "abstain",
     # rerankers
     "CrossEncoderReranker",
     # errors

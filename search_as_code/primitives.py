@@ -95,6 +95,80 @@ def score_cutoff(results: ResultSet, method: str = "band", rel_band: float = 0.1
     return ResultSet(kept[:max_k])
 
 
+def normalize_scores(results: ResultSet, method: str = "minmax") -> ResultSet:
+    """Rescale scores so incomparable BM25/cosine scales become fusable while
+    KEEPING magnitude (unlike RRF, which discards it). method=minmax → [0,1];
+    zscore → standardized. (Weaviate hybrid-fusion.)"""
+    if not results:
+        return ResultSet()
+    scores = [h.score for h in results]
+    if method == "zscore":
+        mu = sum(scores) / len(scores)
+        var = sum((s - mu) ** 2 for s in scores) / len(scores)
+        sd = var ** 0.5 or 1.0
+        norm = [(s - mu) / sd for s in scores]
+    else:
+        lo, hi = min(scores), max(scores)
+        rng = (hi - lo) or 1.0
+        norm = [(s - lo) / rng for s in scores]
+    return ResultSet(Hit(id=h.id, score=float(n), document=h.document, query=h.query, store=h.store)
+                     for h, n in zip(results, norm))
+
+
+def relative_score_fusion(result_sets: Sequence[ResultSet], weights: Optional[Sequence[float]] = None,
+                          method: str = "minmax") -> ResultSet:
+    """Fuse by summing NORMALIZED scores (not ranks) — preserves how much better a
+    hit is, not just its position. Weaviate's default fusion since v1.24; often
+    beats RRF when score magnitudes are meaningful."""
+    weights = list(weights) if weights is not None else [1.0] * len(result_sets)
+    agg: dict[str, float] = {}
+    keep: dict[str, Hit] = {}
+    for rs, w in zip(result_sets, weights):
+        for h in normalize_scores(rs, method):
+            agg[h.id] = agg.get(h.id, 0.0) + w * h.score
+            if h.id not in keep or h.score > keep[h.id].score:
+                keep[h.id] = h
+    fused = [Hit(id=i, score=s, document=keep[i].document, query=keep[i].query, store=keep[i].store)
+             for i, s in agg.items()]
+    fused.sort(key=lambda h: h.score, reverse=True)
+    return ResultSet(fused)
+
+
+def diversity_quota(results: ResultSet, key: Callable[[Hit], Any],
+                    max_per_group: int = 1, top_k: Optional[int] = None) -> ResultSet:
+    """Enforce source/topic/entity diversity: at most ``max_per_group`` hits per
+    group (by ``key``) while walking down the ranking. (Vespa result diversity.)"""
+    counts: dict[Any, int] = {}
+    out: list[Hit] = []
+    for h in sorted(results, key=lambda x: x.score, reverse=True):
+        g = key(h)
+        if counts.get(g, 0) < max_per_group:
+            out.append(h)
+            counts[g] = counts.get(g, 0) + 1
+            if top_k and len(out) >= top_k:
+                break
+    return ResultSet(out)
+
+
+def confidence(results: ResultSet) -> dict[str, float]:
+    """Retrieval-confidence signals from the score curve: top score and the gap to
+    #2 (a large gap = a confident single winner). Feeds abstain/reformulate. (R³AG.)"""
+    hits = sorted(results, key=lambda h: h.score, reverse=True)
+    if not hits:
+        return {"top": 0.0, "gap": 0.0, "n": 0}
+    top = hits[0].score
+    gap = top - hits[1].score if len(hits) > 1 else top
+    return {"top": float(top), "gap": float(gap), "n": len(hits)}
+
+
+def abstain(results: ResultSet, min_top: float = 0.0, min_gap: float = 0.0) -> bool:
+    """True when the result is too weak/uncertain to trust (top score or score-gap
+    below threshold) — the agent should reformulate or say 'insufficient' rather
+    than answer from noise. (R³AG confidence gating.)"""
+    c = confidence(results)
+    return c["n"] == 0 or c["top"] < min_top or c["gap"] < min_gap
+
+
 def rerank(
     query: str,
     results: ResultSet,

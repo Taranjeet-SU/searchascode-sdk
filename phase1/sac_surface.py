@@ -31,15 +31,42 @@ Multi-representation / neighborhood-SHIFTING (reach docs a paraphrase can't):
 - sac.prf_search(query, top_k, feedback_k=5)   # Rocchio: move query toward retrieved docs' centroid
 - sac.hyde_search(query, top_k)                # embed a hypothetical ANSWER, search that region
 - sac.decompose_search(query, top_k, mode)     # per sub-question (new sub-topics)
-Refinement over ResultSets:
+Pool sizing (recover gold buried past rank 10 without a reranker):
+- sac.adaptive_search(query, mode, max_k=100, rel_band=0.1)  # return MORE when the score curve is flat
+- score_cutoff(results, method="band"|"knee")                # same, applied to an existing ResultSet
+Fusion / ranking / shaping over ResultSets:
+- sac.fuse([rs1, rs2, ...], weights=None)      # Reciprocal Rank Fusion (rank-based; scale-free)
+- relative_score_fusion([rs1, rs2], weights)   # fuse by NORMALIZED scores (keeps magnitude; often > RRF)
+- normalize_scores(results, "minmax"|"zscore") # make scores comparable before combining
 - sac.rerank(query, results, top_k)            # cross-encoder re-score (run on a WIDE pool)
 - sac.mmr(query, results, lambda_, top_k)      # diversify (relevance vs redundancy)
-- sac.fuse([rs1, rs2, ...], weights=None)      # RRF-fuse several ResultSets
+- diversity_quota(results, key=lambda h: h.get("field"), max_per_group=1)  # cap hits per source/topic
+- sac.semantic_dedup(results, threshold=0.85)  # collapse near-duplicate hits (not just exact ids)
 - sac.compress(query, results, keep)           # keep only the most relevant sentences
 - sac.hydrate(results)                          # fetch full doc text for hits
+Confidence / gating:
+- confidence(results) -> {top, gap, n}         # is there a confident winner? (top score + gap to #2)
+- abstain(results, min_top, min_gap) -> bool   # too weak/uncertain → reformulate instead of answering
 State across hops:  sac.remember(key, value) / sac.recall(key)
 ResultSet: .top(k) .ids() .texts() .where(pred) .dedup() .to_evidence(fields, max_chars)
-Bare helpers also in scope: fuse, rerank, dedup, mmr
+Bare helpers also in scope: fuse, rerank, dedup, mmr, normalize_scores, relative_score_fusion,
+  diversity_quota, score_cutoff, confidence, abstain
+
+## Decision rules — WHEN to call each primitive and how to CHAIN them
+Choose primitives by the query's shape and by what the SAMPLES tell you; do NOT run everything.
+- Natural-language question → start mode="dense" (or hybrid alpha=0.8). Keyword usually won't help.
+- Query has exact tokens (names, IDs, versions, tickers, error codes, a quoted phrase) → add
+  mode="keyword" or mode="regex".
+- Query needs 2+ facts / is multi-part → sac.decompose_search, then fuse the sub-results.
+- Dense looks unsure — flat score curve or small confidence(pool)["gap"] → sac.adaptive_search to widen
+  the pool, and/or sac.prf_search / sac.hyde_search to reach a different neighborhood.
+- Combining modes: use relative_score_fusion when score magnitudes are meaningful, else sac.fuse (RRF);
+  weight the more reliable mode higher (alpha / weights).
+- Redundant or one-source-dominated results → sac.semantic_dedup and/or diversity_quota before returning.
+- Precision matters AND a good reranker is available → sac.rerank a WIDE pool (top 30-50) → top 10.
+- abstain(pool, min_top, min_gap) is True (results too weak) → reformulate and retry; don't return noise.
+Typical chain: reformulate → retrieve (1-2 modes) → fuse → [dedup / diversify] → [rerank] →
+confidence-check → evidence.
 
 ## Retrieve smart — DENSE-FIRST, add other modes only when they earn their place
 Dense (semantic) retrieval is the strongest signal for natural-language questions. Keyword/BM25 helps

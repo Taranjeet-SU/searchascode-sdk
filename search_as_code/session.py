@@ -177,6 +177,26 @@ class Session:
         pool = self.search(query, top_k=max_k, mode=mode, filter=filter)
         return P.score_cutoff(pool, method=method, rel_band=rel_band, min_k=min_k, max_k=max_k)
 
+    def semantic_dedup(self, results: ResultSet, threshold: float = 0.85) -> ResultSet:
+        """Collapse near-duplicate results (cosine >= threshold on their embeddings),
+        keeping one representative per semantic cluster — distinct from exact-id dedup.
+        (SemDeDup.) Uses the session embedder on hit texts."""
+        import numpy as np
+
+        hits = sorted(results, key=lambda h: h.score, reverse=True)
+        texts = [h.text or "" for h in hits]
+        if not texts:
+            return ResultSet()
+        v = np.asarray(self.embedder.embed(texts), dtype=np.float32)
+        v = v / (np.linalg.norm(v, axis=1, keepdims=True) + 1e-9)
+        kept, kv = [], []
+        for h, vec in zip(hits, v):
+            if kv and max(float(vec @ k) for k in kv) >= threshold:
+                continue
+            kept.append(h)
+            kv.append(vec)
+        return ResultSet(kept)
+
     def mmr(self, query: str, results: ResultSet, lambda_: float = 0.5, top_k: int = 10) -> ResultSet:
         """Diversify results with Maximal Marginal Relevance (embeds ``query``)."""
         results = self.hydrate(results)
