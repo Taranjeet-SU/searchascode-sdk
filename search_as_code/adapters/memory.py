@@ -83,10 +83,10 @@ class MemoryStore(VectorStore):
             return ResultSet()
         docs = [d for d in self._docs.values() if d.text and matches(d.metadata, flt)]
         n = len(docs) or 1
-        df = Counter()
+        df: Counter = Counter()
         toks_by_id: dict[str, Counter] = {}
         for d in docs:
-            toks = Counter(_tokenize(d.text))
+            toks = Counter(_tokenize(d.text or ""))
             toks_by_id[d.id] = toks
             for t in set(toks):
                 df[t] += 1

@@ -50,7 +50,7 @@ class QwenReranker:
     _SUFFIX = "<|im_end|>\n<|im_start|>assistant\n<think>\n\n</think>\n\n"
 
     def __init__(self, model: str = "Qwen/Qwen3-Reranker-0.6B", device: str | None = None,
-                 max_length: int = 1024,
+                 max_length: int = 512,
                  instruction: str = "Given a query, retrieve passages that answer it"):
         self.model_name = model
         self._device = device

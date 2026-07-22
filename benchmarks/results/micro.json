@@ -1,0 +1,51 @@
+{
+  "pool_size": 200,
+  "E2_primitive_ops": {
+    "fuse(2xN)": {
+      "ms_per_call": 0.106,
+      "ops_per_sec": 9434.0,
+      "p95_ms": 0.13
+    },
+    "relative_score_fusion": {
+      "ms_per_call": 0.15,
+      "ops_per_sec": 6666.7,
+      "p95_ms": 0.151
+    },
+    "dedup": {
+      "ms_per_call": 0.014,
+      "ops_per_sec": 71428.6,
+      "p95_ms": 0.015
+    },
+    "score_cutoff(band)": {
+      "ms_per_call": 0.008,
+      "ops_per_sec": 125000.0,
+      "p95_ms": 0.008
+    },
+    "diversity_quota": {
+      "ms_per_call": 0.014,
+      "ops_per_sec": 71428.6,
+      "p95_ms": 0.014
+    },
+    "mmr(top10)": {
+      "ms_per_call": 6.212,
+      "ops_per_sec": 161.0,
+      "p95_ms": 6.239
+    },
+    "rerank(lexical)": {
+      "ms_per_call": 0.75,
+      "ops_per_sec": 1333.3,
+      "p95_ms": 0.756
+    },
+    "semantic_dedup": {
+      "ms_per_call": 13.636,
+      "ops_per_sec": 73.3,
+      "p95_ms": 13.787
+    },
+    "confidence": {
+      "ms_per_call": 0.006,
+      "ops_per_sec": 166666.7,
+      "p95_ms": 0.006
+    }
+  },
+  "_ts": "2026-07-22T03:16:22"
+}

@@ -6,7 +6,7 @@
   <img alt="python" src="https://img.shields.io/badge/python-3.10+-blue">
   <img alt="license" src="https://img.shields.io/badge/license-Apache--2.0-green">
   <img alt="backends" src="https://img.shields.io/badge/backends-memory·qdrant·chroma·pgvector·opensearch-orange">
-  <img alt="tests" src="https://img.shields.io/badge/tests-29%20passing-brightgreen">
+  <img alt="tests" src="https://img.shields.io/badge/tests-85%20passing-brightgreen">
 </p>
 
 **Search as Code** is an agentic retrieval harness: instead of calling a fixed
@@ -52,7 +52,7 @@ prompt-cache hit, and 100% of generated programs executed cleanly. Full write-up
 pip install -e .                 # core: in-memory backend, no services, no API key
 pip install -e '.[opensearch]'   # + OpenSearch     (also: qdrant / chroma / pgvector)
 python examples/opensearch_quickstart.py
-python -m pytest -q              # 21 unit tests (in-memory); +8 OpenSearch integration
+python -m pytest -q              # 77 unit tests (in-memory); +8 OpenSearch integration
 ```
 
 The base install ships a dependency-free embedder + in-memory backend, so the
@@ -82,6 +82,7 @@ executable spec.
 | [`docs/PRIMITIVES.md`](docs/PRIMITIVES.md) | the 320-primitive canonical taxonomy |
 | [`docs/DATABASES.md`](docs/DATABASES.md) | primitive × database support matrix |
 | [`docs/CACHING.md`](docs/CACHING.md) | passing the SDK surface to the LLM efficiently |
+| [`docs/SELECTION.md`](docs/SELECTION.md) | exposing the SDK in the prompt + how the LLM picks the right primitive (55 sources) |
 | [`docs/RESEARCH.md`](docs/RESEARCH.md) | 150-source research base |
 | [`phase1/`](phase1/) | OpenSearch benchmark: base vs tool-calling vs SAC + live UI |
 

@@ -1,0 +1,23 @@
+{
+  "E4_embedding_throughput": {
+    "device": "cuda",
+    "by_batch_size": {
+      "32": {
+        "texts": 2000,
+        "s": 0.24,
+        "texts_per_sec": 8332.9
+      },
+      "128": {
+        "texts": 2000,
+        "s": 0.167,
+        "texts_per_sec": 11978.5
+      },
+      "256": {
+        "texts": 2000,
+        "s": 0.162,
+        "texts_per_sec": 12342.9
+      }
+    }
+  },
+  "_ts": "2026-07-22T03:18:00"
+}

@@ -17,7 +17,7 @@ from __future__ import annotations
 import abc
 from typing import Any, Optional, Sequence
 
-from ..types import Capabilities, Document, Hit, ResultSet
+from ..types import Capabilities, Document, ResultSet
 
 
 class VectorStore(abc.ABC):

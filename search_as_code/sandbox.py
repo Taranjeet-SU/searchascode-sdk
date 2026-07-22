@@ -111,6 +111,6 @@ def _safe_builtins() -> dict[str, Any]:
         "abs", "all", "any", "bool", "dict", "enumerate", "filter", "float",
         "int", "len", "list", "map", "max", "min", "print", "range", "reversed",
         "round", "set", "sorted", "str", "sum", "tuple", "zip", "isinstance",
-        "getattr", "hasattr", "True", "False", "None", "Exception", "sorted",
+        "getattr", "hasattr", "True", "False", "None", "Exception",
     }
     return {k: getattr(builtins, k) for k in allow if hasattr(builtins, k)}

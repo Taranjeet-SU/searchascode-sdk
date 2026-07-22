@@ -34,7 +34,7 @@ def main(n=60):
                                  show_progress_bar=False).tolist()
     gen = LLM()
     s = sac.Session("opensearch", index=INDEX, dim=DIM, hosts=[common.OS_HOST], embedder=embed,
-                    reranker=sac.CrossEncoderReranker("cross-encoder/ms-marco-MiniLM-L-12-v2"),
+                    reranker=sac.QwenReranker(),
                     generator=gen.as_generator())
     chat = agents.lc_chat()
     s.reranker("warm", ["a", "b"])

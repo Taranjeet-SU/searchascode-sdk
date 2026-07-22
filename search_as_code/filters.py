@@ -14,6 +14,8 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
+from .errors import InvalidFilterError
+
 _OPS = {
     "$eq": lambda a, b: a == b,
     "$ne": lambda a, b: a != b,
@@ -47,13 +49,39 @@ def matches(metadata: Mapping[str, Any], flt: Mapping[str, Any] | None) -> bool:
             for op, operand in cond.items():
                 fn = _OPS.get(op)
                 if fn is None:
-                    raise ValueError(f"Unknown filter operator: {op}")
+                    raise InvalidFilterError("unknown filter operator", operator=op)
                 if not fn(value, operand):
                     return False
         else:
             if metadata.get(key) != cond:
                 return False
     return True
+
+
+_LOGICAL = {"$and", "$or"}
+
+
+def validate(flt: Mapping[str, Any] | None) -> None:
+    """Raise :class:`InvalidFilterError` for malformed filters (unknown operators,
+    bad logical structure). Called at the boundary so every backend — including
+    server-side adapters that would otherwise silently drop bad operators — fails
+    fast with a clear, typed error."""
+    if not flt:
+        return
+    if not isinstance(flt, Mapping):
+        raise InvalidFilterError("filter must be a mapping", got=type(flt).__name__)
+    for key, cond in flt.items():
+        if key in _LOGICAL:
+            if not isinstance(cond, (list, tuple)):
+                raise InvalidFilterError(f"{key} expects a list of filters", operator=key)
+            for c in cond:
+                validate(c)
+        elif key == "$not":
+            validate(cond)
+        elif isinstance(cond, Mapping) and any(k.startswith("$") for k in cond):
+            for op in cond:
+                if op not in _OPS:
+                    raise InvalidFilterError("unknown filter operator", operator=op)
 
 
 def normalize(flt: Mapping[str, Any] | None) -> dict[str, Any]:

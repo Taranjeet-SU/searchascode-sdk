@@ -1,0 +1,78 @@
+{
+  "A2_query_latency_vs_corpus": {
+    "1000": {
+      "n": 200,
+      "mean_ms": 0.186,
+      "p50_ms": 0.211,
+      "p95_ms": 0.214,
+      "p99_ms": 0.225,
+      "qps": 5377.0
+    },
+    "10000": {
+      "n": 200,
+      "mean_ms": 2.606,
+      "p50_ms": 2.579,
+      "p95_ms": 2.92,
+      "p99_ms": 3.655,
+      "qps": 383.8
+    },
+    "50000": {
+      "n": 200,
+      "mean_ms": 15.301,
+      "p50_ms": 14.889,
+      "p95_ms": 16.683,
+      "p99_ms": 18.734,
+      "qps": 65.4
+    }
+  },
+  "A3_build_and_footprint": {
+    "1000": {
+      "build_s": 0.003,
+      "matrix_mb": 0.5
+    },
+    "10000": {
+      "build_s": 0.02,
+      "matrix_mb": 5.1
+    },
+    "50000": {
+      "build_s": 0.105,
+      "matrix_mb": 25.6
+    }
+  },
+  "A4_fanout_scaling": {
+    "1": {
+      "total_s": 0.0374,
+      "ms_per_query": 37.421
+    },
+    "4": {
+      "total_s": 0.0151,
+      "ms_per_query": 3.787
+    },
+    "8": {
+      "total_s": 0.0298,
+      "ms_per_query": 3.73
+    },
+    "16": {
+      "total_s": 0.0561,
+      "ms_per_query": 3.505
+    }
+  },
+  "A1_ingest_throughput": {
+    "100": {
+      "docs": 5000,
+      "total_s": 0.669,
+      "docs_per_sec": 7474.4
+    },
+    "500": {
+      "docs": 5000,
+      "total_s": 0.618,
+      "docs_per_sec": 8096.3
+    },
+    "1000": {
+      "docs": 5000,
+      "total_s": 0.583,
+      "docs_per_sec": 8583.6
+    }
+  },
+  "_ts": "2026-07-22T03:17:07"
+}

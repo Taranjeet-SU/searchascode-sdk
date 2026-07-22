@@ -27,7 +27,10 @@ indexed in **OpenSearch**, using the `search_as_code` SDK.
 ## Reproduce
 
 ```bash
-# 0. OpenSearch must be running (tarball, security off, single node) on :9200
+# 0a. install the phase1 deps (embedder, torch, langchain, requests) on top of the SDK
+pip install -e '.[phase1]'
+
+# 0b. OpenSearch must be running (tarball, security off, single node) on :9200
 #    cd ~/opensearch_stack/opensearch-2.17.1 && OPENSEARCH_JAVA_OPTS="-Xms4g -Xmx4g" bin/opensearch
 
 # 1. ingest FiQA (idempotent; ~1 min on GPU)

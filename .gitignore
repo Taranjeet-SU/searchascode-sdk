@@ -14,3 +14,9 @@ venv/
 phase1/data/
 phase1/runs/
 .env
+phase2/data/
+phase2/runs/
+phase3/*.log
+phase3/*.json
+phase3/runs/
+benchmarks/results/*.log

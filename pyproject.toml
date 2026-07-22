@@ -21,7 +21,16 @@ chroma = ["chromadb>=0.5"]
 pgvector = ["psycopg[binary]>=3.1", "pgvector>=0.2"]
 opensearch = ["opensearch-py>=2.4"]
 providers = ["openai>=1.0"]
-dev = ["pytest>=7", "pytest-cov"]
+# Everything the phase1 benchmark/functional-test need beyond the core SDK.
+phase1 = [
+    "opensearch-py>=2.4",
+    "openai>=1.0",
+    "sentence-transformers>=2.2",
+    "torch>=2.0",
+    "langchain-openai>=0.1",
+    "requests>=2.28",
+]
+dev = ["pytest>=7", "pytest-cov", "ruff>=0.4", "mypy>=1.8"]
 all = [
     "qdrant-client>=1.7",
     "chromadb>=0.5",
@@ -35,3 +44,28 @@ include = ["search_as_code*"]
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
+addopts = "-q"
+
+[tool.coverage.run]
+source = ["search_as_code"]
+omit = ["*/adapters/qdrant.py", "*/adapters/chroma.py", "*/adapters/pgvector.py"]
+
+[tool.coverage.report]
+exclude_lines = ["pragma: no cover", "raise NotImplementedError", "if TYPE_CHECKING:"]
+
+[tool.ruff]
+line-length = 110
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "B"]
+ignore = ["E501", "B008", "B905", "B027"]
+
+[tool.mypy]
+# Target 3.12 so mypy can parse numpy's stubs (which use 3.12 `type` statements);
+# runtime 3.10 support is enforced by ruff target-version and the CI test matrix.
+python_version = "3.12"
+ignore_missing_imports = true
+warn_unused_ignores = false
+check_untyped_defs = true
+exclude = ["phase1/", "examples/", "tests/"]

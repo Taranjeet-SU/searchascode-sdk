@@ -15,6 +15,8 @@ import hashlib
 import math
 from typing import Callable, Protocol, Sequence, runtime_checkable
 
+from .errors import ConfigurationError, InvalidEmbedderError, MissingDependencyError
+
 
 @runtime_checkable
 class Embedder(Protocol):
@@ -27,7 +29,10 @@ def as_embedder(obj: "Embedder | Callable[[Sequence[str]], list[list[float]]]") 
         return obj
     if callable(obj):
         return _CallableEmbedder(obj)
-    raise TypeError("embedder must be an Embedder or a callable(list[str]) -> vectors")
+    raise InvalidEmbedderError(
+        "embedder must be an Embedder or a callable(list[str]) -> vectors",
+        got=type(obj).__name__,
+    )
 
 
 class _CallableEmbedder:
@@ -74,7 +79,7 @@ def get_embedder(provider: str, **kwargs) -> Embedder:
         return HashEmbedder(**kwargs)
     if provider == "openai":
         return _OpenAIEmbedder(**kwargs)
-    raise ValueError(f"Unknown embedding provider: {provider!r}")
+    raise ConfigurationError("unknown embedding provider", provider=provider)
 
 
 class _OpenAIEmbedder:
@@ -82,7 +87,7 @@ class _OpenAIEmbedder:
         try:
             from openai import OpenAI
         except ImportError as e:  # pragma: no cover - optional dep
-            raise ImportError("pip install 'search-as-code[providers]' to use OpenAI embeddings") from e
+            raise MissingDependencyError("openai", extra="search-as-code[providers]") from e
         self._client = OpenAI(**client_kwargs)
         self._model = model
 

@@ -8,6 +8,8 @@ from __future__ import annotations
 
 from typing import Any, Optional, Sequence
 
+from .._resilience import DEFAULT_BATCH_SIZE, chunked
+from ..errors import MissingDependencyError
 from ..filters import normalize
 from ..types import Capabilities, Document, Hit, ResultSet
 from .base import VectorStore
@@ -19,27 +21,28 @@ _OP_MAP = {"$eq": "$eq", "$ne": "$ne", "$gt": "$gt", "$gte": "$gte",
 class ChromaStore(VectorStore):
     backend = "chroma"
 
-    def __init__(self, collection: str = "sac", persist_path: Optional[str] = None, **_: Any):
+    def __init__(self, collection: str = "sac", persist_path: Optional[str] = None,
+                 batch_size: int = DEFAULT_BATCH_SIZE, **_: Any):
         try:
             import chromadb
         except ImportError as e:  # pragma: no cover - optional dep
-            raise ImportError("pip install 'search-as-code[chroma]'") from e
+            raise MissingDependencyError("chromadb", extra="search-as-code[chroma]") from e
         self._client = chromadb.PersistentClient(path=persist_path) if persist_path else chromadb.Client()
         self._col = self._client.get_or_create_collection(collection)
+        self.batch_size = batch_size
 
     def capabilities(self) -> Capabilities:
         return Capabilities(dense=True, keyword=False, hybrid=False, metadata_filter=True)
 
     def upsert(self, docs: Sequence[Document]) -> None:
         docs = [d for d in docs if d.vector is not None]
-        if not docs:
-            return
-        self._col.upsert(
-            ids=[d.id for d in docs],
-            embeddings=[d.vector for d in docs],
-            documents=[d.text or "" for d in docs],
-            metadatas=[d.metadata or {"_": ""} for d in docs],
-        )
+        for batch in chunked(docs, self.batch_size):
+            self._col.upsert(
+                ids=[d.id for d in batch],
+                embeddings=[d.vector for d in batch],
+                documents=[d.text or "" for d in batch],
+                metadatas=[d.metadata or {"_": ""} for d in batch],
+            )
 
     def _to_where(self, flt: Optional[dict]) -> Optional[dict]:
         if not flt:

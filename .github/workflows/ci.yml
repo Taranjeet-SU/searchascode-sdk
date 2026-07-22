@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  test:
+    name: unit (py${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+          cache: pip
+      - name: Install (core + dev)
+        run: pip install -e '.[dev]'
+      - name: Lint (ruff)
+        run: ruff check search_as_code
+      - name: Type-check (mypy)
+        run: mypy search_as_code
+      - name: Unit tests + coverage
+        run: pytest --cov --cov-report=term-missing
+
+  integration:
+    name: opensearch integration
+    runs-on: ubuntu-latest
+    services:
+      opensearch:
+        image: opensearchproject/opensearch:2.17.1
+        env:
+          discovery.type: single-node
+          plugins.security.disabled: "true"
+          OPENSEARCH_INITIAL_ADMIN_PASSWORD: Sac_Dev_2024!
+          OPENSEARCH_JAVA_OPTS: -Xms1g -Xmx1g
+        ports:
+          - 9200:9200
+        options: >-
+          --health-cmd "curl -s http://localhost:9200/_cluster/health || exit 1"
+          --health-interval 10s --health-timeout 5s --health-retries 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Install (opensearch + dev)
+        run: pip install -e '.[opensearch,dev]'
+      - name: Wait for OpenSearch
+        run: |
+          for i in $(seq 1 30); do
+            curl -s http://localhost:9200 && break
+            echo "waiting for opensearch ($i)"; sleep 5
+          done
+      - name: Integration tests
+        run: pytest tests/test_opensearch.py -v

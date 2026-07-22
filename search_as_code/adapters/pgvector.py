@@ -10,6 +10,7 @@ from __future__ import annotations
 import json
 from typing import Any, Optional, Sequence
 
+from ..errors import MissingDependencyError
 from ..filters import normalize
 from ..types import Capabilities, Document, Hit, ResultSet
 from .base import VectorStore
@@ -25,7 +26,7 @@ class PgVectorStore(VectorStore):
             import psycopg
             from pgvector.psycopg import register_vector
         except ImportError as e:  # pragma: no cover - optional dep
-            raise ImportError("pip install 'search-as-code[pgvector]'") from e
+            raise MissingDependencyError("psycopg", extra="search-as-code[pgvector]") from e
         self._conn = psycopg.connect(dsn, autocommit=True)
         self._conn.execute("CREATE EXTENSION IF NOT EXISTS vector")
         register_vector(self._conn)
@@ -59,7 +60,8 @@ class PgVectorStore(VectorStore):
     def _where(self, flt: Optional[dict]) -> tuple[str, list]:
         if not flt:
             return "", []
-        clauses, params = [], []
+        clauses: list[str] = []
+        params: list[Any] = []
         for field_name, cond in normalize(flt).items():
             if field_name.startswith("$"):
                 continue
@@ -68,7 +70,7 @@ class PgVectorStore(VectorStore):
                     clauses.append(f"metadata->>%s {_SQL_OP[op]} %s")
                     params.extend([field_name, str(val)])
                 elif op == "$in":
-                    clauses.append(f"metadata->>%s = ANY(%s)")
+                    clauses.append("metadata->>%s = ANY(%s)")
                     params.extend([field_name, [str(v) for v in val]])
         return (" WHERE " + " AND ".join(clauses)) if clauses else "", params
 

@@ -1,0 +1,13 @@
+{
+  "retry_wrapper": {
+    "direct_us": 0.0203,
+    "wrapped_us": 0.1607,
+    "overhead_us": 0.1404
+  },
+  "chunked": {
+    "items": 1000000,
+    "s": 0.0222,
+    "items_per_sec": 45124182.0
+  },
+  "_ts": "2026-07-22T03:16:22"
+}

@@ -7,8 +7,11 @@ scores, and declare capabilities honestly.
 
 from __future__ import annotations
 
+import uuid
 from typing import Any, Optional, Sequence
 
+from .._resilience import DEFAULT_BATCH_SIZE, chunked
+from ..errors import MissingDependencyError
 from ..filters import normalize
 from ..types import Capabilities, Document, Hit, ResultSet
 from .base import VectorStore
@@ -26,16 +29,18 @@ class QdrantStore(VectorStore):
         location: Optional[str] = ":memory:",
         dim: Optional[int] = None,
         distance: str = "Cosine",
+        batch_size: int = DEFAULT_BATCH_SIZE,
         **client_kwargs: Any,
     ):
         try:
             from qdrant_client import QdrantClient
             from qdrant_client.http import models as qm
         except ImportError as e:  # pragma: no cover - optional dep
-            raise ImportError("pip install 'search-as-code[qdrant]'") from e
+            raise MissingDependencyError("qdrant-client", extra="search-as-code[qdrant]") from e
         self._qm = qm
         self._client = QdrantClient(url=url, location=None if url else location, **client_kwargs)
         self.collection = collection
+        self.batch_size = batch_size
         self._dim = dim
         self._distance = distance
         if dim and not self._client.collection_exists(collection):
@@ -47,15 +52,25 @@ class QdrantStore(VectorStore):
     def capabilities(self) -> Capabilities:
         return Capabilities(dense=True, keyword=False, hybrid=False, metadata_filter=True)
 
+    @staticmethod
+    def _pid(doc_id: str) -> Any:
+        """Qdrant point ids must be unsigned int or UUID. Pass ints through;
+        map arbitrary strings to a deterministic uuid5 (original kept in payload)."""
+        s = str(doc_id)
+        if s.isdigit():
+            return int(s)
+        return str(uuid.uuid5(uuid.NAMESPACE_URL, s))
+
     def upsert(self, docs: Sequence[Document]) -> None:
         qm = self._qm
         points = [
-            qm.PointStruct(id=d.id, vector=d.vector, payload={"text": d.text, **d.metadata})
+            qm.PointStruct(id=self._pid(d.id), vector=d.vector,
+                           payload={"text": d.text, "_sac_id": str(d.id), **d.metadata})
             for d in docs
             if d.vector is not None
         ]
-        if points:
-            self._client.upsert(self.collection, points=points)
+        for batch in chunked(points, self.batch_size):
+            self._client.upsert(self.collection, points=batch)
 
     def _to_filter(self, flt: Optional[dict]) -> Any:
         if not flt:
@@ -75,38 +90,44 @@ class QdrantStore(VectorStore):
         return qm.Filter(must=must) if must else None
 
     def query_vector(self, vector, top_k=10, flt=None) -> ResultSet:
-        res = self._client.search(
-            self.collection,
-            query_vector=list(vector),
-            limit=top_k,
-            query_filter=self._to_filter(flt),
-            with_payload=True,
-        )
+        flt_ = self._to_filter(flt)
+        if hasattr(self._client, "query_points"):  # qdrant-client >= 1.10
+            res = self._client.query_points(
+                self.collection, query=list(vector), limit=top_k,
+                query_filter=flt_, with_payload=True,
+            ).points
+        else:  # older clients
+            res = self._client.search(
+                self.collection, query_vector=list(vector), limit=top_k,
+                query_filter=flt_, with_payload=True,
+            )
         hits = []
         for p in res:
             payload = dict(p.payload or {})
             text = payload.pop("text", None)
+            did = payload.pop("_sac_id", str(p.id))  # restore the original id
             hits.append(
                 Hit(
-                    id=str(p.id),
+                    id=did,
                     score=float(p.score),  # Qdrant cosine similarity: larger is better
-                    document=Document(id=str(p.id), text=text, metadata=payload),
+                    document=Document(id=did, text=text, metadata=payload),
                     store=self.backend,
                 )
             )
         return ResultSet(hits)
 
     def get(self, ids: Sequence[str]) -> list[Document]:
-        recs = self._client.retrieve(self.collection, ids=list(ids), with_payload=True)
+        recs = self._client.retrieve(self.collection, ids=[self._pid(i) for i in ids], with_payload=True)
         out = []
         for r in recs:
             payload = dict(r.payload or {})
             text = payload.pop("text", None)
-            out.append(Document(id=str(r.id), text=text, metadata=payload))
+            did = payload.pop("_sac_id", str(r.id))
+            out.append(Document(id=did, text=text, metadata=payload))
         return out
 
     def delete(self, ids: Sequence[str]) -> None:
-        self._client.delete(self.collection, points_selector=list(ids))
+        self._client.delete(self.collection, points_selector=[self._pid(i) for i in ids])
 
     def count(self) -> int:
         return self._client.count(self.collection).count

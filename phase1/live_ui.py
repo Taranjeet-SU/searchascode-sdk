@@ -2,9 +2,12 @@
 
     streamlit run phase1/live_ui.py --server.port 8501 --server.address 0.0.0.0
 
-Two tabs:
+Three tabs:
 - Live query: run base / tool-calling / SAC now; see reasoning, generated code,
   tool steps, LLM-as-judge verdicts, retry hops, ids, latency, cost.
+- Primitives lab: run the model-free SDK primitives directly (smart_search,
+  prf_search, adaptive_search, semantic_dedup, mmr, diversity_quota) and see the
+  retrieval-confidence / abstain signal — no LLM, no cost.
 - History: click a past search and inspect exactly what happened at each hop.
 
 Requires OpenSearch on :9200 with FiQA ingested, and OPENAI_API_KEY (from
@@ -25,6 +28,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 import streamlit as st
 
 import search_as_code as sac
+from search_as_code import primitives as P
 from phase1 import agents, common, sac_surface
 from phase1.benchmark import _merge_gen_usage
 from phase1.llm import LLM
@@ -129,7 +133,7 @@ def _run(fn, query, max_retries):
     return r
 
 
-tab_live, tab_hist = st.tabs(["🔎 Live query", "🕘 History"])
+tab_live, tab_lab, tab_hist = st.tabs(["🔎 Live query", "🧪 Primitives lab", "🕘 History"])
 
 # ============================================================ LIVE
 with tab_live:
@@ -199,6 +203,109 @@ with tab_live:
                              "recall": _recall(tool["ids"], gold)},
         })
         st.success("Saved to History tab.")
+
+# ============================================================ PRIMITIVES LAB
+with tab_lab:
+    st.markdown("Run the **model-free** SDK primitives directly on the live FiQA index — "
+                "no LLM, no cost. Pick a retrieval strategy, chain post-processors, and see "
+                "the effect plus the retrieval-**confidence** signal.")
+
+    lc1, lc2 = st.columns([3, 2])
+    with lc2:
+        lab_pick = st.selectbox("…or pick a labeled FiQA query", ["(type your own)"] + samples,
+                                key="lab_pick")
+    with lc1:
+        lab_default = "" if lab_pick == "(type your own)" else lab_pick
+        lab_query = st.text_input("Query", value=lab_default, key="lab_query",
+                                  placeholder="e.g. Can I deposit an IRA CD into a Roth 401k?")
+
+    strat = st.radio(
+        "Retrieval strategy",
+        ["dense", "hybrid", "smart_search", "prf_search", "adaptive_search"],
+        horizontal=True,
+        help="smart_search = normalize + boost rare exact tokens · prf_search = Rocchio pseudo-"
+             "relevance feedback · adaptive_search = size the result set from the score curve.",
+    )
+    pc = st.columns(4)
+    pool_k = pc[0].slider("pool / top_k", 10, 100, 30, key="lab_pool")
+    alpha_h = pc[1].slider("hybrid alpha (dense weight)", 0.0, 1.0, 0.8, 0.1,
+                           disabled=strat != "hybrid")
+    if strat == "prf_search":
+        fb_k = pc[2].slider("prf feedback_k", 3, 20, 5)
+        prf_beta = pc[3].slider("prf beta (centroid pull)", 0.0, 2.0, 0.7, 0.1)
+    elif strat == "adaptive_search":
+        adaptive_method = pc[2].selectbox("cutoff method", ["band", "knee"])
+        rel_band = pc[3].slider("band width", 0.02, 0.5, 0.1, 0.02)
+
+    st.markdown("**Post-processors** (chained in order):")
+    xc = st.columns(3)
+    do_dedup = xc[0].checkbox("semantic_dedup", help="collapse near-duplicate hits (SemDeDup)")
+    dedup_th = xc[0].slider("dedup threshold", 0.70, 0.99, 0.85, 0.01, disabled=not do_dedup)
+    do_mmr = xc[1].checkbox("mmr diversify", help="relevance vs redundancy (Carbonell & Goldstein)")
+    mmr_lambda = xc[1].slider("mmr λ (relevance↔diversity)", 0.0, 1.0, 0.5, 0.1, disabled=not do_mmr)
+    do_div = xc[2].checkbox("diversity_quota", help="cap hits per metadata group (Vespa)")
+    div_field = xc[2].text_input("group-by metadata field", value="",
+                                 disabled=not do_div,
+                                 help="e.g. 'source' or 'author'. FiQA has no such field, so this "
+                                      "is best shown on a backend with source/topic metadata.")
+    div_max = xc[2].slider("max per group", 1, 5, 1, disabled=not do_div)
+
+    gc = st.columns(2)
+    min_top = gc[0].slider("abstain if top score <", 0.0, 1.0, 0.0, 0.05,
+                           help="R³AG confidence gating: flag results too weak to trust.")
+    min_gap = gc[1].slider("abstain if top↔#2 gap <", 0.0, 0.5, 0.0, 0.02)
+
+    if st.button("▶ Run primitives", type="primary", key="lab_go") and lab_query.strip():
+        q = lab_query.strip()
+        gold = set(qrels.get(text2qid.get(q, ""), {}).keys())
+        steps: list[str] = []
+        with st.spinner("Running primitives (embedder on GPU)…"):
+            t0 = time.time()
+            if strat == "dense":
+                res = session.search(q, top_k=pool_k, mode="dense"); steps.append(f'search(q, top_k={pool_k}, mode="dense")')
+            elif strat == "hybrid":
+                res = session.search(q, top_k=pool_k, mode="hybrid", alpha=alpha_h); steps.append(f'search(q, top_k={pool_k}, mode="hybrid", alpha={alpha_h})')
+            elif strat == "smart_search":
+                res = session.smart_search(q, top_k=pool_k); steps.append(f"smart_search(q, top_k={pool_k})")
+            elif strat == "prf_search":
+                res = session.prf_search(q, top_k=pool_k, feedback_k=fb_k, beta=prf_beta); steps.append(f"prf_search(q, top_k={pool_k}, feedback_k={fb_k}, beta={prf_beta})")
+            else:  # adaptive_search
+                res = session.adaptive_search(q, method=adaptive_method, rel_band=rel_band, max_k=pool_k); steps.append(f'adaptive_search(q, method="{adaptive_method}", rel_band={rel_band}, max_k={pool_k})')
+            res = session.hydrate(res)
+            if do_dedup:
+                res = session.semantic_dedup(res, threshold=dedup_th); steps.append(f"semantic_dedup(res, threshold={dedup_th})")
+            if do_mmr:
+                res = session.mmr(q, res, lambda_=mmr_lambda, top_k=pool_k); steps.append(f"mmr(q, res, lambda_={mmr_lambda}, top_k={pool_k})")
+            if do_div and div_field.strip():
+                f = div_field.strip()
+                res = P.diversity_quota(res, key=lambda h: h.get(f), max_per_group=div_max); steps.append(f'diversity_quota(res, key=lambda h: h.get("{f}"), max_per_group={div_max})')
+            dt = time.time() - t0
+            conf = P.confidence(res)
+            weak = P.abstain(res, min_top=min_top, min_gap=min_gap)
+
+        st.caption("Equivalent SAC code (what the agent would write):")
+        st.code("\n".join(f"res = sac.{s}" for s in steps), language="python")
+
+        mcols = st.columns(4)
+        mcols[0].metric("results", conf["n"])
+        mcols[1].metric("top score", f'{conf["top"]:.3f}')
+        mcols[2].metric("top↔#2 gap", f'{conf["gap"]:.3f}')
+        rc = _recall(res.ids(), gold)
+        mcols[3].metric("Recall@10", rc if rc is not None else "—")
+        st.caption(f"⏱️ {dt*1000:.0f} ms · model-free · $0.00")
+
+        if weak:
+            st.warning("⚠️ **abstain** — results are below the confidence threshold "
+                       "(weak top score or small score gap). The agent should reformulate "
+                       "or report 'insufficient evidence' rather than answer from noise.")
+        else:
+            st.success("✅ confidence gate passed.")
+
+        if gold:
+            st.caption(f"Labeled query — {len(gold)} gold docs; ✅ marks a hit.")
+        st.subheader(f"Top results ({strat})")
+        _snippets(res.ids(), gold)
+
 
 # ============================================================ HISTORY
 with tab_hist:

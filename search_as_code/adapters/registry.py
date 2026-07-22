@@ -11,6 +11,7 @@ from __future__ import annotations
 
 from typing import Any, Callable
 
+from ..errors import BackendNotFoundError
 from .base import VectorStore
 from .memory import MemoryStore
 
@@ -42,12 +43,26 @@ def _load_opensearch(**opts: Any) -> VectorStore:
     return OpenSearchStore(**opts)
 
 
+def _load_faiss(**opts: Any) -> VectorStore:
+    from .faiss_store import FaissStore
+
+    return FaissStore(**opts)
+
+
+def _load_sqlite(**opts: Any) -> VectorStore:
+    from .sqlite_store import SqliteStore
+
+    return SqliteStore(**opts)
+
+
 _REGISTRY: dict[str, Callable[..., VectorStore]] = {
     "memory": MemoryStore,
     "qdrant": _load_qdrant,
     "chroma": _load_chroma,
     "pgvector": _load_pgvector,
     "opensearch": _load_opensearch,
+    "faiss": _load_faiss,
+    "sqlite": _load_sqlite,
 }
 
 
@@ -63,7 +78,7 @@ def connect(backend: str = "memory", **opts: Any) -> VectorStore:
     try:
         factory = _REGISTRY[backend]
     except KeyError:
-        raise ValueError(
-            f"Unknown backend {backend!r}. Available: {', '.join(available())}"
+        raise BackendNotFoundError(
+            "unknown backend", backend=backend, available=available()
         ) from None
     return factory(**opts)

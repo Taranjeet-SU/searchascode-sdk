@@ -16,6 +16,8 @@ from __future__ import annotations
 
 from typing import Any, Optional, Sequence
 
+from .._resilience import DEFAULT_BATCH_SIZE, chunked, with_retry
+from ..errors import BackendError, MissingDependencyError
 from ..filters import normalize
 from ..types import Capabilities, Document, Hit, ResultSet
 from .base import VectorStore
@@ -38,27 +40,45 @@ class OpenSearchStore(VectorStore):
         space_type: str = "cosinesimil",
         text_field: str = "text",
         vector_field: str = "vector",
+        timeout: float = 30.0,
+        max_retries: int = 3,
+        batch_size: int = DEFAULT_BATCH_SIZE,
         **client_kwargs: Any,
     ):
         try:
             from opensearchpy import OpenSearch
         except ImportError as e:  # pragma: no cover - optional dep
-            raise ImportError("pip install opensearch-py") from e
+            raise MissingDependencyError("opensearch-py", extra="search-as-code[opensearch]") from e
         self.index = index
         self.dim = dim
         self.text_field = text_field
         self.vector_field = vector_field
         self._space = space_type
+        self.batch_size = batch_size
+        # Lean on the client's native resilience for transient connection/timeout
+        # failures (retry_on_timeout), and wrap our own calls in BackendError so
+        # callers get one typed failure regardless of backend.
         self.client = OpenSearch(
             hosts=hosts or [{"host": host, "port": port}],
             http_auth=http_auth,
             use_ssl=use_ssl,
             verify_certs=False,
             ssl_show_warn=False,
+            timeout=timeout,
+            max_retries=max_retries,
+            retry_on_timeout=True,
             **client_kwargs,
         )
         if dim is not None:
             self.ensure_index(dim)
+
+    def _search(self, body: dict) -> dict:
+        """One choke point for reads: wrap transport errors as BackendError."""
+        try:
+            return self.client.search(index=self.index, body=body)
+        except Exception as e:  # opensearchpy transport/connection errors
+            raise BackendError("opensearch search failed", index=self.index,
+                               cause=type(e).__name__) from e
 
     # ---- index lifecycle -------------------------------------------------
     def ensure_index(self, dim: int) -> None:
@@ -104,8 +124,15 @@ class OpenSearchStore(VectorStore):
             if d.vector is not None:
                 src[self.vector_field] = list(d.vector)
             actions.append({"_index": self.index, "_id": d.id, "_source": src})
-        if actions:
-            bulk(self.client, actions, refresh=True)
+        if not actions:
+            return
+        # Batch large ingests so a single request can't blow past body-size limits,
+        # and retry each batch with backoff on transient failures.
+        batches = list(chunked(actions, self.batch_size))
+        for i, batch in enumerate(batches):
+            refresh = i == len(batches) - 1  # refresh once, on the final batch
+            with_retry(bulk, self.client, batch, refresh=refresh,
+                       backend="opensearch", op="bulk")
 
     # ---- filter translation ---------------------------------------------
     def _to_filter(self, flt: Optional[dict]) -> list[dict]:
@@ -151,12 +178,12 @@ class OpenSearchStore(VectorStore):
         if fclauses:
             knn["filter"] = {"bool": {"must": fclauses}}
         body = {"size": top_k, "query": {"knn": {self.vector_field: knn}}}
-        return self._hits(self.client.search(index=self.index, body=body))
+        return self._hits(self._search(body))
 
     def query_keyword(self, text, top_k=10, flt=None) -> ResultSet:
         must = [{"match": {self.text_field: text}}]
         body = {"size": top_k, "query": {"bool": {"must": must, "filter": self._to_filter(flt)}}}
-        return self._hits(self.client.search(index=self.index, body=body))
+        return self._hits(self._search(body))
 
     def query_hybrid(self, vector, text, top_k=10, flt=None, alpha=0.5) -> ResultSet:
         # Portable hybrid: run both, fuse with RRF in-SDK (no server pipeline needed).
@@ -176,7 +203,7 @@ class OpenSearchStore(VectorStore):
                 "filter": self._to_filter(flt),
             }},
         }
-        return self._hits(self.client.search(index=self.index, body=body))
+        return self._hits(self._search(body))
 
     # ---- analysis-class primitive ---------------------------------------
     def aggregate(self, aggs: dict, flt: Optional[dict] = None, size: int = 0) -> dict:
@@ -185,7 +212,7 @@ class OpenSearchStore(VectorStore):
         fclauses = self._to_filter(flt)
         if fclauses:
             body["query"] = {"bool": {"filter": fclauses}}
-        return self.client.search(index=self.index, body=body).get("aggregations", {})
+        return self._search(body).get("aggregations", {})
 
     # ---- fetch / admin ---------------------------------------------------
     def get(self, ids: Sequence[str]) -> list[Document]:
