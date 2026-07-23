@@ -2,6 +2,20 @@
 
 Running log of everything built/changed/learned. Newest first.
 
+## Phase 4 — answer-generation benchmark (standard)
+- Generic RAG answer-gen eval: `phase4/metrics.py` (SQuAD EM/token-F1 + bootstrap 95% CI),
+  `phase4/answer_gen.py` (arms: closed-book / vanilla-RAG / tool-RAG / SAC; shared generator+corpus;
+  closed-book = contamination control).
+- **HotpotQA (n=200, gpt-4.1-mini):** SAC EM **0.520**/F1 **0.673** > tool 0.500/0.659 > vanilla
+  0.470/0.626 > closed-book 0.310/0.423. SAC tops answer quality; retrieval adds +0.25 F1 over closed-book.
+- **Generalizable learning:** on a domain the generator already knows well, retrieval lifts
+  *citation/source-grounding* far more than final-answer text — measure BOTH answer and citation.
+- **Gotcha (custom GTE-v1.5 / "new"-arch embedders via transformers):** meta-device init leaves
+  non-persistent buffers (position_ids, rotary cos/sin) uninitialized -> GPU device-assert / NaN. Fix:
+  `low_cpu_mem_usage=False`, disable unpad/memory-efficient-attention, and re-materialize those buffers
+  on the model device.
+
+
 ---
 
 # STATUS & TASK BOARD (updated 2026-07-22)
