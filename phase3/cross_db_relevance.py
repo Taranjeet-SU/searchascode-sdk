@@ -70,7 +70,8 @@ def main(n=60, max_docs=100978, extra=False):
     backends = {"opensearch": osx}
     specs = [("faiss", {}), ("sqlite", {}), ("memory", {})]
     if extra:
-        specs += [("chroma", {"collection": "xdb"}), ("qdrant", {"collection": "xdb"})]
+        specs += [("chroma", {"collection": "xdb"}), ("qdrant", {"collection": "xdb"}),
+                  ("nmslib", {}), ("milvus", {"collection": "xdb"})]
     for b, opts in specs:
         try:
             st = sac.connect(b, dim=DIM, **opts)

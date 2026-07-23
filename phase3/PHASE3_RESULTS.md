@@ -21,16 +21,20 @@ vectors. Dense `query_vector(top_k=10)` via the one primitive API.
 
 | backend | engine | recall@10 | all_found@10 | avg latency |
 |---|---|---|---|---|
-| OpenSearch | HNSW (default params — under-built) | 0.792 | 0.617 | 2.5 ms |
-| Chroma | HNSW (well-tuned default) | 0.908 | 0.817 | **0.8 ms** |
-| FAISS | IndexFlatIP (exact) | **0.925** | **0.850** | 5.0 ms |
-| SQLite | BLOB brute-force (exact) | **0.925** | **0.850** | 18.0 ms |
-| memory | numpy brute-force (exact) | **0.925** | **0.850** | 56.4 ms |
-| Qdrant | local mode (exact-like) | **0.925** | **0.850** | 168.4 ms |
+| OpenSearch (default) | HNSW m=16, ef_c=100 (under-built) | 0.792 | 0.617 | 2.8 ms |
+| OpenSearch (tuned) | HNSW m=48, ef_c=512 | 0.900 | 0.800 | — |
+| Milvus-lite | AUTOINDEX (embedded) | 0.875 | 0.767 | 140.7 ms |
+| Chroma | HNSW (well-tuned default) | 0.908 | 0.817 | **0.9 ms** |
+| FAISS | IndexFlatIP (exact) | **0.925** | **0.850** | 5.2 ms |
+| SQLite | BLOB brute-force (exact) | **0.925** | **0.850** | 19.4 ms |
+| memory | numpy brute-force (exact) | **0.925** | **0.850** | 60.5 ms |
+| Qdrant | local mode (exact-like) | **0.925** | **0.850** | 185.8 ms |
+| nmslib | HNSW (M=32, ef_c=200) | **0.925** | **0.850** | 354.7 ms |
 
-**6 backends, one API** (`sac.connect(<backend>, ...)`; `--extra` adds Chroma + Qdrant). Four hit
-*identical* exact relevance (0.925/0.850: FAISS, SQLite, memory, Qdrant); Chroma's HNSW is near-exact
-at the lowest latency; only OpenSearch's default HNSW lags. Qdrant needed an adapter fix (below).
+**8 backends, one API** (`sac.connect(<backend>, ...)`; `--extra` adds Chroma/Qdrant/nmslib/Milvus).
+Five hit *identical* exact relevance (0.925/0.850: FAISS, SQLite, memory, Qdrant, nmslib); Chroma's
+HNSW is near-exact at the lowest latency; Milvus-lite slightly below; only OpenSearch's *default* HNSW
+lags — and its tuned re-index (m=48) reaches 0.900 (see below). Qdrant needed an adapter fix (below).
 
 ## Findings
 1. **Parity across exact backends.** FAISS, SQLite, and memory return *identical*
@@ -53,6 +57,21 @@ at the lowest latency; only OpenSearch's default HNSW lags. Qdrant needed an ada
    neighbours the HNSW graph missed), on top of genuine multi-hop bridging. An honest,
    important nuance: agentic retrieval helps partly by *compensating for a lossy index*.
 
+## Tuned-HNSW re-index — confirming the diagnosis
+Rebuilt the HotpotQA index as `hotpotqa_tuned` with **m=48, ef_construction=512** (via
+OpenSearch `_reindex`, reusing the same vectors — no re-embedding) and re-measured dense:
+
+| HotpotQA dense (n=60) | recall@10 | all_found@10 |
+|---|---|---|
+| OpenSearch HNSW default (m=16, ef_c=100) | 0.792 | 0.617 |
+| **OpenSearch HNSW tuned (m=48, ef_c=512)** | **0.900** | **0.800** |
+| Exact (FAISS/SQLite/memory/Qdrant) | 0.925 | 0.850 |
+
+Tuning recovers **+11 recall / +18 all_found points** — ~85% of the gap to exact — and
+confirms the underperformance was a **build-parameter artifact**, not inherent to ANN or
+the primitive API. (Note: `_reindex` completed server-side but opensearch-py raised
+"got more than 100 headers" on the long-poll; the tuned index has all 100,978 docs.)
+
 ## Latency note
 Exact brute force is fine at this scale (100k×768): FAISS 5 ms, SQLite 18 ms, pure numpy
 60 ms per query. For ≤~1M vectors, exact search is a legitimate, higher-recall option;
@@ -66,7 +85,8 @@ tuned (m/ef_construction), not assumed away.
 | **FAISS, SQLite** | ✅ new, measured (this report) |
 | **Chroma** | ✅ measured (HNSW 0.908) |
 | **Qdrant** | ✅ measured (0.925) after adapter fix: arbitrary string ids → uuid5 (orig in payload), and `search()`→`query_points()` for qdrant-client ≥1.10 |
-| nmslib, Milvus-lite | in-process, pip-installable — planned |
+| **nmslib** | ✅ measured (HNSW 0.925 — matches exact) |
+| **Milvus-lite** | ✅ measured (embedded, 0.875) |
 | Elasticsearch, MongoDB, Milvus-server | need a server (Docker socket denied here) |
 | Pinecone | needs a cloud API key |
 

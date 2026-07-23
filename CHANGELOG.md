@@ -49,8 +49,14 @@ Granular status so another agent can pick up the work. Read this first, then the
 - **Phase 3 multi-backend (#21)** — DONE (in-process): FAISS+SQLite adapters + Qdrant fix; 6-backend HotpotQA
   cross-DB relevance; exact-parity proven + ANN-tuning finding. `phase3/`, `phase3/PHASE3_RESULTS.md`.
 
+- **Selective GitHub push (#18)** — DONE. Pushed 54 standard files (SDK adapters incl. faiss_store/
+  sqlite_store + qdrant fix, phase2 benchmark+learning code, phase3 cross-DB code, all reports+CHANGELOG)
+  to `oro-jackson/searchascode-sdk` main (`c350d23..af1cc91`). Verified NO artifacts/secrets staged
+  (run data, dataset zips, logs, learned_*/impact_* all gitignored).
+
 ### 🔄 In progress
-- **Next:** selective GitHub push (#18) — NEEDS explicit user OK (public repo).
+- **All tracked tasks complete.** Optional next: Phase 3 extensions (nmslib/Milvus-lite adapters; server
+  backends need infra; re-index HotpotQA with tuned HNSW to re-baseline dense against exact).
 
 ### ⬜ Planned (granular, ordered)
 1. **Selective GitHub push** [#18, #20] — push ONLY standard code: SDK incl. new `adapters/faiss_store.py`,
@@ -125,6 +131,22 @@ Granular status so another agent can pick up the work. Read this first, then the
   Retrieval and Abstention" — parallel our adaptive-routing + confidence/abstain primitives.
 - **Planned Phase 3** — multi-backend adapters (FAISS/nmslib/Elasticsearch/Milvus/SQLite/Mongo/Pinecone)
   + HotpotQA cross-DB relevance (`docs/PHASE3.md`).
+
+## Phase 3 extensions (task #23)
+- **Tuned-HNSW re-index CONFIRMS the ANN finding.** Rebuilt HotpotQA as `hotpotqa_tuned` (m=48,
+  ef_construction=512) via OpenSearch `_reindex` (same vectors, no re-embedding). Dense recall@10
+  **0.792 → 0.900**, all_found@10 **0.617 → 0.800** — recovers ~85% of the gap to exact (0.925/0.850).
+  Definitively a *build-parameter artifact*, not inherent to ANN. (opensearch-py raised "got more than
+  100 headers" on the reindex long-poll, but the copy finished: tuned index has all 100,978 docs; measured
+  separately.) `phase3/reindex_tuned.py`.
+- **nmslib + Milvus-lite adapters** — new in-process backends (`adapters/nmslib_store.py`,
+  `milvus_store.py`), registered. nmslib = HNSW (lazy one-shot build); Milvus-lite = embedded MilvusClient
+  local-file (COSINE). Both compose MemoryStore for keyword/regex/hybrid; smoke-tested OK. Milvus fix: uri
+  must be a non-existent path (milvus-lite makedirs it) — use `mkdtemp()/milvus.db`, not a pre-created file.
+- **8-backend cross-DB matrix DONE** — one API, 8 stores: OpenSearch-default 0.792 (tuned 0.900),
+  Milvus-lite 0.875, Chroma 0.908, and **FAISS/SQLite/memory/Qdrant/nmslib all exact 0.925/0.850**.
+  nmslib HNSW matches exact (good defaults); Chroma near-exact at lowest latency (0.9ms). Thesis
+  ("one primitive API, any vector DB") demonstrated across 8 backends. `phase3/PHASE3_RESULTS.md`.
 
 ## Phase 3 — multi-backend (in progress, task #21)
 - **FAISS + SQLite adapters** — new in-process backends (`adapters/faiss_store.py`, `sqlite_store.py`),

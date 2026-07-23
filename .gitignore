@@ -20,3 +20,5 @@ phase3/*.log
 phase3/*.json
 phase3/runs/
 benchmarks/results/*.log
+*.csv
+SearchUnify_Evaluation*

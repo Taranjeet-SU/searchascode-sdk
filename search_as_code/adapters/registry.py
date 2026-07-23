@@ -55,6 +55,18 @@ def _load_sqlite(**opts: Any) -> VectorStore:
     return SqliteStore(**opts)
 
 
+def _load_nmslib(**opts: Any) -> VectorStore:
+    from .nmslib_store import NmslibStore
+
+    return NmslibStore(**opts)
+
+
+def _load_milvus(**opts: Any) -> VectorStore:
+    from .milvus_store import MilvusStore
+
+    return MilvusStore(**opts)
+
+
 _REGISTRY: dict[str, Callable[..., VectorStore]] = {
     "memory": MemoryStore,
     "qdrant": _load_qdrant,
@@ -63,6 +75,8 @@ _REGISTRY: dict[str, Callable[..., VectorStore]] = {
     "opensearch": _load_opensearch,
     "faiss": _load_faiss,
     "sqlite": _load_sqlite,
+    "nmslib": _load_nmslib,
+    "milvus": _load_milvus,
 }
 
 

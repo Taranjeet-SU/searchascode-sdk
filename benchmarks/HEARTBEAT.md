@@ -26,3 +26,15 @@ what finished, live system stats, and what's next.
   - Agent: **SAC 6.2 s vs tool-calling 12.2 s** (~2× faster), **$0.00135 vs $0.00188/query** (~28% cheaper), **cache hit 51% vs 4.5%**, LLM calls 2.4 vs 5.4.
 - **Loop:** stopping the 3-min heartbeat — everything is done.
 
+---
+
+### ❤️ Agent-run heartbeat (final) — 06:07 — ✅ n=100 DONE
+Full `phase1.benchmark -n 100` completed (`AGENT FULL DONE` at 06:07:31); no process left. GPU idle, OpenSearch 200.
+**Stable results (100 queries):**
+- **Recall@10:** SAC **0.549** · base 0.479 · tool-calling 0.440
+- **nDCG@10:** SAC **0.408** · tool-calling 0.399 · base 0.379
+- **MRR@10:** tool-calling **0.475** · SAC 0.446 · base 0.415
+- **Latency:** SAC **7.7 s** vs tool-calling 15.9 s (base 0.02 s)
+- **Cost/100q:** SAC **$0.145** vs tool-calling $0.229 · **cache hit 53.5% vs 26.9%** · calls 2.57 vs 6.15
+`benchmark_changelog.md` Sections C/D/E1 + final summary updated with these. Loop stopped.
+

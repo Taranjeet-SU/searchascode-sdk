@@ -68,9 +68,9 @@ End-to-end latency of the three retrieval paths (base / MCP tool-calling / SAC c
 | C1 | Per-path end-to-end latency over N queries | mean, p50, p95 s | ✅ |
 | C2 | Per-hop latency + hop-count distribution (LLM paths) | s/hop, #hops | ✅ |
 
-**Results** (`phase1.benchmark -n 8`, gpt-4.1-mini, FiQA)
-- C1 ✅ mean end-to-end latency: **base 0.037 s** (no LLM) · **SAC 6.17 s** · **tool-calling 12.24 s**. **SAC is ~2× faster than MCP tool-calling** — one code program vs many serial tool round-trips.
-- C2 ✅ LLM calls/query (proxy for hops): **SAC 2.38** vs **tool-calling 5.38** — SAC makes ~55% fewer model round-trips because intermediate results stay in the sandbox.
+**Results** (`phase1.benchmark -n 100`, gpt-4.1-mini, FiQA — stable sample)
+- C1 ✅ mean end-to-end latency: **base 0.021 s** (no LLM) · **SAC 7.69 s** · **tool-calling 15.89 s**. **SAC is ~2.1× faster than MCP tool-calling** — one code program vs many serial tool round-trips.
+- C2 ✅ LLM calls/query: **SAC 2.57** vs **tool-calling 6.15** — SAC makes ~58% fewer model round-trips because intermediate results stay in the sandbox.
 
 ---
 
@@ -82,9 +82,9 @@ LLM economics per path (the code-mode efficiency thesis).
 | D1 | Input / output / cached tokens per query, per path | tokens, $/query | ✅ |
 | D2 | Prompt-cache hit rate (SAC stable prefix) | % cached input | ✅ |
 
-**Results** (`-n 8`, totals over 8 queries)
-- D1 ✅ **SAC:** 24,564 input / 2,943 output tokens, **$0.0108 total (~$0.00135/query)**. **tool-calling:** 22,558 input / 3,897 output, **$0.015 total (~$0.00188/query)**. base: $0. **SAC is ~28% cheaper per query** than tool-calling despite similar input volume (cheaper because most input is cache-billed).
-- D2 ✅ prompt-cache hit rate: **SAC 51.1%** (12,544 of 24,564 input tokens cache-billed — the stable `SAC_SYSTEM` prefix) vs **tool-calling 4.5%**. This is the core code-mode efficiency lever, measured directly from `usage.prompt_tokens_details.cached_tokens`.
+**Results** (`-n 100`, totals over 100 queries)
+- D1 ✅ **SAC:** 335,146 input / 40,693 output tokens, **$0.1453 total (~$0.00145/query)**. **tool-calling:** 415,665 input / 60,016 output, **$0.2288 total (~$0.00229/query)**. base: $0. **SAC is ~36% cheaper per query** — it sends ~19% fewer input and ~32% fewer output tokens (intermediate hits stay in the sandbox) *and* more of its input is cache-billed.
+- D2 ✅ prompt-cache hit rate: **SAC 53.5%** (179,456 of 335,146 input tokens cache-billed — the stable `SAC_SYSTEM` prefix) vs **tool-calling 26.9%**. Measured from `usage.prompt_tokens_details.cached_tokens`.
 
 ---
 
@@ -99,7 +99,7 @@ Retrieval quality (the ceiling), primitive micro-throughput, and resilience over
 | E4 | Embedding throughput (gte-base, GPU) | texts/sec | ✅ |
 
 **Results**
-- E1 ✅ retrieval quality (`-n 8`, small sample — directional): **Recall@10** — SAC **0.500**, base 0.4375, tool-calling 0.4375. **nDCG@10** — tool-calling **0.452**, SAC 0.357, base 0.343. **MRR@10** — tool-calling **0.500**, SAC 0.356, base 0.354. SAC leads recall; tool-calling leads ranking on this tiny sample. ⚠️ N=8 is noisy — the 100-query run (README) shows SAC 0.491 R@10; rerun with `-n 100` for stable quality numbers.
+- E1 ✅ retrieval quality (`-n 100`, stable): **Recall@10** — **SAC 0.5487**, base 0.4788, tool-calling 0.4397. **nDCG@10** — **SAC 0.4076**, tool-calling 0.3988, base 0.3792. **MRR@10** — tool-calling **0.4754**, SAC 0.4459, base 0.4153. **SAC wins Recall@10 (+7 pts over base, +11 over tool-calling) and nDCG@10**; tool-calling edges MRR (it front-loads one strong hit). SAC also beats the README's older 0.491 R@10 — the newer primitives/prompt help.
 - E2 ✅ (pool=200 hits, mean over 300 calls): `confidence` 166k ops/s · `score_cutoff` 125k · `dedup`/`diversity_quota` 71k · `fuse` 9.4k · `relative_score_fusion` 6.7k · `rerank(lexical)` 1.3k (0.75 ms) · **`mmr` 161 ops/s (6.2 ms)** · **`semantic_dedup` 73 ops/s (13.6 ms, embeds each hit)**. Takeaway: pure-rank/score primitives are effectively free; the vector/embedding primitives (mmr, semantic_dedup) dominate cost — apply them only to a trimmed pool.
 - E3 ✅ `with_retry` overhead **0.14 µs/call** (direct 0.02 → wrapped 0.16); `chunked()` **45.1M items/sec**. Resilience wrappers are negligible on the hot path.
 - E4 ✅ gte-base embedding throughput (RTX 5090, 2,000 texts): batch 32 → 8,333 texts/s · batch 128 → 11,979 · **batch 256 → 12,343 texts/s**. At ~12k texts/s, embedding is not the ingest bottleneck (OpenSearch bulk at ~8.6k docs/s is).
@@ -112,11 +112,19 @@ Retrieval quality (the ceiling), primitive micro-throughput, and resilience over
 
 **Throughput (APIs/sec)** — live FiQA (57k docs): keyword **558 qps**, dense **377 qps**, hybrid **84 qps**, regex **8.4 qps** single-thread; concurrent dense peaks at **~970 qps @ 4 workers**.
 
-**AI-agent** — **SAC is ~2× faster (6.2 s vs 12.2 s) and ~28% cheaper ($0.00135 vs $0.00188/query) than MCP tool-calling**, with ~55% fewer LLM round-trips (2.4 vs 5.4) and a **51% prompt-cache hit** (vs 4.5%). SAC led Recall@10 (0.50) on the 8-query sample; run `-n 100` for stable quality.
+**AI-agent (N=100, stable)** — SAC wins on nearly every axis vs MCP tool-calling:
+
+| path | Recall@10 | nDCG@10 | MRR@10 | latency | LLM calls | input tok | cache hit | cost/100q |
+|---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
+| base (hybrid) | 0.479 | 0.379 | 0.415 | 0.02 s | 0 | 0 | — | $0 |
+| tool-calling | 0.440 | 0.399 | **0.475** | 15.9 s | 6.15 | 415,665 | 26.9% | $0.229 |
+| **SAC** | **0.549** | **0.408** | 0.446 | **7.7 s** | **2.57** | 335,146 | **53.5%** | **$0.145** |
+
+**SAC: best Recall@10 (+11 pts vs tool-calling) & nDCG@10, ~2.1× faster, ~36% cheaper, 2× the cache-hit rate, <½ the LLM calls.** Tool-calling only edges MRR@10.
 
 **Reliability/primitives** — resilience wrappers are free (`with_retry` 0.14 µs; `chunked` 45M items/s); embedding on the RTX 5090 hits **12.3k texts/s**; only `mmr` (161 ops/s) and `semantic_dedup` (73 ops/s) are costly primitives — apply them to trimmed pools.
 
-**Caveats:** agent metrics are from N=8 (directional; rerun `-n 100` for publishable quality). All raw JSON in `benchmarks/results/`.
+**Provenance:** all raw JSON in `benchmarks/results/`; agent summary in `phase1/runs/bench_summary.json`. Agent metrics are the full 100-query run.
 
 ## Heartbeat log
 3-minute progress heartbeats are appended to `benchmarks/HEARTBEAT.md` and posted
