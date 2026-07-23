@@ -46,6 +46,11 @@ fewer tokens** than tool-calling (intermediate results stay in the sandbox), 78%
 prompt-cache hit, and 100% of generated programs executed cleanly. Full write-up:
 [`phase1/RESULTS.md`](phase1/RESULTS.md).
 
+**On multi-hop (BEIR HotpotQA)** SAC wins *decisively*: **recall@10 0.96 / all_found@10 0.92**
+vs dense 0.79/0.62, and **answer EM 0.52 / F1 0.673** (n=200) — top of closed-book, vanilla-RAG,
+and tool-calling. It decomposes → fans out → fuses → reranks to retrieve *both* supporting docs a
+single dense query can't. Why + numbers: [`docs/WHY_SAC_WINS_HOTPOTQA.md`](docs/WHY_SAC_WINS_HOTPOTQA.md).
+
 ## 🚀 Quickstart
 
 ```bash
@@ -82,6 +87,7 @@ executable spec.
 | [`docs/PRIMITIVES.md`](docs/PRIMITIVES.md) | the 320-primitive canonical taxonomy |
 | [`docs/DATABASES.md`](docs/DATABASES.md) | primitive × database support matrix |
 | [`docs/CACHING.md`](docs/CACHING.md) | passing the SDK surface to the LLM efficiently |
+| [`docs/WHY_SAC_WINS_HOTPOTQA.md`](docs/WHY_SAC_WINS_HOTPOTQA.md) | why SAC wins multi-hop (HotpotQA): retrieval + answer-gen + mechanism |
 | [`docs/SELECTION.md`](docs/SELECTION.md) | exposing the SDK in the prompt + how the LLM picks the right primitive (55 sources) |
 | [`docs/RESEARCH.md`](docs/RESEARCH.md) | 150-source research base |
 | [`phase1/`](phase1/) | OpenSearch benchmark: base vs tool-calling vs SAC + live UI |
