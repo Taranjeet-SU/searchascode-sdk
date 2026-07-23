@@ -1,0 +1,185 @@
+{
+  "source": "altera_kg_v2 (KB only, no sheet)",
+  "facets": [
+    "general",
+    "hps/embedded",
+    "transceiver/phy",
+    "ip-cores",
+    "quartus/tools",
+    "emif/ddr",
+    "config/rsu",
+    "ethernet",
+    "power",
+    "memory",
+    "embedded-memory",
+    "clock",
+    "dsp/ai",
+    "io",
+    "pcie",
+    "device-overview",
+    "partial-reconfig",
+    "design tools",
+    "security",
+    "package"
+  ],
+  "fact_types": [
+    "spec",
+    "specification",
+    "capability",
+    "web-fact",
+    "char",
+    "descriptive",
+    "constraint",
+    "kb-fact",
+    "prose",
+    "conditional",
+    "prose-fact",
+    "requirement",
+    "Rule",
+    "procedure",
+    "default"
+  ],
+  "entity_types": [
+    "device",
+    "General",
+    "RegisterMap",
+    "ip_parameter",
+    "configuration",
+    "feature",
+    "signal",
+    "Clock",
+    "TransceiverTile",
+    "spec_table_cell",
+    "IP core",
+    "pll-clock",
+    "IP",
+    "IPCore"
+  ],
+  "glossary": {
+    "FPGA": "Field Programmable Gate Array",
+    "SOC": "System on Chip",
+    "ROS": "Robot Operating System",
+    "IDE": "Integrated Development Environment",
+    "AN": "Application Note",
+    "DIP": "Dual In-line Package",
+    "ST": "Streaming",
+    "E-SERIES": "Intel Agilex 5 FPGA product series",
+    "QUARTUS PRIME": "Intel FPGA design software",
+    "ASHLING RISCFREE": "IDE, Compiler, Debugger, and Trace toolchain for Altera FPGAs",
+    "E-TILE": "Transceiver Type E-Tile in Agilex 7 FPGAs",
+    "P-TILE": "Transceiver Type P-Tile in Agilex 7 FPGAs",
+    "F-TILE": "Transceiver Type F-Tile in Agilex 7 FPGAs",
+    "R-TILE": "Transceiver Type R-Tile in Agilex 7 FPGAs",
+    "JESD204C": "JESD204C high-speed serial interface standard",
+    "QUARTUS": "Intel FPGA design software",
+    "MODELSIM": "Simulation tool for FPGA designs",
+    "HPS": "Hard Processor System",
+    "EMIF": "External Memory Interface",
+    "RSU": "Remote System Update",
+    "PDN": "Product Discontinuation Notice",
+    "PMA": "Physical Medium Attachment",
+    "PCS": "Physical Coding Sublayer",
+    "ALM": "Adaptive Logic Module",
+    "SERDES": "Serializer/Deserializer",
+    "AVMM": "Altera Virtual Memory Map",
+    "AXI": "Advanced eXtensible Interface",
+    "HBM": "High Bandwidth Memory",
+    "3U-VPX": "3U VITA 46 VPX form factor",
+    "QUARTUS II": "Intel FPGA design software",
+    "QUARTUS PRIME PRO": "Intel FPGA design software Pro edition",
+    "RESET RELEASE IP": "Intellectual Property core for reset release",
+    "SDM": "Secure Device Manager",
+    "GUI": "Graphical User Interface",
+    "DSP": "digital signal processing",
+    "PM": "Power Manager",
+    "M20K": "dedicated block RAM module",
+    "MLAB": "memory block type",
+    "RAM": "random access memory",
+    "M10K": "dedicated block RAM module",
+    "HLS": "high-level synthesis",
+    "IP": "intellectual property",
+    "IOPLL": "input/output phase-locked loop",
+    "PCIE": "Peripheral Component Interconnect Express",
+    "PR": "Partial Reconfiguration",
+    "JTAG": "Joint Test Action Group",
+    "RMA": "Return Merchandise Authorization"
+  },
+  "synonyms": {
+    "agilex 5": [
+      "Agilex 5 SoC FPGA",
+      "Agilex 5 E-Series FPGA"
+    ],
+    "quartus prime software pro": [
+      "Quartus Prime Software Pro version 22.2",
+      "Quartus Prime"
+    ],
+    "altera fpgas": [
+      "Intel FPGAs"
+    ],
+    "agilex 7": [
+      "Agilex\u2122 7",
+      "Agilex 7 FPGA",
+      "Agilex 7 FPGAs and SoCs"
+    ],
+    "quartus": [
+      "Quartus\u00ae"
+    ],
+    "modelsim": [
+      "Modelsim\u00ae"
+    ],
+    "quartus ii": [
+      "Quartus\u00ae II"
+    ],
+    "quartus prime": [
+      "Intel\u00ae Quartus\u00ae Prime software",
+      "Quartus\u00ae Prime software"
+    ],
+    "quartus prime pro": [
+      "Quartus Prime Pro 21.1",
+      "Quartus Prime Pro 21.2"
+    ],
+    "3u-vpx": [
+      "3U-VPX form factor"
+    ],
+    "block ram": [
+      "M10K",
+      "M20K"
+    ],
+    "altera fpga development kits": [
+      "Altera kits"
+    ],
+    "agilex 3 fpga and soc c-series development kit": [
+      "DK-A3W135BM16AEA"
+    ],
+    "agilex 5 fpga and soc e-series modular development kit": [
+      "MK-A5E065BB32AES1"
+    ],
+    "agilex 5 fpga and soc e-series modular development kit (es)": [
+      "MK-A5E065BB32AEA"
+    ],
+    "quartus prime pro edition": [
+      "Quartus Prime Pro"
+    ],
+    "altera fpga": [
+      "FPGA device"
+    ]
+  },
+  "routes": [
+    {
+      "when": "exact part number / ordering code / register / signal name",
+      "use": "keyword() for the exact token + kb(fact_type:spec) to verify"
+    },
+    {
+      "when": "definition / 'what is' / component or capability overview",
+      "use": "kb() curated cards first (authoritative), then dense() for context"
+    },
+    {
+      "when": "multi-part or comparison question",
+      "use": "subqueries() then fan-out dense()+kb() per part, fuse()"
+    },
+    {
+      "when": "any answer with a numeric spec/limit",
+      "use": "VERIFY the value against kb() altera-kg cards before answering (MCP-style)"
+    }
+  ]
+}
