@@ -7,7 +7,7 @@ retrieve-then-rerank primitive — and plugs straight into ``Session(reranker=..
 
 from __future__ import annotations
 
-from typing import Sequence
+from typing import Any, Sequence
 
 
 class CrossEncoderReranker:
@@ -56,7 +56,7 @@ class QwenReranker:
         self._device = device
         self.max_length = max_length
         self.instruction = instruction
-        self._model = None
+        self._model: Any = None
 
     def _ensure(self):
         if self._model is None:
@@ -68,7 +68,7 @@ class QwenReranker:
             self._model = AutoModelForCausalLM.from_pretrained(
                 self.model_name,
                 torch_dtype=torch.float16 if dev == "cuda" else torch.float32,
-            ).to(dev).eval()
+            ).to(dev).eval()  # type: ignore[arg-type]
             self.dev = dev
             self.tid_yes = self.tok.convert_tokens_to_ids("yes")
             self.tid_no = self.tok.convert_tokens_to_ids("no")

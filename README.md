@@ -30,29 +30,61 @@ best  = s.rerank("how do agents retrieve?", cands, top_k=10)
 print(best.to_evidence(fields=["title"]))     # compact, context-friendly
 ```
 
+## 📦 Install
+
+**Requires Python 3.10+.** Not yet on PyPI — install from source (editable):
+
+```bash
+git clone https://github.com/oro-jackson/searchascode-sdk.git
+cd searchascode-sdk
+pip install -e .                 # core: in-memory backend + dependency-free embedder (only needs numpy)
+```
+
+Then add the backend / extras you need:
+
+| Command | Adds |
+|---|---|
+| `pip install -e '.[opensearch]'` | OpenSearch backend (also: `.[qdrant]` · `.[chroma]` · `.[pgvector]`) |
+| `pip install -e '.[providers]'` | OpenAI embeddings + LLM |
+| `pip install -e '.[all]'` | every backend + providers |
+| `pip install -e '.[phase1]'` | everything to run the FiQA benchmark (torch, sentence-transformers, langchain) |
+| `pip install -e '.[dev]'` | test + lint/type tooling (pytest, ruff, mypy) |
+
+Verify the install:
+
+```bash
+python -c "import search_as_code as sac; print(sac.available())"   # ['chroma', 'memory', 'opensearch', 'pgvector', 'qdrant', ...]
+python -m pytest -q                                                # 77 in-memory unit tests, zero setup
+```
+
 ## ⚡ Why it wins (measured, not claimed)
 
-Benchmark on **BEIR FiQA** (57k docs in OpenSearch, 100 labeled queries,
-`gpt-4.1-mini`) — base hybrid search vs MCP tool-calling vs Search-as-Code:
+Benchmark on **BEIR FiQA** (57,638 docs in OpenSearch, **100 labeled queries**,
+`gpt-4.1-mini`, gte-base embeddings + MS-MARCO reranker) — base hybrid search vs
+MCP tool-calling vs Search-as-Code (totals over the 100 queries):
 
-| mode | Recall@10 | latency | LLM calls | input tokens | cache hit | cost |
-|---|:--:|:--:|:--:|:--:|:--:|:--:|
-| base (hybrid) | 0.479 | 0.02 s | 0 | 0 | — | $0 |
-| tool-calling (MCP) | 0.348 | 5.9 s | 5.5 | 254k | 8% | $0.117 |
-| **Search as Code** | **0.491** | 3.7 s | **2.0** | **142k** | **78%** | **$0.043** |
+| mode | Recall@10 | nDCG@10 | latency | LLM calls | input tokens | cache hit | cost |
+|---|:--:|:--:|:--:|:--:|:--:|:--:|:--:|
+| base (hybrid) | 0.479 | 0.379 | 0.02 s | 0 | 0 | — | $0 |
+| tool-calling (MCP) | 0.440 | 0.399 | 15.9 s | 6.2 | 416k | 27% | $0.23 |
+| **Search as Code** | **0.549** | **0.408** | **7.7 s** | **2.6** | **335k** | **54%** | **$0.15** |
 
-**SAC wins every axis that matters** — best recall, **2.7× cheaper** and **1.8×
-fewer tokens** than tool-calling (intermediate results stay in the sandbox), 78%
-prompt-cache hit, and 100% of generated programs executed cleanly. Full write-up:
+**SAC wins every axis that matters vs MCP tool-calling** — best Recall@10 (**+11
+pts**) and nDCG@10, **~2.1× faster**, **~1.6× cheaper**, **2× the prompt-cache
+hit** (54% vs 27%), and **<½ the LLM calls** — because intermediate results stay
+in the sandbox instead of flowing back through context. Reproduce with
+`python -m phase1.benchmark -n 100`; full run log in
+[`benchmark_changelog.md`](benchmark_changelog.md), narrative in
 [`phase1/RESULTS.md`](phase1/RESULTS.md).
 
 ## 🚀 Quickstart
 
+After [installing](#-install):
+
 ```bash
-pip install -e .                 # core: in-memory backend, no services, no API key
-pip install -e '.[opensearch]'   # + OpenSearch     (also: qdrant / chroma / pgvector)
-python examples/opensearch_quickstart.py
-python -m pytest -q              # 77 unit tests (in-memory); +8 OpenSearch integration
+python examples/demo.py                 # in-memory demo, zero setup
+python examples/opensearch_quickstart.py  # needs .[opensearch] + a running OpenSearch
+python -m pytest -q                      # 77 unit tests (in-memory); +8 OpenSearch integration
 ```
 
 The base install ships a dependency-free embedder + in-memory backend, so the

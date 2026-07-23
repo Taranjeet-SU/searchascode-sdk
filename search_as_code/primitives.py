@@ -9,6 +9,7 @@ touches a specific backend.
 
 from __future__ import annotations
 
+import re as _re
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable, Optional, Sequence
 
@@ -327,8 +328,6 @@ def auto_filter(query: str, generate: Callable[[str], list[str]],
     except Exception:
         return {}
 
-
-import re as _re
 
 # Spelling / acronym normalization (extend per domain). Fixes the cheque↔check class.
 DEFAULT_ALIASES = {

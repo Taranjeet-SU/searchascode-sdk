@@ -8,7 +8,7 @@ the "one primitive API, any vector DB" thesis for an embedded index.
 
 from __future__ import annotations
 
-from typing import Any, Optional, Sequence
+from typing import Any, Sequence
 
 import numpy as np
 
@@ -44,7 +44,8 @@ class FaissStore(VectorStore):
         for d in docs:
             if d.vector is None:
                 continue
-            vecs.append(d.vector); keep.append(d)
+            vecs.append(d.vector)
+            keep.append(d)
         if vecs:
             self.index.add(_norm(np.asarray(vecs, dtype=np.float32)))
             self._ids.extend(d.id for d in keep)

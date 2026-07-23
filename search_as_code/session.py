@@ -208,7 +208,8 @@ class Session:
             return ResultSet()
         v = np.asarray(self.embedder.embed(texts), dtype=np.float32)
         v = v / (np.linalg.norm(v, axis=1, keepdims=True) + 1e-9)
-        kept, kv = [], []
+        kept: list[Hit] = []
+        kv: list = []
         for h, vec in zip(hits, v):
             if kv and max(float(vec @ k) for k in kv) >= threshold:
                 continue

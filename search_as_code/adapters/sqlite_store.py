@@ -56,7 +56,8 @@ class SqliteStore(VectorStore):
             vecs.append(np.frombuffer(blob, dtype=np.float32))
         if vecs:
             mat = np.vstack(vecs)
-            n = np.linalg.norm(mat, axis=1, keepdims=True); n[n == 0] = 1.0
+            n = np.linalg.norm(mat, axis=1, keepdims=True)
+            n[n == 0] = 1.0
             self._mat = mat / n
         else:
             self._mat = None
@@ -68,7 +69,8 @@ class SqliteStore(VectorStore):
         if self._mat is None:
             return ResultSet()
         from ..filters import matches
-        q = np.asarray(vector, dtype=np.float32); q = q / (np.linalg.norm(q) or 1.0)
+        q = np.asarray(vector, dtype=np.float32)
+        q = q / (np.linalg.norm(q) or 1.0)
         sims = self._mat @ q
         order = np.argsort(-sims)
         hits = []
