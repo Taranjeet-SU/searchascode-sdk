@@ -135,3 +135,14 @@ class MemoryStore(VectorStore):
 
     def count(self) -> int:
         return len(self._docs)
+
+    def sample(self, n: int = 5) -> list[Document]:
+        return list(self._docs.values())[:n]
+
+    def describe_schema(self) -> dict:
+        docs = self.sample(3)
+        keys: set = set()
+        for d in docs:
+            keys |= set((d.metadata or {}).keys())
+        return {"backend": self.backend, "count": len(self._docs),
+                "metadata_keys": sorted(keys), "sample_text": [(d.text or "")[:200] for d in docs]}
