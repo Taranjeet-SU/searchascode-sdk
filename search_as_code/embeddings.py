@@ -79,7 +79,66 @@ def get_embedder(provider: str, **kwargs) -> Embedder:
         return HashEmbedder(**kwargs)
     if provider == "openai":
         return _OpenAIEmbedder(**kwargs)
+    if provider in ("transformers", "hf", "sentence-transformers"):
+        return _TransformersEmbedder(**kwargs)
     raise ConfigurationError("unknown embedding provider", provider=provider)
+
+
+class _TransformersEmbedder:
+    """Robust loader for HF ``transformers`` embedding models — including custom GTE-v1.5 /
+    ``model_type="new"`` models whose meta-device init corrupts non-persistent buffers
+    (``position_ids``, rotary ``cos_cached``/``sin_cached``) and causes a GPU device-assert
+    or NaN outputs. Fixes: load with ``low_cpu_mem_usage=False``, disable the memory-efficient
+    ``unpad`` attention path, and re-materialize those buffers ON THE MODEL DEVICE.
+
+        emb = get_embedder("transformers", model="my/custom-gte", pooling="cls")
+        vecs = emb.embed(["a query"])
+    """
+
+    def __init__(self, model: str, device: str | None = None, pooling: str = "cls",
+                 max_length: int = 512, token: str | None = None, trust_remote_code: bool = True):
+        import torch
+        from transformers import AutoConfig, AutoModel, AutoTokenizer
+        self._torch = torch
+        self.device = device or ("cuda" if torch.cuda.is_available() else "cpu")
+        self.pooling = pooling
+        self.max_length = max_length
+        conf = AutoConfig.from_pretrained(model, trust_remote_code=trust_remote_code, token=token)
+        for attr in ("unpad_inputs", "use_memory_efficient_attention"):
+            if hasattr(conf, attr):
+                setattr(conf, attr, False)
+        self.tok = AutoTokenizer.from_pretrained(model, token=token)
+        self.model = AutoModel.from_pretrained(
+            model, config=conf, trust_remote_code=trust_remote_code,
+            low_cpu_mem_usage=False, token=token).to(self.device).eval()
+        self._fix_meta_buffers(conf)
+
+    def _fix_meta_buffers(self, conf) -> None:
+        torch, dev = self._torch, self.device
+        maxp = getattr(conf, "max_position_embeddings", 512)
+        for m in self.model.modules():
+            if hasattr(m, "position_ids"):
+                m.register_buffer("position_ids", torch.arange(maxp, device=dev), persistent=False)
+            if hasattr(m, "cos_cached") and hasattr(m, "inv_freq"):
+                L = int(m.cos_cached.shape[0])
+                t = torch.arange(L, dtype=torch.float32, device=dev)
+                freqs = torch.outer(t, m.inv_freq.float().to(dev))
+                emb = torch.cat((freqs, freqs), dim=-1)
+                m.register_buffer("cos_cached", emb.cos(), persistent=False)
+                m.register_buffer("sin_cached", emb.sin(), persistent=False)
+
+    def embed(self, texts: Sequence[str]) -> list[list[float]]:
+        torch = self._torch
+        out = []
+        for text in texts:
+            enc = self.tok(text, return_tensors="pt", truncation=True, max_length=self.max_length)
+            enc = {k: v.to(self.device) for k, v in enc.items()}
+            with torch.no_grad():
+                h = self.model(**enc).last_hidden_state
+            v = h[:, 0] if self.pooling == "cls" else h.mean(dim=1)
+            v = torch.nn.functional.normalize(v, p=2, dim=-1)
+            out.append(v[0].detach().cpu().tolist())
+        return out
 
 
 class _OpenAIEmbedder:
