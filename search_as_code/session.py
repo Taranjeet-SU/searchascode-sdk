@@ -84,6 +84,62 @@ class Session:
         self._check_dims(norm)
         self.store.upsert(norm)
 
+    def describe(self, n_samples: int = 4, llm: bool = False) -> dict:
+        """Corpus profile for the LLM (introspect BEFORE writing retrieval code):
+        the store's schema (fields/types/count) + the content-type mix of a sample
+        (prose vs table vs fact-card vs list) + short sample snippets.
+
+        Feed this into the agent prompt so it knows *what kind of data* it is querying —
+        the schema-first agentic-retrieval pattern.
+
+        The base profile is **sampled + heuristic** (real random sample from the store,
+        rule-based ``content_type`` tagging). Pass ``llm=True`` to add a **model-generated**
+        characterization: the generator reads the sample and returns a free-text summary of
+        the data (types, key entities/fields) plus recommended primitives — under
+        ``profile["llm"]``. Needs a generator on the Session.
+        """
+        from .primitives import content_type
+        try:
+            schema = self.store.describe_schema()
+        except Exception:
+            schema = {"backend": getattr(self.store, "backend", "?")}
+        try:
+            samples = self.store.sample(n_samples)
+        except NotImplementedError:
+            samples = []
+        types: dict[str, int] = {}
+        snippets = []
+        for d in samples:
+            ct = content_type(d.text or "")
+            types[ct] = types.get(ct, 0) + 1
+            snippets.append({"type": ct, "text": (d.text or "")[:160]})
+        profile = {**schema, "content_types": types, "samples": snippets}
+        if llm and self.generator is not None:
+            profile["llm"] = self._llm_profile(schema, samples)
+        return profile
+
+    def _llm_profile(self, schema: dict, samples: Sequence[Document]) -> str:
+        """Ask the generator to characterize the corpus from the sample — genuinely
+        LLM-driven data exploration (vs the heuristic content_type tagging)."""
+        fields = schema.get("fields") or schema.get("metadata_keys") or {}
+        rows = "\n".join(f"- {(d.text or '')[:300]}" for d in samples) or "(no text samples)"
+        prompt = (
+            "You are profiling a search corpus before writing retrieval code.\n"
+            f"Backend: {schema.get('backend') or schema.get('index')}  "
+            f"Approx docs: {schema.get('count')}\n"
+            f"Fields: {fields}\n\n"
+            f"Random sample of documents:\n{rows}\n\n"
+            "In 4-6 short lines describe: (1) what kind of data this is (prose docs, tables, "
+            "curated fact-cards, code, mixed?), (2) the key entities/fields a query would target, "
+            "(3) which retrieval primitives fit best (e.g. keyword/exact & regex for part-numbers "
+            "and fact-cards, dense/hyde for prose, fielded/phrase for structured fields)."
+        )
+        try:
+            out = self.generator(prompt)
+            return out[0] if isinstance(out, list) else str(out)
+        except Exception as e:  # pragma: no cover - profiling is best-effort
+            return f"(llm profile unavailable: {e})"
+
     def _check_dims(self, docs: Sequence[Document]) -> None:
         """Guardrail: all supplied/embedded vectors must share one dimension, and
         match the backend's declared ``dim`` when it has one."""
