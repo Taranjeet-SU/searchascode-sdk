@@ -33,6 +33,8 @@ consistently and nothing important gets lost in code or chat.
 | `CHANGELOG.md` | running work log + status board | what was built/changed/measured, tasks (done/in-progress/planned), gotchas for future agents | every work session |
 | `docs/CONCEPT.md` | the core idea | search-as-code thesis, how source articles map to code | the concept evolves |
 | `docs/PRIMITIVES.md` | canonical primitive taxonomy | the full primitive catalog (implemented + planned) | a primitive is added/planned |
+| `docs/EXPLORE.md` | the exploration/onboarding phase | `sac.explore` pipeline, ProfilePack artifact, stage roadmap, robustness rules | an explore stage is added/changed |
+| `docs/INTROSPECTION.md` | schema-first introspection primitives | `describe_schema`/`sample`/`content_type`/`describe(llm=)` + the introspect-first pattern | an introspection primitive changes |
 | `docs/DATABASES.md` | primitive × backend matrix | which primitive each backend supports/emulates | an adapter changes |
 | `docs/SELECTION.md` | prompt surface + decision rules | how the SDK is shown to the LLM, when to call/chain each primitive | primitive selection logic changes |
 | `docs/CACHING.md` | efficient LLM prompting | byte-stable prefix / prompt-cache strategy | the prompt surface changes |
