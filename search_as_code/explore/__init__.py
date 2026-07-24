@@ -18,6 +18,7 @@ if it beats baseline).
 
 from .engine import ExploreContext, Stage, corpus_fingerprint, default_pipeline, explore
 from .pack import ProfilePack
+from .report import write_csv_report
 
 __all__ = [
     "explore",
@@ -26,4 +27,5 @@ __all__ = [
     "ExploreContext",
     "default_pipeline",
     "corpus_fingerprint",
+    "write_csv_report",
 ]
