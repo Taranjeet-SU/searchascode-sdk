@@ -9,6 +9,7 @@ touches a specific backend.
 
 from __future__ import annotations
 
+import re as _re
 from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Callable, Optional, Sequence
 
@@ -328,8 +329,6 @@ def auto_filter(query: str, generate: Callable[[str], list[str]],
         return {}
 
 
-import re as _re
-
 # Spelling / acronym normalization (extend per domain). Fixes the cheque↔check class.
 DEFAULT_ALIASES = {
     "cheque": "check", "cheques": "checks", "favour": "favor", "colour": "color",
@@ -398,3 +397,26 @@ def _lexical_overlap(query: str, texts: Sequence[str]) -> list[float]:
         toks = set(_tokenize(t))
         scores.append(len(q & toks) / len(q) if toks else 0.0)
     return scores
+
+
+def content_type(text: str) -> str:
+    """Heuristic classifier so an agent knows the DATA SHAPE of a chunk — one of
+    'table', 'fact-card', 'list', 'code', 'prose', 'short-fact', 'empty'.
+    Pairs with store.describe_schema()/sample() for schema-first agentic retrieval."""
+    if not text or not text.strip():
+        return "empty"
+    t = text.strip()
+    lines = [ln for ln in t.splitlines() if ln.strip()]
+    kv = sum(1 for ln in lines if "=" in ln and len(ln) < 90)
+    if t.count("|") >= 4 or t.count("\t") >= 3:
+        return "table"
+    if lines and kv >= max(2, len(lines) // 2):
+        return "fact-card"
+    if lines and sum(1 for ln in lines if ln.lstrip()[:2] in ("- ", "* ", "• ")
+                     or ln.lstrip()[:1].isdigit()) >= max(2, len(lines) // 2):
+        return "list"
+    if any(k in t for k in ("def ", "import ", "function ", "{", "};", "</")):
+        return "code"
+    if t.count(". ") >= 2 or len(t) > 300:
+        return "prose"
+    return "short-fact"

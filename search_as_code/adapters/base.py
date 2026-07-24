@@ -86,5 +86,23 @@ class VectorStore(abc.ABC):
     def count(self) -> int:
         raise NotImplementedError
 
+    # ---- introspection: let the agent discover the DATA SHAPE before querying.
+    # "The first call tells the agent what data exists and what queries are safe to
+    # construct" (schema-first agentic retrieval). Adapters override with real detail.
+
+    def describe_schema(self) -> dict[str, Any]:
+        """Field names -> types (+ sample values where cheap), doc count, backend.
+        Feed this to the LLM so it knows the fields/types before writing retrieval code."""
+        try:
+            n = self.count()
+        except Exception:
+            n = None
+        return {"backend": self.backend, "count": n, "fields": {}, "note": "override for full schema"}
+
+    def sample(self, n: int = 5) -> list[Document]:
+        """A few representative documents so the agent sees the data shape (prose vs
+        table vs fact-card, typical length, metadata)."""
+        raise NotImplementedError
+
     def close(self) -> None:
         pass

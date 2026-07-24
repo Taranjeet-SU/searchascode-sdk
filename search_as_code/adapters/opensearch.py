@@ -17,7 +17,7 @@ from __future__ import annotations
 from typing import Any, Optional, Sequence
 
 from .._resilience import DEFAULT_BATCH_SIZE, chunked, with_retry
-from ..errors import BackendError, MissingDependencyError
+from ..errors import BackendError, InvalidArgumentError, MissingDependencyError
 from ..filters import normalize
 from ..types import Capabilities, Document, Hit, ResultSet
 from .base import VectorStore
@@ -205,6 +205,89 @@ class OpenSearchStore(VectorStore):
         }
         return self._hits(self._search(body))
 
+    # ---- extended lexical primitives (OpenSearch-native) -----------------
+    def query_phrase(self, text, top_k=10, flt=None, slop=0, field=None) -> ResultSet:
+        """Ordered-phrase match with optional ``slop`` (proximity). Taxonomy:
+        ``phrase_search`` / ``proximity_search`` / ``score_phrase_or_proximity``."""
+        f = field or self.text_field
+        body = {"size": top_k, "query": {"bool": {
+            "must": [{"match_phrase": {f: {"query": text, "slop": slop}}}],
+            "filter": self._to_filter(flt)}}}
+        return self._hits(self._search(body))
+
+    def query_fielded(self, text, fields, top_k=10, flt=None, type="best_fields") -> ResultSet:
+        """Multi-field search with per-field boosts (``fielded_search`` /
+        ``field_boost``). ``fields`` e.g. ``["title^2", "text"]``."""
+        body = {"size": top_k, "query": {"bool": {
+            "must": [{"multi_match": {"query": text, "fields": list(fields), "type": type}}],
+            "filter": self._to_filter(flt)}}}
+        return self._hits(self._search(body))
+
+    def query_prefix(self, prefix, top_k=10, flt=None, field=None) -> ResultSet:
+        """Match docs containing an indexed *term* beginning with ``prefix``
+        (``prefix_search``). Defaults to the analyzed text field (term-level);
+        pass ``field="<f>.keyword"`` for whole-value prefixing."""
+        f = field or self.text_field
+        body = {"size": top_k, "query": {"bool": {
+            "must": [{"prefix": {f: prefix.lower()}}], "filter": self._to_filter(flt)}}}
+        return self._hits(self._search(body))
+
+    def query_wildcard(self, pattern, top_k=10, flt=None, field=None) -> ResultSet:
+        """Glob-style wildcard match (``*``/``?``) on the keyword subfield
+        (``wildcard_search``)."""
+        f = field or f"{self.text_field}.keyword"
+        body = {"size": top_k, "query": {"bool": {
+            "must": [{"wildcard": {f: {"value": pattern}}}], "filter": self._to_filter(flt)}}}
+        return self._hits(self._search(body))
+
+    def query_fuzzy(self, text, top_k=10, flt=None, fuzziness="AUTO", field=None) -> ResultSet:
+        """Edit-distance tolerant match (``fuzzy_search``); ``fuzziness`` is an int
+        or ``"AUTO"``."""
+        f = field or self.text_field
+        body = {"size": top_k, "query": {"bool": {
+            "must": [{"match": {f: {"query": text, "fuzziness": fuzziness}}}],
+            "filter": self._to_filter(flt)}}}
+        return self._hits(self._search(body))
+
+    def more_like_this(self, text=None, ids=None, top_k=10, flt=None,
+                       min_term_freq=1, min_doc_freq=1, fields=None) -> ResultSet:
+        """Find-similar / recommendation via MLT from free ``text`` and/or seed
+        ``ids`` already in the index (``recommendation_search``)."""
+        mlt: dict[str, Any] = {"fields": fields or [self.text_field],
+                               "min_term_freq": min_term_freq, "min_doc_freq": min_doc_freq}
+        like: list[Any] = []
+        if text:
+            like.append(text)
+        if ids:
+            like.extend({"_index": self.index, "_id": str(i)} for i in ids)
+        if not like:
+            raise InvalidArgumentError("more_like_this needs text and/or ids")
+        mlt["like"] = like
+        body = {"size": top_k, "query": {"bool": {
+            "must": [{"more_like_this": mlt}], "filter": self._to_filter(flt)}}}
+        return self._hits(self._search(body))
+
+    def random_sample(self, size=10, flt=None, seed=None) -> ResultSet:
+        """Random (optionally seeded, reproducible) sample of the filtered corpus
+        (``random_sample``)."""
+        rnd: dict[str, Any] = {}
+        if seed is not None:
+            rnd = {"seed": seed, "field": "_seq_no"}
+        body = {"size": size, "query": {"function_score": {
+            "query": {"bool": {"filter": self._to_filter(flt)}},
+            "random_score": rnd}}}
+        return self._hits(self._search(body))
+
+    def browse(self, top_k=10, flt=None, sort_field=None, after=None) -> ResultSet:
+        """Query-less enumeration of the (filtered) corpus with cursor paging via
+        ``search_after`` (``browse_or_scroll``). Sorts by ``sort_field`` or ``_id``."""
+        sort = [{sort_field: "asc"}] if sort_field else [{"_seq_no": "asc"}]
+        body: dict[str, Any] = {"size": top_k, "sort": sort,
+                                "query": {"bool": {"filter": self._to_filter(flt)}}}
+        if after is not None:
+            body["search_after"] = after
+        return self._hits(self._search(body))
+
     # ---- analysis-class primitive ---------------------------------------
     def aggregate(self, aggs: dict, flt: Optional[dict] = None, size: int = 0) -> dict:
         """Run a native OpenSearch aggregation (facets, stats, group-by)."""
@@ -213,6 +296,21 @@ class OpenSearchStore(VectorStore):
         if fclauses:
             body["query"] = {"bool": {"filter": fclauses}}
         return self._search(body).get("aggregations", {})
+
+    def facet(self, field, size=20, flt=None) -> dict[str, int]:
+        """Categorical value counts for ``field`` (``facet``). Returns {value: count}."""
+        agg = self.aggregate({"f": {"terms": {"field": field, "size": size}}}, flt=flt)
+        return {b["key"]: b["doc_count"] for b in agg.get("f", {}).get("buckets", [])}
+
+    def count_distinct(self, field, flt=None) -> int:
+        """Approximate distinct-value count for ``field`` (``count_distinct``)."""
+        agg = self.aggregate({"c": {"cardinality": {"field": field}}}, flt=flt)
+        return int(agg.get("c", {}).get("value", 0))
+
+    def stats(self, field, flt=None) -> dict[str, float]:
+        """min/max/avg/sum/count for a numeric ``field`` (``aggregate_statistics``)."""
+        agg = self.aggregate({"s": {"stats": {"field": field}}}, flt=flt)
+        return agg.get("s", {})
 
     # ---- fetch / admin ---------------------------------------------------
     def get(self, ids: Sequence[str]) -> list[Document]:
@@ -238,3 +336,35 @@ class OpenSearchStore(VectorStore):
 
     def count(self) -> int:
         return int(self.client.count(index=self.index)["count"])
+
+    def sample(self, n: int = 5) -> list[Document]:
+        body = {"size": n, "query": {"function_score": {"query": {"match_all": {}},
+                                                        "random_score": {}}}}
+        out = []
+        for h in self.client.search(index=self.index, body=body)["hits"]["hits"]:
+            src = dict(h.get("_source", {}))
+            text = src.pop(self.text_field, None)
+            src.pop(self.vector_field, None)
+            out.append(Document(id=str(h["_id"]), text=text, metadata=src))
+        return out
+
+    def describe_schema(self) -> dict:
+        """Fields -> ES types (+ a couple sample docs) so the agent knows the shape first."""
+        m = self.client.indices.get_mapping(index=self.index)
+        props = next(iter(m.values()))["mappings"].get("properties", {})
+
+        def flatten(p, pre=""):
+            out = {}
+            for k, v in p.items():
+                if v.get("type"):
+                    out[pre + k] = v["type"]
+                if "properties" in v:
+                    out.update(flatten(v["properties"], pre + k + "."))
+            return out
+
+        fields = flatten(props)
+        samples = self.sample(2)
+        return {"index": self.index, "count": self.count(),
+                "text_field": self.text_field, "vector_field": self.vector_field,
+                "n_fields": len(fields), "fields": fields,
+                "sample_text": [(d.text or "")[:200] for d in samples]}

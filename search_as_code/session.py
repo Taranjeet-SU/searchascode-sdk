@@ -84,6 +84,31 @@ class Session:
         self._check_dims(norm)
         self.store.upsert(norm)
 
+    def describe(self, n_samples: int = 4) -> dict:
+        """Corpus profile for the LLM (introspect BEFORE writing retrieval code):
+        the store's schema (fields/types/count) + the content-type mix of a sample
+        (prose vs table vs fact-card vs list) + short sample snippets.
+
+        Feed this into the agent prompt so it knows *what kind of data* it is querying —
+        the schema-first agentic-retrieval pattern.
+        """
+        from .primitives import content_type
+        try:
+            schema = self.store.describe_schema()
+        except Exception:
+            schema = {"backend": getattr(self.store, "backend", "?")}
+        try:
+            samples = self.store.sample(n_samples)
+        except NotImplementedError:
+            samples = []
+        types: dict[str, int] = {}
+        snippets = []
+        for d in samples:
+            ct = content_type(d.text or "")
+            types[ct] = types.get(ct, 0) + 1
+            snippets.append({"type": ct, "text": (d.text or "")[:160]})
+        return {**schema, "content_types": types, "samples": snippets}
+
     def _check_dims(self, docs: Sequence[Document]) -> None:
         """Guardrail: all supplied/embedded vectors must share one dimension, and
         match the backend's declared ``dim`` when it has one."""
@@ -208,7 +233,8 @@ class Session:
             return ResultSet()
         v = np.asarray(self.embedder.embed(texts), dtype=np.float32)
         v = v / (np.linalg.norm(v, axis=1, keepdims=True) + 1e-9)
-        kept, kv = [], []
+        kept: list[Hit] = []
+        kv: list = []
         for h, vec in zip(hits, v):
             if kv and max(float(vec @ k) for k in kv) >= threshold:
                 continue
