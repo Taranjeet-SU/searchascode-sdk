@@ -1,0 +1,98 @@
+"""Tests for the sac.explore engine + ProfilePack."""
+
+from __future__ import annotations
+
+import search_as_code as sac
+from search_as_code.explore import ProfilePack, corpus_fingerprint, explore
+
+
+def _corpus():
+    # three visibly different content shapes so clustering/profiling has signal
+    prose = [{"id": f"p{i}", "text": f"The Agilex 7 FPGA family supports high-bandwidth "
+              f"designs. Variant {i} targets data-center acceleration and scales well."}
+             for i in range(8)]
+    cards = [{"id": f"c{i}", "text": f"Device=AGFC0{i} | LEs={100000+i} | Transceivers=96 "
+              f"| PCIe=Gen5 | Package=BGA"} for i in range(8)]
+    lists = [{"id": f"l{i}", "text": f"- install Quartus {i}\n- open project\n- compile design"}
+             for i in range(8)]
+    return prose + cards + lists
+
+
+def _session():
+    s = sac.Session("memory", dim=32)
+    s.add(_corpus())
+    return s
+
+
+def test_explore_runs_end_to_end(tmp_path):
+    s = _session()
+    pack = explore(s, out=str(tmp_path / "pack"))
+    # implemented stages succeed
+    assert pack.is_done("sample")
+    assert pack.is_done("profile")
+    # planned stages recorded as planned, pipeline not aborted
+    assert pack.stage_status("ontology") == "planned"
+    assert pack.stage_status("validate") == "planned"
+    # artifacts exist
+    assert pack.has("sample.jsonl")
+    assert pack.has("content_profile.json")
+    prof = pack.read_json("content_profile.json")
+    assert prof["content_types"]  # some tags counted
+    assert prof["n_sampled"] > 0
+    assert "report" in pack.report().lower() or "ProfilePack" in pack.report()
+
+
+def test_sample_is_stratified(tmp_path):
+    s = _session()
+    pack = explore(s, out=str(tmp_path / "pack"),
+                   config={"pool_size": 24, "n_clusters": 3, "per_cluster": 2})
+    rows = pack.read_jsonl("sample.jsonl")
+    assert rows
+    clusters = {r["cluster"] for r in rows}
+    assert len(clusters) >= 2  # picked from multiple clusters, not one blob
+
+
+def test_resumable_skips_done(tmp_path):
+    s = _session()
+    out = str(tmp_path / "pack")
+    explore(s, out=out)
+    ts1 = ProfilePack.open(out).stage("sample")["ts"]
+    # second run without force must not re-run an already-done stage
+    explore(s, out=out)
+    ts2 = ProfilePack.open(out).stage("sample")["ts"]
+    assert ts1 == ts2
+
+
+def test_force_reruns(tmp_path):
+    s = _session()
+    out = str(tmp_path / "pack")
+    explore(s, out=out)
+    ts1 = ProfilePack.open(out).stage("sample")["ts"]
+    explore(s, out=out, force=True)
+    ts2 = ProfilePack.open(out).stage("sample")["ts"]
+    assert ts2 >= ts1
+
+
+def test_llm_profile_uses_generator(tmp_path):
+    calls = {"n": 0}
+
+    def gen(prompt):
+        calls["n"] += 1
+        return ["Curated FPGA fact-cards + prose. Entities: device, transceivers. "
+                "Use keyword/regex for part-numbers, dense for prose."]
+
+    s = sac.Session("memory", dim=32, generator=gen)
+    s.add(_corpus())
+    pack = explore(s, out=str(tmp_path / "pack"), config={"llm": True})
+    prof = pack.read_json("content_profile.json")
+    assert prof["llm_overall"]
+    assert prof["llm_by_cluster"]
+    assert calls["n"] > 0
+
+
+def test_fingerprint_detects_drift(tmp_path):
+    s = _session()
+    fp1 = corpus_fingerprint(s.store)
+    s.add([{"id": "new1", "text": "a brand new document about PCIe retimers"}])
+    fp2 = corpus_fingerprint(s.store)
+    assert fp1 != fp2

@@ -16,6 +16,7 @@ Quickstart:
 
 from .adapters import MemoryStore, VectorStore, available, connect, register
 from .embeddings import Embedder, HashEmbedder, as_embedder, get_embedder
+from .explore import ProfilePack, explore
 from .errors import (
     BackendError,
     BackendNotFoundError,
@@ -32,25 +33,25 @@ from .errors import (
     SacError,
 )
 from .primitives import (
+    abstain,
     auto_filter,
+    confidence,
     decompose,
     dedup,
+    diversity_quota,
     expand,
     extract,
     fan_out,
     freshness,
     fuse,
     mmr,
-    rephrase,
-    rerank,
-    abstain,
-    confidence,
-    diversity_quota,
     normalize_query,
     normalize_scores,
     quality_filter,
     rare_terms,
     relative_score_fusion,
+    rephrase,
+    rerank,
     rrf,
     score_cutoff,
     topics,
@@ -71,6 +72,8 @@ __all__ = [
     "Embedder", "HashEmbedder", "as_embedder", "get_embedder",
     # harness
     "Session", "route", "Sandbox", "LocalExecutor", "ExecResult",
+    # exploration / onboarding
+    "explore", "ProfilePack",
     # primitives
     "fan_out", "fuse", "dedup", "rerank", "freshness", "extract",
     "mmr", "expand", "decompose", "rephrase", "rrf", "topics", "auto_filter", "score_cutoff",
