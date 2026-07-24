@@ -11,6 +11,15 @@ API, Google Agent Search auto-schema, MCP schema tools).
 | `store.sample(n=5)` | a few representative `Document`s |
 | `content_type(text)` | `'table' \| 'fact-card' \| 'list' \| 'code' \| 'prose' \| 'short-fact' \| 'empty'` |
 | `Session.describe(n_samples=4)` | LLM-ready corpus profile: schema + **content-type mix** + snippets |
+| `Session.describe(..., llm=True)` | adds `profile["llm"]` — the **generator's own** characterization of the sample (data type, key entities, recommended primitives) |
+
+### Two layers — sampled always, LLM optional
+1. **Sampled + heuristic (default):** `sample()` draws a *real random* slice from the store
+   (OpenSearch uses `random_score`, not first-n); `content_type()` tags each chunk by rule.
+2. **LLM-driven (`llm=True`):** the raw sample + schema go to the Session generator, which
+   returns a free-text profile of the corpus and suggests primitives. This is the genuinely
+   model-driven characterization — use it when the heuristic tags aren't enough (heterogeneous
+   or unfamiliar corpora). Falls back gracefully if no generator is attached.
 
 ## The pattern
 1. The agent calls `session.describe()` **first**.

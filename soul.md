@@ -41,8 +41,13 @@ consistently and nothing important gets lost in code or chat.
 
 ## How an LLM agent should use these
 - **Before coding:** read `soul.md` → `CHANGELOG.md` (status) → the relevant `docs/*`.
-- **While working:** prefer standard SDK primitives; if introspecting a new corpus, run the
-  introspection primitives (see `docs/PRIMITIVES.md`) and feed the schema to yourself first.
+- **While working:** prefer standard SDK primitives. **Introspect a new corpus before writing
+  retrieval code** — call `session.describe()` first (schema-first agentic retrieval, see
+  `docs/INTROSPECTION.md`). It is two layers: a *sampled + heuristic* profile always (real random
+  `sample()` + `content_type` tags), and a *genuinely LLM-driven* one via `describe(llm=True)` (the
+  generator reads the sample and names the data type / key entities / best-fit primitives). Feed
+  that profile into your own prompt so your retrieval code matches the data shape (exact/regex for
+  fact-cards & part-numbers, dense/hyde for prose, fielded/phrase for structured fields).
 - **After a finding:** update `CHANGELOG.md`; if generalizable → `learnings_standard.md`; if from a
   source → `research.md`; if it changes the primitive catalog → `docs/PRIMITIVES.md`.
 - **Before pushing:** confirm nothing customer-specific/secret is staged (see rule 1).
