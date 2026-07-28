@@ -294,13 +294,15 @@ class ValidateStage(Stage):
                 h = int(gold in ids)
                 hit[s] += h
                 by_cluster.setdefault(c, {}).setdefault(s, [0, 0])
-                by_cluster[c][s][0] += h; by_cluster[c][s][1] += 1
+                by_cluster[c][s][0] += h
+                by_cluster[c][s][1] += 1
                 by_diff.setdefault(d, {}).setdefault(s, [0, 0])
-                by_diff[d][s][0] += h; by_diff[d][s][1] += 1
+                by_diff[d][s][0] += h
+                by_diff[d][s][1] += 1
 
         n = len(qs)
         recall = {s: hit[s] / n for s in self.STRATEGIES}
-        best = max(recall, key=recall.get)
+        best = max(recall, key=lambda s: recall[s])
         cluster_best = {str(c): _best(d) for c, d in by_cluster.items()}
         result = {"n": n, "k": k, "recall_at_k": recall, "best_overall": best,
                   "cluster_best": cluster_best,

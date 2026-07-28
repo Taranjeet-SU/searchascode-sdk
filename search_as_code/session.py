@@ -135,7 +135,7 @@ class Session:
             "and fact-cards, dense/hyde for prose, fielded/phrase for structured fields)."
         )
         try:
-            out = self.generator(prompt)
+            out = self.generator(prompt)  # type: ignore[misc]  # guarded by caller (generator is not None)
             return out[0] if isinstance(out, list) else str(out)
         except Exception as e:  # pragma: no cover - profiling is best-effort
             return f"(llm profile unavailable: {e})"

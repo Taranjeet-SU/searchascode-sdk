@@ -16,7 +16,6 @@ Quickstart:
 
 from .adapters import MemoryStore, VectorStore, available, connect, register
 from .embeddings import Embedder, HashEmbedder, as_embedder, get_embedder
-from .explore import ProfilePack, explore
 from .errors import (
     BackendError,
     BackendNotFoundError,
@@ -32,6 +31,7 @@ from .errors import (
     MissingDependencyError,
     SacError,
 )
+from .explore import ProfilePack, explore
 from .primitives import (
     abstain,
     auto_filter,
