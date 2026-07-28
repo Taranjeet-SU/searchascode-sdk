@@ -232,7 +232,7 @@ def _gen_queries(ctx: ExploreContext, text: str, per_doc: int):
     )
     try:
         out = ctx.generator(prompt)
-        txt = out[0] if isinstance(out, list) else str(out)
+        txt = "\n".join(out) if isinstance(out, list) else str(out)  # generator may line-split; rejoin for JSON
     except Exception:
         return []
     m = re.search(r"\[.*\]", txt, re.DOTALL)
