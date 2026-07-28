@@ -1,12 +1,17 @@
 """Exploration stages.
 
-Implemented now: :class:`SampleStage` (stratified sample via clustering) and
-:class:`ProfileStage` (content-type mix + LLM characterization). The remaining five
-are typed stubs that raise ``NotImplementedError`` so the pipeline runs end-to-end and
-the pack shows the roadmap; each is filled in as its own pass.
+Implemented: :class:`SampleStage` (stratified sample), :class:`ProfileStage` (content-type
+mix + LLM characterization), :class:`SynthesizeStage` (grounded synthetic queries) and
+:class:`ValidateStage` (held-out retrieval eval + keep-if-better report). The rest
+(ontology/crossdoc/router/codegen) are typed stubs recorded as ``planned`` so the pipeline
+runs end-to-end and the pack shows the roadmap.
 """
 
 from __future__ import annotations
+
+import json
+import re
+from collections import Counter
 
 import numpy as np
 
@@ -189,13 +194,59 @@ class CrossDocStage(_PlannedStage):
     _todo = "cross-document relation graph (next pass)"
 
 
-class SynthesizeStage(_PlannedStage):
-    """Generate stratified easy/medium/hard queries grounded in the sample + ontology
-    (no test leakage) to train the router and mine few-shots."""
+class SynthesizeStage(Stage):
+    """Generate stratified easy/medium/hard queries **grounded in the sampled docs** — each
+    query's answer lives in a known document (its ``gold_id``). This is a leakage-free eval/
+    training set (built from the corpus, never from the downstream test set) used by
+    ``validate`` (and later the router/few-shot mining)."""
+
     name = "synthesize"
-    requires = ["profile"]
+    requires = ["sample"]
     produces = ["synth_queries.jsonl"]
-    _todo = "stratified synthetic-query generation (port from phase4)"
+
+    def run(self, ctx: ExploreContext) -> dict:
+        if ctx.generator is None:
+            raise RuntimeError("synthesize needs a Session generator")
+        sample = ctx.pack.read_jsonl("sample.jsonl")
+        max_docs = int(ctx.cfg("synth_docs", 30))
+        per_doc = int(ctx.cfg("synth_per_doc", 3))
+        rows = []
+        for r in sample[:max_docs]:
+            for diff, q in _gen_queries(ctx, r.get("text") or "", per_doc):
+                rows.append({"query": q, "gold_id": r["id"],
+                             "cluster": r.get("cluster"), "difficulty": diff})
+        ctx.pack.write_jsonl("synth_queries.jsonl", rows)
+        return {"queries": len(rows), "from_docs": min(len(sample), max_docs),
+                "by_difficulty": dict(Counter(x["difficulty"] for x in rows))}
+
+
+def _gen_queries(ctx: ExploreContext, text: str, per_doc: int):
+    if not text.strip():
+        return []
+    prompt = (
+        f"From the technical document below, write {per_doc} distinct search questions whose "
+        "answer is IN this document. Vary difficulty across: 'easy' (direct keyword/fact "
+        "lookup), 'medium' (paraphrased/conceptual), 'hard' (indirect or multi-constraint). "
+        'Return ONLY a JSON list of {"difficulty": "...", "query": "..."}. Keep each query '
+        f"self-contained (no 'this document').\n\nDOCUMENT:\n{text[:1200]}"
+    )
+    try:
+        out = ctx.generator(prompt)
+        txt = out[0] if isinstance(out, list) else str(out)
+    except Exception:
+        return []
+    m = re.search(r"\[.*\]", txt, re.DOTALL)
+    if not m:
+        return []
+    res = []
+    try:
+        for o in json.loads(m.group(0)):
+            q = (o.get("query") or "").strip()
+            if q:
+                res.append((o.get("difficulty", "?"), q))
+    except Exception:
+        return []
+    return res[:per_doc]
 
 
 class RouterStage(_PlannedStage):
@@ -216,10 +267,83 @@ class CodegenStage(_PlannedStage):
     _todo = "template/few-shot mining + sandbox-validated primitive codegen (next pass)"
 
 
-class ValidateStage(_PlannedStage):
-    """Measure retrieval on a held-out synth slice with vs without the pack; keep only
-    tunings that beat baseline; emit a report."""
+class ValidateStage(Stage):
+    """Measure retrieval on the grounded synth queries: recall@k for each base strategy
+    (dense/keyword/hybrid), overall and per cluster. Establishes the baseline and the
+    best strategy per data-shape — the signal later tunings must beat. Writes a JSON +
+    a human-readable REPORT.md."""
+
     name = "validate"
-    requires = ["profile"]
+    requires = ["synthesize"]
     produces = ["validation.json", "REPORT.md"]
-    _todo = "held-out validation + keep-if-better gating (next pass)"
+
+    STRATEGIES = ["dense", "keyword", "hybrid"]
+
+    def run(self, ctx: ExploreContext) -> dict:
+        qs = ctx.pack.read_jsonl("synth_queries.jsonl")
+        if not qs:
+            raise RuntimeError("no synth queries to validate on")
+        k = int(ctx.cfg("validate_k", 10))
+        hit = {s: 0 for s in self.STRATEGIES}
+        by_cluster: dict = {}     # cluster -> strategy -> [hits, n]
+        by_diff: dict = {}        # difficulty -> strategy -> [hits, n]
+        for row in qs:
+            gold, c, d = row["gold_id"], row.get("cluster"), row.get("difficulty", "?")
+            for s in self.STRATEGIES:
+                ids = _search_ids(ctx, s, row["query"], k)
+                h = int(gold in ids)
+                hit[s] += h
+                by_cluster.setdefault(c, {}).setdefault(s, [0, 0])
+                by_cluster[c][s][0] += h; by_cluster[c][s][1] += 1
+                by_diff.setdefault(d, {}).setdefault(s, [0, 0])
+                by_diff[d][s][0] += h; by_diff[d][s][1] += 1
+
+        n = len(qs)
+        recall = {s: hit[s] / n for s in self.STRATEGIES}
+        best = max(recall, key=recall.get)
+        cluster_best = {str(c): _best(d) for c, d in by_cluster.items()}
+        result = {"n": n, "k": k, "recall_at_k": recall, "best_overall": best,
+                  "cluster_best": cluster_best,
+                  "by_difficulty": {d: _rates(v) for d, v in by_diff.items()}}
+        ctx.pack.write_json("validation.json", result)
+        ctx.pack.path("REPORT.md").write_text(_report_md(ctx, result))
+        return {"n": n, "best": best,
+                "recall_at_k": {s: round(recall[s], 3) for s in self.STRATEGIES}}
+
+
+def _search_ids(ctx: ExploreContext, mode: str, query: str, k: int) -> set:
+    try:
+        return set(ctx.session.search(query, top_k=k, mode=mode).ids())
+    except Exception:
+        return set()
+
+
+def _best(strat_counts: dict) -> str:
+    return max(strat_counts, key=lambda s: (strat_counts[s][0] / strat_counts[s][1]
+                                            if strat_counts[s][1] else 0.0))
+
+
+def _rates(strat_counts: dict) -> dict:
+    return {s: round(v[0] / v[1], 3) if v[1] else None for s, v in strat_counts.items()}
+
+
+def _report_md(ctx: ExploreContext, res: dict) -> str:
+    lines = ["# Exploration validation report", "",
+             f"Grounded synthetic queries: **{res['n']}**  ·  recall@{res['k']}", "",
+             "## Recall@k by strategy",
+             "| strategy | recall |", "|---|---|"]
+    for s, r in sorted(res["recall_at_k"].items(), key=lambda x: -x[1]):
+        star = "  ⭐" if s == res["best_overall"] else ""
+        lines.append(f"| {s} | {r:.3f}{star} |")
+    lines += ["", "## Best strategy per cluster", "| cluster | best |", "|---|---|"]
+    for c, s in sorted(res["cluster_best"].items()):
+        lines.append(f"| {c} | {s} |")
+    lines += ["", "## Recall@k by difficulty", "| difficulty | " +
+              " | ".join(ValidateStage.STRATEGIES) + " |",
+              "|---|" + "---|" * len(ValidateStage.STRATEGIES)]
+    for d, rates in res["by_difficulty"].items():
+        lines.append(f"| {d} | " + " | ".join(str(rates.get(s)) for s in
+                     ValidateStage.STRATEGIES) + " |")
+    lines += ["", "_Baseline for keep-if-better gating: later tunings (router, codegen) must "
+              "beat these recall numbers on the same queries to be kept._"]
+    return "\n".join(lines)
