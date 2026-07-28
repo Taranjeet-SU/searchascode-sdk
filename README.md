@@ -3,6 +3,7 @@
 <p align="center"><b>One <code>pip install</code>. One API. Any vector database.</b></p>
 
 <p align="center">
+  <a href="https://pypi.org/project/search-as-code/"><img alt="pypi" src="https://img.shields.io/pypi/v/search-as-code"></a>
   <img alt="python" src="https://img.shields.io/badge/python-3.10+-blue">
   <img alt="license" src="https://img.shields.io/badge/license-Apache--2.0-green">
   <img alt="backends" src="https://img.shields.io/badge/backends-memory·opensearch·qdrant·chroma·pgvector·faiss·sqlite-orange">
@@ -32,23 +33,28 @@ print(best.to_evidence(fields=["title"]))     # compact, context-friendly
 
 ## 📦 Install
 
-**Requires Python 3.10+.** Not yet on PyPI — install from source (editable):
+**Requires Python 3.10+.** It's on [PyPI](https://pypi.org/project/search-as-code/) — just:
+
+```bash
+pip install search-as-code                 # core: in-memory backend + dependency-free embedder (only numpy)
+pip install 'search-as-code[opensearch]'   # + a backend (also: qdrant / chroma / pgvector)
+```
+
+| Extra | Adds |
+|---|---|
+| `search-as-code[opensearch]` | OpenSearch backend (also `[qdrant]` · `[chroma]` · `[pgvector]`) |
+| `search-as-code[providers]` | OpenAI embeddings + LLM |
+| `search-as-code[all]` | every backend + providers |
+| `search-as-code[phase1]` | everything to run the FiQA benchmark (torch, sentence-transformers, langchain) |
+
+<details><summary><b>Install from source (for development)</b></summary>
 
 ```bash
 git clone https://github.com/oro-jackson/searchascode-sdk.git
 cd searchascode-sdk
-pip install -e .                 # core: in-memory backend + dependency-free embedder (only needs numpy)
+pip install -e '.[dev]'          # editable + test/lint/type tooling (pytest, ruff, mypy)
 ```
-
-Then add the backend / extras you need:
-
-| Command | Adds |
-|---|---|
-| `pip install -e '.[opensearch]'` | OpenSearch backend (also: `.[qdrant]` · `.[chroma]` · `.[pgvector]`) |
-| `pip install -e '.[providers]'` | OpenAI embeddings + LLM |
-| `pip install -e '.[all]'` | every backend + providers |
-| `pip install -e '.[phase1]'` | everything to run the FiQA benchmark (torch, sentence-transformers, langchain) |
-| `pip install -e '.[dev]'` | test + lint/type tooling (pytest, ruff, mypy) |
+</details>
 
 ## 🚀 Quick start
 
