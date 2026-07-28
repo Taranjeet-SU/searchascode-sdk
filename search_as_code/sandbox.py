@@ -75,6 +75,14 @@ class LocalExecutor(Sandbox):
             "mmr": P.mmr,
             "expand": P.expand,
             "decompose": P.decompose,
+            # scoring/shaping + consensus helpers the SAC prompt references
+            "consensus": P.consensus,
+            "confidence": P.confidence,
+            "abstain": P.abstain,
+            "normalize_scores": P.normalize_scores,
+            "relative_score_fusion": P.relative_score_fusion,
+            "diversity_quota": P.diversity_quota,
+            "score_cutoff": P.score_cutoff,
             "__builtins__": _safe_builtins(),
         }
 

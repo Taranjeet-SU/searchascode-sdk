@@ -120,9 +120,13 @@ def _samples(session, ids, n: int = 5) -> str:
     return "\n".join(f"[{d.id}] {(d.text or '')[:140]}" for d in docs) or "(none)"
 
 
-def run_sac(session, query: str, chat=None, k: int = 10, judge_chat=None, max_retries: int = 3) -> dict:
+def run_sac(session, query: str, chat=None, k: int = 10, judge_chat=None, max_retries: int = 3,
+            deep: bool = True) -> dict:
     from langchain_core.messages import SystemMessage, HumanMessage
 
+    # deep = default: ensemble + consensus prompt; deep=False = the lean dense-first prompt.
+    system_prompt = sac_surface.SAC_DEEP_SYSTEM if deep else sac_surface.SAC_SYSTEM
+    retry_tmpl = sac_surface.SAC_DEEP_RETRY_TEMPLATE if deep else sac_surface.SAC_RETRY_TEMPLATE
     chat = chat or lc_chat()
     judge_chat = judge_chat or chat
     usage = Usage()
@@ -136,10 +140,10 @@ def run_sac(session, query: str, chat=None, k: int = 10, judge_chat=None, max_re
     for hop in range(max_retries + 1):
         user_msg = f"Query: {query}"
         if hop > 0:  # feed samples + stdout + judge verdict back so the model deepens its exploration
-            user_msg = sac_surface.SAC_RETRY_TEMPLATE.format(
+            user_msg = retry_tmpl.format(
                 verdict=verdict, feedback=feedback, samples=prev_samples,
                 stdout=prev_stdout or "(none)", code=code)
-        msgs = [SystemMessage(content=sac_surface.SAC_SYSTEM), HumanMessage(content=user_msg)]
+        msgs = [SystemMessage(content=system_prompt), HumanMessage(content=user_msg)]
         resp = chat.invoke(msgs)
         _account(usage, resp)
         reasoning, code = _split_reasoning_code(_text(resp))
@@ -164,7 +168,7 @@ def run_sac(session, query: str, chat=None, k: int = 10, judge_chat=None, max_re
     ids = best_ids or ids                 # return the highest-confidence hop, not necessarily the last
     return {"path": "sac", "ids": ids, "latency_s": time.time() - t0, "usage": usage.as_dict(),
             "code": code, "reasoning": reasoning, "ok": attempts[-1]["ok"], "hops": len(attempts),
-            "attempts": attempts, "system_prompt": sac_surface.SAC_SYSTEM,
+            "attempts": attempts, "system_prompt": system_prompt,
             "trace": [{"op": f"hop {a['hop']} · judge {a['judge']}", "returned": len(a["ids"])} for a in attempts]}
 
 

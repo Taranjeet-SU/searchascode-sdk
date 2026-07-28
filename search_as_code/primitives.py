@@ -170,6 +170,37 @@ def abstain(results: ResultSet, min_top: float = 0.0, min_gap: float = 0.0) -> b
     return c["n"] == 0 or c["top"] < min_top or c["gap"] < min_gap
 
 
+def consensus(result_sets: Sequence[ResultSet], top_k: int = 10, per_list_k: int = 10) -> ResultSet:
+    """Vote across MANY ranked lists (rephrasings × modes × HyDE/PRF × rerankers): count how
+    often each id lands in the top ``per_list_k`` of EACH list, tie-broken by mean reciprocal
+    rank. Surfaces the passages a MAJORITY of independent strategies agree on — the "wins for
+    everyone" signal that a single ranker can't give you.
+
+    Returns a ResultSet ranked by consensus, with three attributes attached for gating/learning:
+    ``.agreement`` (top id's votes ÷ n_lists, in [0,1] — high = confident) · ``.votes``
+    ({id: vote_count}) · ``.n_lists``. Low agreement ⇒ strategies disagree ⇒ enrich hop 2.
+    """
+    lists = [rs for rs in result_sets if rs]
+    n = len(lists) or 1
+    votes: dict[str, int] = {}
+    rr: dict[str, float] = {}
+    keep: dict[str, Hit] = {}
+    for rs in lists:
+        for rank, h in enumerate(sorted(rs, key=lambda x: x.score, reverse=True)[:per_list_k]):
+            votes[h.id] = votes.get(h.id, 0) + 1
+            rr[h.id] = rr.get(h.id, 0.0) + 1.0 / (rank + 1)
+            if h.id not in keep or h.score > keep[h.id].score:
+                keep[h.id] = h
+    scored = [Hit(id=i, score=votes[i] + rr[i] / n, document=keep[i].document,
+                  query=keep[i].query, store=keep[i].store) for i in votes]
+    scored.sort(key=lambda h: h.score, reverse=True)
+    out = ResultSet(scored[:top_k])
+    out.agreement = round(max(votes.values()) / n, 3) if votes else 0.0  # type: ignore[attr-defined]
+    out.votes = {i: votes[i] for i in sorted(votes, key=lambda x: -votes[x])[:top_k]}  # type: ignore[attr-defined]
+    out.n_lists = n  # type: ignore[attr-defined]
+    return out
+
+
 def rerank(
     query: str,
     results: ResultSet,

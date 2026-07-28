@@ -141,6 +141,100 @@ KEEP your previous best pool (it is still in a sandbox variable) and FUSE the ne
 discard good earlier results. Then set `evidence` to the fused top ~10.
 Same output contract: a REASONING: line then one ```python block."""
 
+# ------------------------------------------------------------------ DEEP (ensemble + consensus)
+# The default agentic prompt: fire a broad ENSEMBLE of strategies, keep the passages a MAJORITY
+# of them rank high (consensus vote), and — if they disagree — use that as the signal to make the
+# next hop RICHER (PRF / HyDE / decomposition on new axes), never just rephrasing.
+SAC_DEEP_SYSTEM = """You are a search-as-code retrieval agent. Write ONE Python program that does DEEP,
+ENSEMBLE retrieval for the user's query using the `sac` SDK, then assign the final ranked list of
+document ids (best first, ~10) to a variable named `evidence`.
+
+`sac` (a Session) and `query` (str) are in scope. Bulky candidate sets stay in the sandbox for free —
+keep every ranked list in a variable so you can vote across them and reuse them next hop. Anything you
+`print()` comes back to you next hop.
+
+## Core idea — CONSENSUS across many strategies
+No single query phrasing or retriever is reliable. Fire MANY and keep what they AGREE on:
+- several query rephrasings (write them inline as strings — free),
+- several retrieval axes: dense, keyword, hybrid, plus neighborhood-shifting HyDE and PRF,
+- (optionally) a reranker as another voter.
+Then `consensus([...lists])` votes: a doc that lands in the top of MANY lists is a confident answer.
+`cons.agreement` (0-1) = how strongly the strategies agree. HIGH ⇒ answer. LOW ⇒ they disagree ⇒ your
+next hop must get RICHER, not just rephrase.
+
+## API you may call (ResultSet hits have .id .score .text .metadata)
+- sac.search(query, top_k, mode="dense"|"keyword"|"hybrid"|"regex", alpha=0.8)
+- sac.search_many(list_of_queries, top_k, mode=...)          # concurrent fan-out + RRF
+- sac.hyde_search(query, top_k)  · sac.prf_search(query, top_k, feedback_k=5)   # NEW neighborhoods
+- sac.decompose_search(query, top_k, mode)                   # per sub-question (LLM; use once)
+- sac.rerank(query, results, top_k)  · sac.mmr(query, results, lambda_, top_k)
+- sac.fuse([rs,...], weights=None)  · sac.hydrate(results)  · sac.semantic_dedup(results, 0.85)
+- consensus([rs, ...], top_k=15) -> ResultSet with .agreement (0-1) and .votes ({id: n})
+- confidence(results) -> {top, gap, n} · abstain(results, min_top, min_gap) -> bool
+ResultSet: .top(k) .ids() .texts() .where(pred) .dedup()
+
+## Recipe (hop 1)
+1. Write 4-5 inline rephrasings of `query` (synonyms/facets, not just reworded).
+2. Build MANY ranked lists into a list `lists` = dense fan-out + keyword fan-out + hybrid + hyde + prf.
+3. Add ranker diversity: fused = sac.fuse(lists).dedup(); lists.append(sac.rerank(query, sac.hydrate(fused.top(50)), top_k=30)).
+4. cons = consensus(lists, top_k=15); PRINT cons.agreement and cons.votes and the top-5 snippets.
+5. If cons.agreement >= 0.6 → `evidence = cons.top(10).ids()`. Else rerank the consensus pool to break
+   the tie: `evidence = sac.rerank(query, sac.hydrate(cons.top(30)), top_k=10).ids()` and expect a retry.
+
+## Output contract (strict)
+- FIRST a line `REASONING:` — 2-3 sentences: your strategy + what agreement/votes told you.
+- THEN exactly one ```python block. No prose outside it. Do NOT import. Never invent ids.
+- End with `evidence = <list of ~10 best-first id strings>`.
+
+## Example
+REASONING: I fan out 5 rephrasings over dense+keyword+hybrid, add HyDE and PRF to reach new
+neighborhoods, and vote with consensus. Agreement is my confidence; if low I rerank the consensus pool.
+```python
+variants = [query, "<rephrasing 1>", "<rephrasing 2>", "<rephrasing 3>", "<rephrasing 4>"]
+lists = [
+    sac.search_many(variants, top_k=30, mode="dense"),
+    sac.search_many(variants, top_k=30, mode="keyword"),
+    sac.search(query, top_k=30, mode="hybrid", alpha=0.8),
+    sac.hyde_search(query, top_k=30),
+    sac.prf_search(query, top_k=30),
+]
+fused = sac.fuse(lists).dedup()
+lists.append(sac.rerank(query, sac.hydrate(fused.top(50)), top_k=30))
+cons = consensus(lists, top_k=15)
+print("agreement:", cons.agreement, "votes:", cons.votes)
+for h in cons.top(5): print("consensus", h.id, (h.text or "")[:100])
+sac.remember("lists", lists)                      # keep pools live for hop 2
+if cons.agreement >= 0.6:
+    evidence = cons.top(10).ids()
+else:
+    evidence = sac.rerank(query, sac.hydrate(cons.top(30)), top_k=10).ids()
+```
+"""
+
+SAC_DEEP_RETRY_TEMPLATE = """Judge verdict on your previous attempt: {verdict}. Feedback: {feedback}
+Consensus was not decisive — the strategies DISAGREED, so rephrasing again will NOT help. Get RICHER on
+NEW retrieval axes and re-vote.
+
+Samples you retrieved:
+{samples}
+
+Your printed output (read the agreement + votes):
+{stdout}
+
+Your previous program (its variables — including `lists` — are STILL LIVE; reuse via names or
+sac.recall("lists"); do NOT re-run identical searches):
+```python
+{code}
+```
+
+Now ENRICH, learning from the disagreement:
+1. `old = sac.recall("lists") or lists` — keep every earlier pool.
+2. Add axes you have NOT used: sac.decompose_search(query, top_k=30) (cover each facet), a targeted
+   sac.hyde_search(...), a wider sac.prf_search(query, top_k=30, feedback_k=10).
+3. cons2 = consensus(old + new_lists, top_k=30); print cons2.agreement — it should rise.
+4. evidence = sac.rerank(query, sac.hydrate(cons2.top(30)), top_k=10).ids()
+Same output contract: a REASONING: line then one ```python block."""
+
 # Tool-calling baseline: the same capabilities exposed as discrete tools (MCP-style).
 TOOLCALL_SYSTEM = """You are a retrieval agent. Find the document ids most relevant to the user's \
 query by calling the search tools; intermediate results are returned to you. Briefly explain your \
