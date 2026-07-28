@@ -30,9 +30,11 @@ def test_explore_runs_end_to_end(tmp_path):
     # implemented stages succeed
     assert pack.is_done("sample")
     assert pack.is_done("profile")
-    # planned stages recorded as planned, pipeline not aborted
+    # planned stub recorded as planned, pipeline not aborted
     assert pack.stage_status("ontology") == "planned"
-    assert pack.stage_status("validate") == "planned"
+    # synthesize needs a generator -> error here; validate then can't run -> skipped
+    assert pack.stage_status("synthesize") == "error"
+    assert pack.stage_status("validate") == "skipped"
     # artifacts exist
     assert pack.has("sample.jsonl")
     assert pack.has("content_profile.json")
@@ -88,6 +90,37 @@ def test_llm_profile_uses_generator(tmp_path):
     assert prof["llm_overall"]
     assert prof["llm_by_cluster"]
     assert calls["n"] > 0
+
+
+def test_synthesize_and_validate(tmp_path):
+    import json as _json
+
+    def gen(prompt):
+        if "JSON list" in prompt:                       # synthesize asks for queries
+            return [_json.dumps([
+                {"difficulty": "easy", "query": "Agilex 7 transceiver count"},
+                {"difficulty": "medium", "query": "how many high-speed lanes does Agilex 7 have"},
+                {"difficulty": "hard", "query": "which family supports 96 channels for data center"},
+            ])]
+        return ["Mixed FPGA corpus; use keyword for part numbers, dense for prose."]
+
+    s = sac.Session("memory", dim=32, generator=gen)
+    s.add(_corpus())
+    pack = explore(s, out=str(tmp_path / "pack"),
+                   config={"llm": True, "synth_docs": 5, "synth_per_doc": 3})
+
+    assert pack.is_done("synthesize")
+    q = pack.read_jsonl("synth_queries.jsonl")
+    assert q and all("gold_id" in r and "query" in r for r in q)
+    assert {r["difficulty"] for r in q} & {"easy", "medium", "hard"}
+
+    assert pack.is_done("validate")
+    v = pack.read_json("validation.json")
+    assert v["best_overall"] in ("dense", "keyword", "hybrid")
+    assert set(v["recall_at_k"]) == {"dense", "keyword", "hybrid"}
+    assert pack.has("REPORT.md") and "recall@" in pack.path("REPORT.md").read_text()
+    # router still planned (stub), codegen skipped (needs router)
+    assert pack.stage_status("router") == "planned"
 
 
 def test_fingerprint_detects_drift(tmp_path):
