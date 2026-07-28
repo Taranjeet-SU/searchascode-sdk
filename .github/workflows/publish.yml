@@ -1,0 +1,45 @@
+name: Publish to PyPI
+
+# Publishes on a GitHub Release (recommended) or manual dispatch.
+# Uses PyPI Trusted Publishing (OIDC) — no API tokens stored as secrets.
+# One-time setup on PyPI: Account → Publishing → add a "pending publisher":
+#   owner=oro-jackson  repo=searchascode-sdk  workflow=publish.yml  environment=pypi
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Build sdist + wheel
+        run: |
+          pip install build
+          python -m build
+      - name: Validate metadata
+        run: |
+          pip install twine
+          twine check dist/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/
+
+  publish:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: pypi          # protects the publish step; matches the trusted-publisher config
+    permissions:
+      id-token: write          # required for OIDC Trusted Publishing
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist
+          path: dist/
+      - uses: pypa/gh-action-pypi-publish@release/v1

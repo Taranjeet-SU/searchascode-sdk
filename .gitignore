@@ -22,3 +22,9 @@ phase3/runs/
 benchmarks/results/*.log
 *.csv
 SearchUnify_Evaluation*
+phase4/.secrets
+phase4/models/
+phase4/ALTERA_RESULTS.md
+phase4/altera_*.py
+phase4/run_altera*.sh
+pypi.txt

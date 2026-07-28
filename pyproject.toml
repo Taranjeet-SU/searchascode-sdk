@@ -11,9 +11,26 @@ requires-python = ">=3.10"
 license = { text = "Apache-2.0" }
 authors = [{ name = "search-as-code contributors" }]
 keywords = ["rag", "retrieval", "agents", "vector-search", "code-mode", "search-as-code"]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: Apache Software License",
+    "Operating System :: OS Independent",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Topic :: Scientific/Engineering :: Artificial Intelligence",
+    "Topic :: Software Development :: Libraries :: Python Modules",
+]
 dependencies = [
     "numpy>=1.24",
 ]
+
+[project.urls]
+Homepage = "https://github.com/oro-jackson/searchascode-sdk"
+Repository = "https://github.com/oro-jackson/searchascode-sdk"
+Issues = "https://github.com/oro-jackson/searchascode-sdk/issues"
 
 [project.optional-dependencies]
 qdrant = ["qdrant-client>=1.7"]

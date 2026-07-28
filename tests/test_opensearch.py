@@ -85,3 +85,61 @@ def test_aggregation(session):
     agg = session.store.aggregate({"by_kind": {"terms": {"field": "kind.keyword"}}})
     counts = {b["key"]: b["doc_count"] for b in agg["by_kind"]["buckets"]}
     assert counts == {"code": 2, "doc": 1}
+
+
+# ---- extended lexical primitives -------------------------------------------
+def test_phrase_search(session):
+    # ordered phrase: only b has "ranked lists"
+    assert session.store.query_phrase("ranked lists", top_k=5).ids() == ["b"]
+    # slop lets non-adjacent terms match; "reciprocal ... lists" are 5 apart
+    assert session.store.query_phrase("reciprocal lists", top_k=5, slop=0).ids() == []
+    assert "b" in session.store.query_phrase("reciprocal lists", top_k=5, slop=5).ids()
+
+
+def test_fielded_search(session):
+    ids = session.store.query_fielded("search", ["text"], top_k=5).ids()
+    assert set(ids) <= {"a", "c"} and ids  # only code docs mention "search"
+
+
+def test_prefix_search(session):
+    # term-prefix "quer" matches "query"/"QueryEngine" tokens in a and c
+    ids = session.store.query_prefix("quer", top_k=5).ids()
+    assert "a" in ids or "c" in ids
+
+
+def test_wildcard_search(session):
+    ids = session.store.query_wildcard("*fusion*", top_k=5).ids()
+    assert ids == ["b"]
+
+
+def test_fuzzy_search(session):
+    # "reciprical" (typo) should still find b via edit distance
+    ids = session.store.query_fuzzy("reciprical rank", top_k=5, fuzziness=2).ids()
+    assert "b" in ids
+
+
+def test_more_like_this(session):
+    ids = session.store.more_like_this(text="search query method", top_k=5,
+                                       min_term_freq=1, min_doc_freq=1).ids()
+    assert any(i in ids for i in ("a", "c"))
+
+
+def test_random_sample_is_seed_reproducible(session):
+    a = session.store.random_sample(size=3, seed=7).ids()
+    b = session.store.random_sample(size=3, seed=7).ids()
+    assert a == b and len(a) == 3
+
+
+def test_browse_enumerates(session):
+    ids = session.store.browse(top_k=10).ids()
+    assert set(ids) == {"a", "b", "c"}
+
+
+def test_facet_and_count_distinct(session):
+    assert session.store.facet("kind.keyword") == {"code": 2, "doc": 1}
+    assert session.store.count_distinct("kind.keyword") == 2
+
+
+def test_stats(session):
+    st = session.store.stats("year")
+    assert st["min"] == 2023 and st["max"] == 2024 and st["count"] == 3
