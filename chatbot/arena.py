@@ -55,12 +55,15 @@ def _load_samples(n: int = 50) -> list[str]:
             "Can I send a money order from USPS as a business?"]
 
 
-samples = _load_samples(50)
+from chatbot.test_queries import labeled as _labeled, strip_label as _strip_label
+
+samples = _labeled() + _load_samples(50)   # tagged easy/medium/hard × single/multi first, then 50 FiQA
 c1, c2 = st.columns([3, 2])
 with c2:
-    pick = st.selectbox("…or pick a sample", ["(type your own)"] + samples)
+    pick = st.selectbox("…or pick a test query (tagged easy/medium/hard · single/multi-hop)",
+                        ["(type your own)"] + samples)
 with c1:
-    query = st.text_input("Query", value="" if pick == "(type your own)" else pick,
+    query = st.text_input("Query", value="" if pick == "(type your own)" else _strip_label(pick),
                           placeholder="Ask a finance question…")
 bc1, bc2 = st.columns([1, 3])
 deep = bc1.checkbox("deep SAC (ensemble+consensus)", value=True)
