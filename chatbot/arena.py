@@ -37,11 +37,25 @@ def _bots():
 
 sac_bot, tool_bot = _bots()
 
-samples = [
-    "How do I deposit a cheque issued to my business into my business account?",
-    "Can I send a money order from USPS as a business?",
-    "What are the tax implications of selling stock I received as an RSU?",
-]
+@st.cache_data
+def _load_samples(n: int = 50) -> list[str]:
+    """50 real labeled FiQA test queries (have known relevant docs → easy to eyeball relevance)."""
+    import json
+    from phase1 import common
+    try:
+        q = json.loads((common.DATA_DIR / "queries.json").read_text())
+        qr = json.loads((common.DATA_DIR / "qrels.json").read_text())
+        labeled = [qid for qid in qr if any(s > 0 for s in qr[qid].values())]
+        out = [q[qid] for qid in labeled[:n] if qid in q]
+        if out:
+            return out
+    except Exception:
+        pass
+    return ["How do I deposit a cheque issued to my business into my business account?",
+            "Can I send a money order from USPS as a business?"]
+
+
+samples = _load_samples(50)
 c1, c2 = st.columns([3, 2])
 with c2:
     pick = st.selectbox("…or pick a sample", ["(type your own)"] + samples)
@@ -71,14 +85,14 @@ def _metrics(col, a, name):
 def _work(col, a):
     tr = a.trace or {}
     if tr.get("kind") == "sac":
-        col.markdown("**🧑‍💻 Generated code** (final hop)")
-        col.code(tr.get("code", "") or "(none)", language="python")
-        atts = tr.get("attempts", [])
-        if len(atts) > 1:
-            with col.expander(f"all {len(atts)} hop(s) — code + judge verdict"):
-                for at in atts:
-                    st.caption(f"hop {at['hop']} · judge {at.get('judge')} · ids {at.get('ids')}")
-                    st.code(at.get("code", ""), language="python")
+        atts = tr.get("attempts", []) or [{"hop": 0, "code": tr.get("code", ""),
+                                           "judge": "", "ids": a.ids[:6], "reasoning": tr.get("reasoning", "")}]
+        col.markdown(f"**🧑‍💻 SAC wrote code across {len(atts)} hop(s):**")
+        for at in atts:
+            col.markdown(f"**hop {at['hop']}** · judge `{at.get('judge') or '—'}` · ids `{at.get('ids')}`")
+            if at.get("reasoning"):
+                col.caption(at["reasoning"])
+            col.code(at.get("code", "") or "(none)", language="python")
     elif tr.get("kind") == "toolcalling":
         col.markdown("**🔧 Tool calls**")
         steps = tr.get("steps", [])
@@ -94,6 +108,10 @@ if go and query.strip():
             f_sac = ex.submit(sac_bot.answer, query, deep)
             f_tool = ex.submit(tool_bot.answer, query)
             a_sac, a_tool = f_sac.result(), f_tool.result()
+
+    from chatbot.log import log_query
+    log_query("sac", query, a_sac, extra={"deep": deep})
+    log_query("toolcalling", query, a_tool)
 
     left, right = st.columns(2)
     _metrics(left, a_sac, "🟦 SAC (code-mode)")

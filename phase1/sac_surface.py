@@ -145,94 +145,67 @@ Same output contract: a REASONING: line then one ```python block."""
 # The default agentic prompt: fire a broad ENSEMBLE of strategies, keep the passages a MAJORITY
 # of them rank high (consensus vote), and — if they disagree — use that as the signal to make the
 # next hop RICHER (PRF / HyDE / decomposition on new axes), never just rephrasing.
-SAC_DEEP_SYSTEM = """You are a search-as-code retrieval agent. Write ONE Python program that does DEEP,
-ENSEMBLE retrieval for the user's query using the `sac` SDK, then assign the final ranked list of
-document ids (best first, ~10) to a variable named `evidence`.
+SAC_DEEP_SYSTEM = """You are a search-as-code retrieval agent. Write ONE Python program using the `sac`
+SDK, then assign the final ranked list of ~10 document ids (best first) to a variable named `evidence`.
 
-`sac` (a Session) and `query` (str) are in scope. Bulky candidate sets stay in the sandbox for free —
-keep every ranked list in a variable so you can vote across them and reuse them next hop. Anything you
-`print()` comes back to you next hop.
+`sac` (a Session) and `query` (str) are in scope. Keep candidate sets in variables (they persist across
+hops for free). Anything you `print()` comes back to you next hop.
 
-## Core idea — CONSENSUS across many strategies
-No single query phrasing or retriever is reliable. Fire MANY and keep what they AGREE on:
-- several query rephrasings (write them inline as strings — free),
-- several retrieval axes: dense, keyword, hybrid, plus neighborhood-shifting HyDE and PRF,
-- (optionally) a reranker as another voter.
-Then `consensus([...lists])` votes: a doc that lands in the top of MANY lists is a confident answer.
-`cons.agreement` (0-1) = how strongly the strategies agree. HIGH ⇒ answer. LOW ⇒ they disagree ⇒ your
-next hop must get RICHER, not just rephrase.
+## Strategy — start SIMPLE, escalate only if needed
+HOP 1 (this program): do the OBVIOUS thing — a single **hybrid** search + rerank. Most queries are
+answered in one shot here; do NOT over-engineer or fan out yet (that would lose the cheap one-shot win).
+Print `confidence(pool)` so the harness can judge. If it's a confident hit, you're done; if not, the
+harness sends you back to go WIDE (hop 2).
 
-## API you may call (ResultSet hits have .id .score .text .metadata)
-- sac.search(query, top_k, mode="dense"|"keyword"|"hybrid"|"regex", alpha=0.8)
+## API (ResultSet hits have .id .score .text .metadata)
+- sac.search(query, top_k, mode="dense"|"keyword"|"hybrid"|"regex", alpha=0.8)   # hybrid = dense+BM25 RRF
 - sac.search_many(list_of_queries, top_k, mode=...)          # concurrent fan-out + RRF
-- sac.hyde_search(query, top_k)  · sac.prf_search(query, top_k, feedback_k=5)   # NEW neighborhoods
-- sac.decompose_search(query, top_k, mode)                   # per sub-question (LLM; use once)
-- sac.rerank(query, results, top_k)  · sac.mmr(query, results, lambda_, top_k)
-- sac.fuse([rs,...], weights=None)  · sac.hydrate(results)  · sac.semantic_dedup(results, 0.85)
-- consensus([rs, ...], top_k=15) -> ResultSet with .agreement (0-1) and .votes ({id: n})
-- confidence(results) -> {top, gap, n} · abstain(results, min_top, min_gap) -> bool
+- sac.rerank(query, results, top_k)  · sac.hydrate(results)  · sac.fuse([rs,...], weights=None)
+- sac.hyde_search / sac.prf_search / sac.decompose_search    # hop-2 axes (each may call the LLM)
+- consensus([rs, ...], top_k) -> ResultSet with .agreement (0-1), .votes                 # hop 2
+- confidence(results) -> {top, gap, n}  · abstain(results, min_top, min_gap)
+- STOP-SIGNALS (hop 2, to avoid wasting tokens): sac.answerability(query) -> {max_sim, likely_answerable};
+  sac.diversity(results) -> {mean_similarity, redundant}; score_cliff(results) -> {has_cliff, cliff_at}
 ResultSet: .top(k) .ids() .texts() .where(pred) .dedup()
 
-## Recipe (hop 1)
-1. Write 4-5 inline rephrasings of `query` (synonyms/facets, not just reworded).
-2. Build MANY ranked lists into a list `lists` = dense fan-out + keyword fan-out + hybrid + hyde + prf.
-3. Add ranker diversity: fused = sac.fuse(lists).dedup(); lists.append(sac.rerank(query, sac.hydrate(fused.top(50)), top_k=30)).
-4. cons = consensus(lists, top_k=15); PRINT cons.agreement and cons.votes and the top-5 snippets.
-5. If cons.agreement >= 0.6 → `evidence = cons.top(10).ids()`. Else rerank the consensus pool to break
-   the tie: `evidence = sac.rerank(query, sac.hydrate(cons.top(30)), top_k=10).ids()` and expect a retry.
-
 ## Output contract (strict)
-- FIRST a line `REASONING:` — 2-3 sentences: your strategy + what agreement/votes told you.
-- THEN exactly one ```python block. No prose outside it. Do NOT import. Never invent ids.
-- End with `evidence = <list of ~10 best-first id strings>`.
+- FIRST a line `REASONING:` (1-2 sentences). THEN exactly one ```python block. No prose outside it.
+- Do NOT import. Never invent ids. End with `evidence = <list of ~10 id strings>`.
 
-## Example
-REASONING: I fan out 5 rephrasings over dense+keyword+hybrid, add HyDE and PRF to reach new
-neighborhoods, and vote with consensus. Agreement is my confidence; if low I rerank the consensus pool.
+## Example (HOP 1 — one shot)
+REASONING: Straightforward question — one hybrid search, reranked. If the harness isn't satisfied I'll go wide next hop.
 ```python
-variants = [query, "<rephrasing 1>", "<rephrasing 2>", "<rephrasing 3>", "<rephrasing 4>"]
-lists = [
-    sac.search_many(variants, top_k=30, mode="dense"),
-    sac.search_many(variants, top_k=30, mode="keyword"),
-    sac.search(query, top_k=30, mode="hybrid", alpha=0.8),
-    sac.hyde_search(query, top_k=30),
-    sac.prf_search(query, top_k=30),
-]
-fused = sac.fuse(lists).dedup()
-lists.append(sac.rerank(query, sac.hydrate(fused.top(50)), top_k=30))
-cons = consensus(lists, top_k=15)
-print("agreement:", cons.agreement, "votes:", cons.votes)
-for h in cons.top(5): print("consensus", h.id, (h.text or "")[:100])
-sac.remember("lists", lists)                      # keep pools live for hop 2
-if cons.agreement >= 0.6:
-    evidence = cons.top(10).ids()
-else:
-    evidence = sac.rerank(query, sac.hydrate(cons.top(30)), top_k=10).ids()
+pool = sac.search(query, top_k=40, mode="hybrid", alpha=0.8)
+pool = sac.rerank(query, sac.hydrate(pool.top(40)), top_k=10)   # reranker optional (lexical fallback)
+print("confidence:", confidence(pool))
+evidence = pool.top(10).ids()
 ```
 """
 
-SAC_DEEP_RETRY_TEMPLATE = """Judge verdict on your previous attempt: {verdict}. Feedback: {feedback}
-Consensus was not decisive — the strategies DISAGREED, so rephrasing again will NOT help. Get RICHER on
-NEW retrieval axes and re-vote.
+SAC_DEEP_RETRY_TEMPLATE = """The harness was NOT satisfied with hop 1. Verdict: {verdict}. Feedback: {feedback}
+Hop 1 (a plain hybrid search) wasn't enough — now go AS WIDE AS POSSIBLE and vote by CONSENSUS. But FIRST
+check whether an answer is even present, so you don't waste tokens widening a search that can't succeed.
 
-Samples you retrieved:
+Samples from hop 1:
 {samples}
-
-Your printed output (read the agreement + votes):
+Your hop-1 output:
 {stdout}
-
-Your previous program (its variables — including `lists` — are STILL LIVE; reuse via names or
-sac.recall("lists"); do NOT re-run identical searches):
+Your previous program (its variables are STILL LIVE — reuse them, don't re-run identical searches):
 ```python
 {code}
 ```
 
-Now ENRICH, learning from the disagreement:
-1. `old = sac.recall("lists") or lists` — keep every earlier pool.
-2. Add axes you have NOT used: sac.decompose_search(query, top_k=30) (cover each facet), a targeted
-   sac.hyde_search(...), a wider sac.prf_search(query, top_k=30, feedback_k=10).
-3. cons2 = consensus(old + new_lists, top_k=30); print cons2.agreement — it should rise.
-4. evidence = sac.rerank(query, sac.hydrate(cons2.top(30)), top_k=10).ids()
+Write a wide-ensemble program:
+1. STOP-SIGNAL first: `sig = sac.answerability(query); print(sig)`. If `sig["likely_answerable"]` is
+   False, the corpus probably lacks the answer — do ONE careful consensus pass, then STOP (don't keep
+   widening). Always `sac.remember("answerable", bool(sig["likely_answerable"]))`.
+2. Go WIDE: 4-5 inline rephrasings, then build `lists` = dense fan-out + keyword fan-out + hybrid +
+   sac.hyde_search + sac.prf_search + sac.decompose_search (cover each facet). Add a reranked pool as a voter.
+3. `cons = consensus(lists, top_k=15); print("agreement:", cons.agreement, "votes:", cons.votes)`.
+4. Redundancy/cliff check: `print(sac.diversity(cons.top(10)), score_cliff(cons))`. If diversity is
+   `redundant` AND agreement stays low, widening won't help — stop and return the best you have.
+5. `sac.remember("agreement", float(cons.agreement))`  # ALWAYS — harness retries once more only if agreement low AND answerable
+6. `evidence = sac.rerank(query, sac.hydrate(cons.top(30)), top_k=10).ids()`
 Same output contract: a REASONING: line then one ```python block."""
 
 # Tool-calling baseline: the same capabilities exposed as discrete tools (MCP-style).

@@ -372,6 +372,35 @@ class Session:
         new_q = new_q / (np.linalg.norm(new_q) or 1.0)
         return self.store.query_vector(new_q.tolist(), top_k=top_k, flt=flt)
 
+    def answerability(self, query: str, top_k: int = 30) -> dict:
+        """Probe whether the corpus can even answer, cheaply. Embed a hypothetical ANSWER (HyDE)
+        and dense-search it — the top score is the max cosine similarity of any doc to what a real
+        answer looks like. LOW ``max_sim`` ⇒ the answer is probably NOT in the corpus → abstain/stop
+        instead of burning tokens going wider. Needs a generator."""
+        gen = self._require_generator()
+        doc = (gen(f"Write a short passage that directly answers this query.\nQuery: {query}") or [query])[0]
+        vec = self.embedder.embed([doc])[0]
+        hits = self.store.query_vector(vec, top_k=top_k)
+        top = max((h.score for h in hits), default=0.0)
+        return {"max_sim": round(float(top), 3), "likely_answerable": top >= 0.5}
+
+    def diversity(self, results: ResultSet, top_k: int = 10) -> dict:
+        """Mean pairwise cosine similarity of the top-k hits (re-embeds their text, so it works on
+        backends that don't return stored vectors). HIGH (→1.0) = results collapsed to near-duplicates
+        (the search is stuck / one-source-dominated); LOW = diverse coverage."""
+        import numpy as np
+
+        hits = sorted(results, key=lambda h: h.score, reverse=True)[:top_k]
+        texts = [h.text or "" for h in hits]
+        if len([t for t in texts if t]) < 2:
+            return {"mean_similarity": 0.0, "redundant": False, "n": len(hits)}
+        v = np.asarray(self.embedder.embed(texts), dtype=np.float32)
+        v = v / (np.linalg.norm(v, axis=1, keepdims=True) + 1e-9)
+        sim = v @ v.T
+        iu = np.triu_indices(len(hits), k=1)
+        mean = float(sim[iu].mean())
+        return {"mean_similarity": round(mean, 3), "redundant": mean >= 0.92, "n": len(hits)}
+
     def hydrate(self, results: ResultSet) -> ResultSet:
         """Fetch full documents for hits that only carry ids (e.g. after fusion
         across a store that returned partial payloads)."""

@@ -201,6 +201,58 @@ def consensus(result_sets: Sequence[ResultSet], top_k: int = 10, per_list_k: int
     return out
 
 
+# ---- stop signals: "is an answer even here?" without burning tokens ----------
+def score_cliff(results: ResultSet, min_k: int = 3) -> dict[str, Any]:
+    """Detect a sharp score DROP-OFF (a "cliff") in the ranked scores. A clear cliff after a
+    few hits ⇒ a well-separated relevant set (answer likely present, keep above the cliff).
+    NO cliff + flat low scores ⇒ nothing stands out (answer may be absent). Returns
+    {has_cliff, cliff_at (rank), drop (relative size of the biggest gap)}."""
+    scores = sorted((h.score for h in results), reverse=True)
+    if len(scores) < min_k + 2:
+        return {"has_cliff": False, "cliff_at": len(scores), "drop": 0.0}
+    best_i, best_drop = len(scores), 0.0
+    for i in range(min_k, len(scores)):
+        prev = scores[i - 1]
+        drop = (prev - scores[i]) / (abs(prev) + 1e-9)
+        if drop > best_drop:
+            best_drop, best_i = drop, i
+    return {"has_cliff": best_drop >= 0.5, "cliff_at": best_i, "drop": round(best_drop, 3)}
+
+
+def result_diversity(results: ResultSet, top_k: int = 10) -> dict[str, Any]:
+    """Mean pairwise cosine similarity of the top-k hits' vectors. HIGH mean (→1.0) = results
+    collapsed to near-duplicates (redundant / the search is stuck re-finding the same doc);
+    LOW = diverse coverage. Returns {mean_similarity, redundant (>=0.9), n}. Needs hit vectors."""
+    import numpy as np
+
+    hits = [h for h in sorted(results, key=lambda h: h.score, reverse=True)[:top_k]
+            if h.document is not None and h.document.vector is not None]
+    if len(hits) < 2:
+        return {"mean_similarity": 0.0, "redundant": False, "n": len(hits)}
+    v = np.asarray([h.document.vector for h in hits], dtype=np.float32)  # type: ignore[union-attr]
+    v = v / (np.linalg.norm(v, axis=1, keepdims=True) + 1e-9)
+    sim = v @ v.T
+    iu = np.triu_indices(len(hits), k=1)
+    mean = float(sim[iu].mean())
+    return {"mean_similarity": round(mean, 3), "redundant": mean >= 0.9, "n": len(hits)}
+
+
+def max_similarity(vector: Sequence[float], results: ResultSet) -> float:
+    """Max cosine similarity between a probe ``vector`` (e.g. a HyDE hypothetical-answer
+    embedding) and the retrieved hits. LOW ⇒ even the best candidate is far from what a real
+    answer looks like → the answer is probably NOT in the corpus (abstain, stop searching)."""
+    import numpy as np
+
+    hits = [h for h in results if h.document is not None and h.document.vector is not None]
+    if not hits:
+        return 0.0
+    q = np.asarray(vector, dtype=np.float32)
+    q = q / (np.linalg.norm(q) or 1.0)
+    m = np.asarray([h.document.vector for h in hits], dtype=np.float32)  # type: ignore
+    m = m / (np.linalg.norm(m, axis=1, keepdims=True) + 1e-9)
+    return round(float((m @ q).max()), 3)
+
+
 def rerank(
     query: str,
     results: ResultSet,

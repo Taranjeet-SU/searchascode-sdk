@@ -63,6 +63,9 @@ class SacChatbot:
             "kind": "sac",
             "code": r.get("code", ""),
             "reasoning": r.get("reasoning", ""),
+            "agreement": self.session.recall("agreement"),
+            "hops_detail": [{"hop": a["hop"], "judge": a.get("judge"), "agreement": a.get("agreement")}
+                            for a in r.get("attempts", [])],
             "attempts": [{"hop": a["hop"], "judge": a.get("judge"), "code": a.get("code", ""),
                           "reasoning": a.get("reasoning", ""), "ids": a.get("ids", [])[:6]}
                          for a in r.get("attempts", [])],

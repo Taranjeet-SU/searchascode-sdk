@@ -133,6 +133,8 @@ def run_sac(session, query: str, chat=None, k: int = 10, judge_chat=None, max_re
     t0 = time.time()
     box = LocalExecutor(session)          # ONE executor → namespace persists across hops
     box._globals["query"] = query
+    for _k in ("agreement", "lists", "answerable"):   # clear cross-query state (session is reused)
+        session.forget(_k)
     attempts, feedback, ids, code, reasoning = [], None, [], "", ""
     prev_stdout, prev_samples, verdict = "", "", ""
     best_ids, best_conf = [], -1.0            # keep the highest-confidence hop, never lose a good one
@@ -154,15 +156,24 @@ def run_sac(session, query: str, chat=None, k: int = 10, judge_chat=None, max_re
         else:
             accept, feedback, conf = judge(judge_chat, query, ids, session, usage)
             verdict = "PASS" if accept else "FAIL"
+        # deep mode: the generated code stores the consensus agreement (0-1). LOW agreement means
+        # the strategies DISAGREE (likely partial/uncertain answer) → force a richer hop 2, even if
+        # the (lenient) judge passed or confidence looks high.
+        agree = session.recall("agreement") if deep else None
+        answerable = session.recall("answerable")   # False ⇒ answer likely absent ⇒ don't waste a hop
+        low_agree = (deep and isinstance(agree, (int, float)) and agree < 0.6
+                     and hop < max_retries and answerable is not False)
+        if low_agree and accept:
+            verdict, feedback = "LOW_AGREEMENT", f"consensus agreement {agree} is low — strategies disagree; enrich on new axes"
         if ids and conf > best_conf:      # keep the best hop so refinement can't destroy a good result
             best_conf, best_ids = conf, ids
         prev_stdout = (result.stdout or "")[:1200]
         prev_samples = _samples(session, ids)
         attempts.append({"hop": hop, "reasoning": reasoning, "code": code, "ok": result.ok,
                          "error": result.error, "stdout": prev_stdout, "samples": prev_samples,
-                         "prompt": user_msg, "ids": ids, "judge": verdict,
+                         "prompt": user_msg, "ids": ids, "judge": verdict, "agreement": agree,
                          "confidence": round(conf, 2), "feedback": feedback})
-        if accept or conf >= 0.75 or hop == max_retries:   # short-circuit when confident
+        if (accept or conf >= 0.75 or hop == max_retries) and not low_agree:   # short-circuit when confident AND strategies agree
             break
 
     ids = best_ids or ids                 # return the highest-confidence hop, not necessarily the last

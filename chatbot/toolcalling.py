@@ -26,14 +26,17 @@ from phase1 import common
 
 SYSTEM = (
     "You are a financial-QA assistant answering from a corpus of finance Q&A documents. "
-    "Work in multiple short steps using the tools:\n"
-    "1. Call `search_docs` 2-3 times with DIFFERENT phrasings and/or modes (try hybrid, then "
-    "keyword for exact terms) to gather candidate documents — inspect the snippets.\n"
-    "2. Optionally `read_doc` on the most promising id if a snippet is not enough.\n"
-    "3. Then call `finish` with a concise (2-4 sentence) answer grounded ONLY in what you found, "
-    "citing the document ids you used in `source_ids`. If the corpus lacks the answer, finish with "
-    "\"I don't have enough information to answer that.\" and an empty source list.\n"
-    "Do NOT answer from prior knowledge; do NOT call finish before at least two searches."
+    "Use the tools EFFICIENTLY — stop as soon as you can answer:\n"
+    "1. Call `search_docs` (start with mode=\"hybrid\"). INSPECT the returned snippets.\n"
+    "2. If the top snippets already answer the question, call `finish` IMMEDIATELY — one search is "
+    "enough; do NOT keep searching for its own sake.\n"
+    "3. ONLY if the results are insufficient or off-topic, either search again with a different "
+    "phrasing/mode OR `read_docs` the TOP FEW promising ids together (batch — never one at a time), "
+    "then finish. You may call search_docs and read_docs in the SAME turn.\n"
+    "`finish` takes a concise (2-4 sentence) answer grounded ONLY in what you found, citing the "
+    "document ids you used in `source_ids`. If the corpus lacks the answer, finish with "
+    "\"I don't have enough information to answer that.\" and an empty source list. "
+    "Do NOT answer from prior knowledge."
 )
 
 TOOLS: list[dict] = [
@@ -49,11 +52,14 @@ TOOLS: list[dict] = [
             "top_k": {"type": "integer", "description": "number of hits, 1-10 (default 6)"},
         }, "required": ["query"]}}},
     {"type": "function", "function": {
-        "name": "read_doc",
-        "description": "Read the full text of ONE document by its id (from a search hit) when the snippet is insufficient.",
+        "name": "read_docs",
+        "description": ("Read the FULL text of one or more documents by id (batch). Pass the TOP few "
+                        "candidate ids from your searches TOGETHER — do not read one at a time. You may "
+                        "also call search_docs and read_docs in the SAME turn."),
         "parameters": {"type": "object", "properties": {
-            "doc_id": {"type": "string", "description": "a document id returned by search_docs"}},
-            "required": ["doc_id"]}}},
+            "doc_ids": {"type": "array", "items": {"type": "string"},
+                        "description": "the most promising ids from search_docs hits (2-5 at once)"}},
+            "required": ["doc_ids"]}}},
     {"type": "function", "function": {
         "name": "finish",
         "description": "Submit the final grounded answer with the document ids you used as citations. Call once you have enough evidence.",
@@ -92,11 +98,13 @@ class ToolCallingChatbot:
         obs = [{"id": h.id, "snippet": (h.text or "")[:200]} for h in rs]
         return json.dumps(obs), rs.ids()
 
-    def _read_doc(self, doc_id: str) -> str:
-        docs = self.sac.store.get([str(doc_id)])
-        if not docs:
-            return f"ERROR: no document with id {doc_id!r}. Use an id returned by search_docs."
-        return (docs[0].text or "")[:1000]
+    def _read_docs(self, doc_ids) -> str:
+        ids = [str(i) for i in (doc_ids or [])][:5]
+        if not ids:
+            return "ERROR: pass doc_ids (a list of ids from search_docs)."
+        byid = {d.id: d for d in self.sac.store.get(ids)}
+        out = [f"[{i}] {(byid[i].text or '')[:700]}" if i in byid else f"[{i}] (not found)" for i in ids]
+        return "\n\n".join(out)
 
     # ---- multi-hop tool-calling loop -------------------------------------
     def answer(self, question: str) -> Answer:
@@ -115,8 +123,10 @@ class ToolCallingChatbot:
             if not resp.tool_calls:
                 # answered without finish → accept the content as the final answer
                 return self._done(question, resp.content or "", seen_ids[:10], hops, True, t0, pin, pout, steps)
-            hops += 1
             finished = None
+            # count a hop only for a RETRIEVAL round (search/read); the finish round isn't a hop
+            if any(tc["name"] in ("search_docs", "read_docs") for tc in resp.tool_calls):
+                hops += 1
             for tc in resp.tool_calls:
                 name, args, tcid = tc["name"], tc.get("args", {}), tc["id"]
                 steps.append({"hop": hops, "tool": name,
@@ -124,8 +134,8 @@ class ToolCallingChatbot:
                 if name == "search_docs":
                     obs, ids = self._search_docs(args.get("query", question), args.get("mode", "hybrid"), args.get("top_k", self.k))
                     seen_ids = ids + [i for i in seen_ids if i not in ids]
-                elif name == "read_doc":
-                    obs = self._read_doc(args.get("doc_id", ""))
+                elif name == "read_docs":
+                    obs = self._read_docs(args.get("doc_ids", []))
                 elif name == "finish":
                     finished, obs = args, "ok"
                 else:
