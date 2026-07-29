@@ -219,6 +219,58 @@ def unsolved(pack) -> list[dict]:
     return out
 
 
+def write_dataset_csv(pack, out_dir=None) -> dict[str, str]:
+    """Persist the labeled dataset as CSV for reuse/inspection. Writes two files:
+
+    - ``labels.csv``          one row per query: query, gold_id, winner (cheapest solver),
+                              solved, and ``hit_<template>`` (recall@k, 0/1) for all 16 templates.
+    - ``template_recall.csv`` one row per template: tier, cost, recall@k, times_winner.
+
+    Reads the on-disk shards, so it works during/after labeling. Returns {name: path}.
+    """
+    import csv
+
+    from .router import best_from_hits
+    from .templates import TEMPLATE_COST, TEMPLATE_DOCS, TEMPLATE_NAMES
+
+    out = Path(out_dir) if out_dir else pack.root
+    out.mkdir(parents=True, exist_ok=True)
+    sdir = pack.root / "dataset" / "shards"
+    rows = []
+    for f in sorted(sdir.glob("lab_*.jsonl")):
+        rows.extend(_read_jsonl(f))
+
+    from collections import Counter
+    hit_count = Counter()
+    win_count = Counter()
+    n = len(rows)
+
+    lpath = out / "labels.csv"
+    with lpath.open("w", newline="") as fh:
+        w = csv.writer(fh)
+        w.writerow(["query", "gold_id", "winner", "solved"] + [f"hit_{t}" for t in TEMPLATE_NAMES])
+        for r in rows:
+            hits = r.get("hits") or {}
+            winner = best_from_hits(hits)
+            solved = int(winner != "none")
+            if solved:
+                win_count[winner] += 1
+            for t in TEMPLATE_NAMES:
+                hit_count[t] += int(hits.get(t, 0))
+            w.writerow([r.get("query", ""), r.get("gold_id", ""), winner, solved]
+                       + [int(hits.get(t, 0)) for t in TEMPLATE_NAMES])
+
+    tpath = out / "template_recall.csv"
+    with tpath.open("w", newline="") as fh:
+        w = csv.writer(fh)
+        w.writerow(["template", "tier", "cost", "recall@k", "times_winner", "win_frac"])
+        for t in sorted(TEMPLATE_NAMES, key=lambda x: TEMPLATE_COST.get(x, 99)):
+            recall = round(hit_count[t] / n, 4) if n else 0.0
+            w.writerow([t, TEMPLATE_DOCS[t]["tier"], TEMPLATE_COST.get(t), recall,
+                        win_count[t], round(win_count[t] / n, 4) if n else 0.0])
+    return {"labels": str(lpath), "template_recall": str(tpath), "rows": n}
+
+
 def duplication_scan(session, items, sample=80, k=5, sim_thresh=0.9) -> dict:
     """For unsolved gold docs: is there a DIFFERENT doc that's a near-duplicate of the gold and
     outranks it in dense search? If so, the 'miss' is likely a duplication artifact (an
