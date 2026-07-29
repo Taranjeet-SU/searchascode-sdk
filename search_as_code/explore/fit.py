@@ -77,7 +77,10 @@ def _batch_embed(session, texts, bs=64):
 
 
 def fit_router(explorer, *, queries=None, n=5000, rephrases=2, k=10, P=25,
-               label_llm=False, label_rerank=False, progress_every=100) -> dict:
+               label_llm=False, label_rerank=False, workers=1, progress_every=100) -> dict:
+    import threading
+    from concurrent.futures import ThreadPoolExecutor, as_completed
+
     session, pack = explorer.session, explorer.pack
     t0 = time.time()
     data = _collect_queries(explorer, queries, n, rephrases, gen_llm=label_llm)
@@ -90,25 +93,46 @@ def fit_router(explorer, *, queries=None, n=5000, rephrases=2, k=10, P=25,
     embs = _batch_embed(session, [it["query"] for it in data], bs=64)
     emb_dim = len(embs[0]) if embs else 0
 
+    rr_lock = threading.Lock()       # serialize the GPU reranker across worker threads
+    done = [0]
+    prog_lock = threading.Lock()
+
+    def _label_one(i):
+        item = data[i]
+        q, gold, emb = item["query"], item["gold_id"], embs[i]
+        ctx = StrategyContext(session, q, P_pool=P, emb=emb, use_llm=label_llm,
+                              use_rerank=label_rerank, top_k=k, rerank_lock=rr_lock)
+        best, hits = label_via_templates(ctx, gold, k=k)
+        if progress_every:
+            with prog_lock:
+                done[0] += 1
+                if done[0] % progress_every == 0:
+                    print(f"[fit] labeled {done[0]}/{len(data)}  "
+                          f"({done[0] / (time.time() - t0):.1f} q/s)", flush=True)
+        return i, featurize(q, emb), best, hits
+
+    results = [None] * len(data)
+    if workers > 1:
+        with ThreadPoolExecutor(max_workers=workers) as ex:
+            for fut in as_completed([ex.submit(_label_one, i) for i in range(len(data))]):
+                i, feat, best, hits = fut.result()
+                results[i] = (feat, best, hits)
+    else:
+        for i in range(len(data)):
+            _, feat, best, hits = _label_one(i)
+            results[i] = (feat, best, hits)
+
     rows, X, y = [], [], []
     per_template = Counter()
     any_hit = Counter()          # how often each template retrieves gold (oracle view)
     solved = 0
-    for i, item in enumerate(data):
-        q, gold = item["query"], item["gold_id"]
-        emb = embs[i]
-        ctx = StrategyContext(session, q, P_pool=P, emb=emb,
-                              use_llm=label_llm, use_rerank=label_rerank, top_k=k)
-        best, hits = label_via_templates(ctx, gold, k=k)
+    for i, (feat, best, hits) in enumerate(results):
         for name, h in hits.items():
             any_hit[name] += h
-        X.append(featurize(q, emb)); y.append(best)
+        X.append(feat); y.append(best)
         if best != "none":
             solved += 1; per_template[best] += 1
-        rows.append({"query": q, "gold_id": gold, "best": best})
-        if progress_every and (i + 1) % progress_every == 0:
-            print(f"[fit] labeled {i + 1}/{len(data)}  solved={solved}  "
-                  f"({(i + 1) / (time.time() - t0):.1f} q/s)", flush=True)
+        rows.append({"query": data[i]["query"], "gold_id": data[i]["gold_id"], "best": best})
 
     pack.write_jsonl("router_labels.jsonl", rows)
 

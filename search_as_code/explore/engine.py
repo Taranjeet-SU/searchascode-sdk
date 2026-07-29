@@ -143,7 +143,7 @@ class Explorer:
 
     def fit(self, queries=None, n: int = 5000, rephrases: int = 2, k: int = 10,
             P: int = 25, label_llm: bool = False, label_rerank: bool = False,
-            progress_every: int = 100):
+            workers: int = 1, progress_every: int = 100):
         """Label queries by which template retrieves their gold doc, then train the router.
 
         ``queries``: iterable of ``{"query","gold_id"}`` (or ``(query, gold_id)``). If None,
@@ -155,7 +155,7 @@ class Explorer:
         from .fit import fit_router
         return fit_router(self, queries=queries, n=n, rephrases=rephrases, k=k, P=P,
                           label_llm=label_llm, label_rerank=label_rerank,
-                          progress_every=progress_every)
+                          workers=workers, progress_every=progress_every)
 
     def route(self, query: str) -> str:
         if self.router is None:
