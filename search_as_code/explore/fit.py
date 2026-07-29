@@ -45,25 +45,30 @@ def _collect_queries(explorer, queries, n, rephrases, gen_llm):
     from .stages import _gen_queries
     ctx = ExploreContext(session=session, pack=pack, config=config)
     per_doc = int(config.get("synth_per_doc", 3))
-    # Oversample docs: real yield per doc (after gen/rephrase variance) is well below the
-    # ideal per_doc*(1+rephrases), so estimate conservatively (~3 usable queries/doc) and let
-    # the len(out)>=n check stop early once we have enough.
-    n_docs = max(50, n // 3 + 20)
-    try:
-        sample = session.store.sample(n_docs)
-    except Exception:
-        sample = []
-    out = []
-    for di, d in enumerate(sample):
-        text = getattr(d, "text", None) or ""
-        for _diff, q in _gen_queries(ctx, text, per_doc):
-            out.append({"query": q, "gold_id": d.id})
-            for rp in _rephrase(session, q, rephrases):
-                out.append({"query": rp, "gold_id": d.id})
-            if len(out) >= n:
-                return out[:n]
-        if (di + 1) % 25 == 0:
-            print(f"[fit] generated {len(out)}/{n} queries from {di + 1} docs", flush=True)
+    # Sample docs in CHUNKS (a single huge sample can be many MB / time out on wide docs),
+    # deduping by id, generating as we go and stopping once we have n queries.
+    out, seen, di = [], set(), 0
+    chunk = int(config.get("sample_chunk", 250))
+    max_batches = max(1, (n // 2) // chunk + 4)
+    for _b in range(max_batches):
+        try:
+            batch = session.store.sample(chunk)
+        except Exception:
+            break
+        fresh = [d for d in batch if d.id not in seen]
+        if not fresh:
+            break
+        for d in fresh:
+            seen.add(d.id); di += 1
+            text = getattr(d, "text", None) or ""
+            for _diff, q in _gen_queries(ctx, text, per_doc):
+                out.append({"query": q, "gold_id": d.id})
+                for rp in _rephrase(session, q, rephrases):
+                    out.append({"query": rp, "gold_id": d.id})
+                if len(out) >= n:
+                    return out[:n]
+            if di % 25 == 0:
+                print(f"[fit] generated {len(out)}/{n} queries from {di} docs", flush=True)
     return out[:n]
 
 
