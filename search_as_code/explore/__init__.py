@@ -28,7 +28,7 @@ from .engine import (
 from .pack import ProfilePack
 from .report import write_csv_report
 from .router import TemplateRouter
-from .templates import TEMPLATE_NAMES
+from .templates import TEMPLATE_DOCS, TEMPLATE_NAMES
 
 __all__ = [
     "explore",
@@ -42,4 +42,5 @@ __all__ = [
     "write_csv_report",
     "TemplateRouter",
     "TEMPLATE_NAMES",
+    "TEMPLATE_DOCS",
 ]

@@ -12,7 +12,7 @@ from typing import Optional
 
 import numpy as np
 
-from .templates import TEMPLATE_NAMES, apply_template, extract_codes
+from .templates import TEMPLATE_NAMES, extract_codes, run_template
 
 _QWORDS = ("how", "what", "which", "where", "why", "when", "who", "can", "does", "is")
 
@@ -38,12 +38,13 @@ def featurize(query: str, emb: np.ndarray) -> np.ndarray:
     return np.concatenate([np.asarray(emb, dtype=np.float32), lexical_features(query)])
 
 
-def label_from_pools(pools: dict, rr: Optional[dict], gold_id: str, k: int = 10):
-    """Return (best_template, hits) where hits[name]=1 if gold in template's top-k.
-    best = the template that ranks gold highest; 'none' if no template finds it."""
+def label_via_templates(ctx, gold_id: str, k: int = 10):
+    """Run every strategy template for this query's context; return (best_template, hits)
+    where hits[name]=1 if gold is in that template's top-k. best = the template ranking gold
+    highest; 'none' if no strategy finds it."""
     hits, best, best_rank = {}, "none", 1e9
     for name in TEMPLATE_NAMES:
-        ids = apply_template(name, pools, rr, top_k=k)
+        ids = run_template(name, ctx, top_k=k)
         if gold_id in ids:
             hits[name] = 1
             rank = ids.index(gold_id)
