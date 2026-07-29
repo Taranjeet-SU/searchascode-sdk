@@ -125,18 +125,20 @@ def test_synthesize_and_validate(tmp_path):
 
 def test_templates_and_router_fit(tmp_path):
     from search_as_code.explore import TEMPLATE_NAMES
-    from search_as_code.explore.templates import apply_template, base_pools
+    from search_as_code.explore.templates import StrategyContext, run_template
 
-    assert len(TEMPLATE_NAMES) == 20
+    assert len(TEMPLATE_NAMES) == 16
+    assert {"light_hybrid", "rephrase_rerank", "deep_hyde_decompose",
+            "score_guarded", "escalating"} <= set(TEMPLATE_NAMES)
 
     s = sac.Session("memory", dim=32)
     s.add(_corpus())
     ex = explore(s, out=str(tmp_path / "pack"))
 
-    # base pools + a template produce ranked ids
-    pools, docs = base_pools(s, "Agilex 7 transceivers", P=10, use_llm=False)
-    assert "dense" in pools and "keyword" in pools
-    assert isinstance(apply_template("hybrid", pools, None, top_k=5), list)
+    # a strategy template produces ranked ids from a per-query context
+    ctx = StrategyContext(s, "Agilex 7 transceivers", P_pool=10, use_llm=False, use_rerank=False)
+    assert isinstance(run_template("light_dense", ctx, top_k=5), list)
+    assert isinstance(run_template("score_guarded", ctx, top_k=5), list)
 
     # fit on explicit labeled queries (gold_id = a real doc id)
     labeled = []
@@ -150,7 +152,7 @@ def test_templates_and_router_fit(tmp_path):
                progress_every=0)
     assert m["n_labeled"] == len(labeled)
     assert 0.0 <= m["oracle_coverage"] <= 1.0
-    assert m["n_templates"] == 20
+    assert m["n_templates"] == 16
     assert set(m["template_hit_rate@k"]) == set(TEMPLATE_NAMES)
     assert pack_has(ex, "router_meta.json") and pack_has(ex, "router_labels.jsonl")
     if m.get("cv_accuracy") is not None:

@@ -31,7 +31,14 @@ from .errors import (
     MissingDependencyError,
     SacError,
 )
-from .explore import TEMPLATE_NAMES, Explorer, ProfilePack, TemplateRouter, explore
+from .explore import (
+    TEMPLATE_DOCS,
+    TEMPLATE_NAMES,
+    Explorer,
+    ProfilePack,
+    TemplateRouter,
+    explore,
+)
 from .primitives import (
     abstain,
     auto_filter,
@@ -73,7 +80,7 @@ __all__ = [
     # harness
     "Session", "route", "Sandbox", "LocalExecutor", "ExecResult",
     # exploration / onboarding
-    "explore", "ProfilePack", "Explorer", "TemplateRouter", "TEMPLATE_NAMES",
+    "explore", "ProfilePack", "Explorer", "TemplateRouter", "TEMPLATE_NAMES", "TEMPLATE_DOCS",
     # primitives
     "fan_out", "fuse", "dedup", "rerank", "freshness", "extract",
     "mmr", "expand", "decompose", "rephrase", "rrf", "topics", "auto_filter", "score_cutoff",

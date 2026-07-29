@@ -9,8 +9,8 @@ from collections import Counter
 
 import numpy as np
 
-from .router import TemplateRouter, featurize, label_from_pools, train_router
-from .templates import TEMPLATE_NAMES, base_pools, rerank_cache
+from .router import TemplateRouter, featurize, label_via_templates, train_router
+from .templates import TEMPLATE_NAMES, StrategyContext
 
 
 def _rephrase(session, query: str, n: int) -> list[str]:
@@ -83,6 +83,7 @@ def fit_router(explorer, *, queries=None, n=5000, rephrases=2, k=10, P=25,
     data = _collect_queries(explorer, queries, n, rephrases, gen_llm=label_llm)
     if not data:
         raise RuntimeError("no queries to fit on (provide queries= or ensure the store samples)")
+    pack.write_jsonl("router_queries.jsonl", data)   # persist so we can relabel w/o regenerating
 
     # embed all queries up front in batches — far cheaper than one-at-a-time, and the
     # vector is reused for both the dense pool and the feature row.
@@ -96,9 +97,9 @@ def fit_router(explorer, *, queries=None, n=5000, rephrases=2, k=10, P=25,
     for i, item in enumerate(data):
         q, gold = item["query"], item["gold_id"]
         emb = embs[i]
-        pools, docs = base_pools(session, q, P=P, use_llm=label_llm, query_vec=emb)
-        rr = rerank_cache(session, q, pools, docs=docs) if label_rerank else None
-        best, hits = label_from_pools(pools, rr, gold, k=k)
+        ctx = StrategyContext(session, q, P_pool=P, emb=emb,
+                              use_llm=label_llm, use_rerank=label_rerank, top_k=k)
+        best, hits = label_via_templates(ctx, gold, k=k)
         for name, h in hits.items():
             any_hit[name] += h
         X.append(featurize(q, emb)); y.append(best)

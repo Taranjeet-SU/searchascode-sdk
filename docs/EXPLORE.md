@@ -41,10 +41,14 @@ print(metrics["cv_accuracy"], metrics["router_lift_over_fixed"])
 tmpl = explorer.route("part number for AGFC019")  # predicted template for a query
 ```
 
-**20 templates** (`sac.TEMPLATE_NAMES`) are named recipes composed from primitives —
-`dense`, `keyword`, `hybrid[_dense_heavy|_kw_heavy]`, `hyde[_dense|_hybrid]`,
-`decompose[_dense]`, `*_rerank`, `all_rrf`/`all_rerank`, and code-oriented `exact` / `regex` /
-`exact_dense` / `code_fusion` / `code_rerank`.
+**16 strategy templates** (`sac.TEMPLATE_NAMES`, documented in `sac.explore.TEMPLATE_DOCS` and
+**`docs/TEMPLATES.md`**) are named end-to-end *strategies* at effort tiers — **light**
+(`light_dense`/`light_hybrid`/`rephrase_rerank`), **medium** (`hyde_rerank`/`prf_rerank`/
+`mmr_diverse`/`multi_rephrase`/`exact_partnum`), **deep** (`decompose_rerank`/
+`deep_hyde_decompose`/`deep_all`), and **adaptive** (`score_guarded`/`escalating`/
+`confidence_gated_exact`) that escalate only when the top score falls off. Routing over these is
+an effort/quality trade-off, which is what controls latency (cheap one-hop vs deep only when
+needed).
 
 **How `fit` works:**
 1. **Collect queries** — either the `queries=[{"query","gold_id"}, ...]` you pass, or ~`n`
