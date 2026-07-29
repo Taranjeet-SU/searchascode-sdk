@@ -29,6 +29,14 @@ from .pack import ProfilePack
 from .report import write_csv_report
 from .router import TemplateRouter
 from .templates import TEMPLATE_DOCS, TEMPLATE_NAMES
+from .training import (
+    MODEL_REGISTRY,
+    RouterDataset,
+    build_dataset,
+    load_dataset,
+    make_model,
+    train_router_model,
+)
 
 __all__ = [
     "explore",
@@ -43,4 +51,10 @@ __all__ = [
     "TemplateRouter",
     "TEMPLATE_NAMES",
     "TEMPLATE_DOCS",
+    "RouterDataset",
+    "build_dataset",
+    "load_dataset",
+    "train_router_model",
+    "make_model",
+    "MODEL_REGISTRY",
 ]

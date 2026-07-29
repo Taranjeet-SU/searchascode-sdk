@@ -124,12 +124,15 @@ def run_pipeline(session, pack: ProfilePack, stages: Optional[list[Stage]] = Non
 
 class Explorer:
     """Handle returned by :func:`explore`. Wraps the ProfilePack (attribute access is
-    delegated) and adds :meth:`fit` — learn the template router from labeled queries.
+    delegated) and adds the training API for the template router:
 
         explorer = sac.explore(session, out="pack/")
-        m = explorer.fit(n=5000)          # label queries -> train router -> metrics
-        print(m["cv_accuracy"])
-        tmpl = explorer.route("part number for AGFC019")   # predicted template
+        explorer.dataset(n=5000, rephrases=2, label_rerank=True, workers=6)  # atomic, sharded
+        explorer.set_model("hist_gb", max_iter=400)                          # swappable head
+        m = explorer.train(cv=5)                                             # -> accuracy
+        tmpl = explorer.route("part number for AGFC019")                     # predicted template
+
+    ``fit(...)`` is a convenience that runs ``dataset`` then ``train`` in one call.
     """
 
     def __init__(self, session, pack: ProfilePack, config: Optional[dict] = None):
@@ -137,25 +140,66 @@ class Explorer:
         self.pack = pack
         self.config = config or {}
         self.router = None
+        self._model_spec = "hist_gb"
+        self._model_params: dict = {}
+        self._dataset = None
 
     def __getattr__(self, name):        # delegate is_done/read_json/report/... to the pack
         return getattr(self.pack, name)
 
+    # ---- training API ----------------------------------------------------
+    def set_model(self, model="hist_gb", **params) -> "Explorer":
+        """Choose the router head: a MODEL_REGISTRY name ('hist_gb','logreg','random_forest',
+        'mlp'), a factory callable, or an estimator instance. Extra kwargs go to the model."""
+        self._model_spec = model
+        self._model_params = params
+        return self
+
+    def dataset(self, *, n=5000, rephrases=2, k=10, P=25, label_llm=False, label_rerank=False,
+                workers=1, batch_size=256, resume=True, queries=None, progress_every=1):
+        """Build (or resume/load) the atomic sharded router dataset — generate/collect queries,
+        embed on GPU, label against every template, persist per-batch shards. See training.py."""
+        from .training import build_dataset
+        self._dataset = build_dataset(
+            self, n=n, rephrases=rephrases, k=k, P=P, label_llm=label_llm,
+            label_rerank=label_rerank, workers=workers, batch_size=batch_size,
+            resume=resume, queries=queries, progress_every=progress_every)
+        return self._dataset
+
+    def train(self, cv: int = 5, **model_params):
+        """Train the chosen model on the built dataset; save router.pkl + router_meta.json."""
+        from .training import load_dataset, train_router_model
+        if self._dataset is None:
+            self._dataset = load_dataset(self.pack)
+        params = {**self._model_params, **model_params}
+        model, metrics = train_router_model(self._dataset, self._model_spec, cv=cv, **params)
+        if model is not None:
+            from .router import TemplateRouter
+            emb_dim = self._dataset.X.shape[1] - 8 if len(self._dataset) else 0
+            router = TemplateRouter(model, classes=sorted(set(self._dataset.y) - {"none"}),
+                                    emb_dim=emb_dim, metrics=metrics)
+            router.save(self.pack.path("router.pkl"))
+            self.router = router
+        self.pack.write_json("router_meta.json", metrics)
+        self.pack.record_stage("router", "ok" if metrics.get("cv_accuracy") is not None
+                               else "rejected", summary={
+                                   "n": metrics.get("n"), "solved": metrics.get("solved"),
+                                   "cv_acc": metrics.get("cv_accuracy"),
+                                   "vs_fixed": metrics.get("router_lift_over_fixed")},
+                               artifacts=["router.pkl", "router_meta.json"])
+        return metrics
+
     def fit(self, queries=None, n: int = 5000, rephrases: int = 2, k: int = 10,
             P: int = 25, label_llm: bool = False, label_rerank: bool = False,
-            workers: int = 1, progress_every: int = 100):
-        """Label queries by which template retrieves their gold doc, then train the router.
-
-        ``queries``: iterable of ``{"query","gold_id"}`` (or ``(query, gold_id)``). If None,
-        generate ~``n`` grounded synthetic queries (each + ``rephrases`` paraphrases) from the
-        corpus sample. ``label_llm``/``label_rerank`` toggle the hyde/decompose pools and the
-        cross-encoder pass during labeling (off by default — those cost an LLM/GPU call per
-        query at label time). Returns a metrics dict and writes router.* to the pack.
-        """
-        from .fit import fit_router
-        return fit_router(self, queries=queries, n=n, rephrases=rephrases, k=k, P=P,
-                          label_llm=label_llm, label_rerank=label_rerank,
-                          workers=workers, progress_every=progress_every)
+            workers: int = 1, batch_size: int = 256, model=None, cv: int = 5,
+            progress_every: int = 1):
+        """Convenience: dataset(...) then train(...). Returns the training metrics."""
+        if model is not None:
+            self.set_model(model)
+        self.dataset(n=n, rephrases=rephrases, k=k, P=P, label_llm=label_llm,
+                     label_rerank=label_rerank, workers=workers, batch_size=batch_size,
+                     queries=queries, progress_every=progress_every)
+        return self.train(cv=cv)
 
     def route(self, query: str) -> str:
         if self.router is None:

@@ -150,11 +150,11 @@ def test_templates_and_router_fit(tmp_path):
         ]
     m = ex.fit(queries=labeled, rephrases=0, label_llm=False, label_rerank=False,
                progress_every=0)
-    assert m["n_labeled"] == len(labeled)
+    assert m["n"] == len(labeled)
     assert 0.0 <= m["oracle_coverage"] <= 1.0
     assert m["n_templates"] == 16
     assert set(m["template_hit_rate@k"]) == set(TEMPLATE_NAMES)
-    assert pack_has(ex, "router_meta.json") and pack_has(ex, "router_labels.jsonl")
+    assert pack_has(ex, "router_meta.json")
     if m.get("cv_accuracy") is not None:
         assert 0.0 <= m["cv_accuracy"] <= 1.0
         assert pack_has(ex, "router.pkl")
@@ -164,6 +164,49 @@ def test_templates_and_router_fit(tmp_path):
 
 def pack_has(explorer, name):
     return explorer.pack.has(name)
+
+
+def test_training_dataset_setmodel_train(tmp_path):
+    s = sac.Session("memory", dim=32)
+    s.add(_corpus())
+    ex = explore(s, out=str(tmp_path / "pack"))
+
+    labeled = []
+    for i in range(8):
+        labeled += [
+            {"query": f"Agilex 7 transceiver detail {i}", "gold_id": f"p{i}"},
+            {"query": f"Device AGFC0{i} logic elements", "gold_id": f"c{i}"},
+            {"query": f"install Quartus step {i}", "gold_id": f"l{i}"},
+        ]
+
+    # atomic sharded dataset
+    ds = ex.dataset(queries=labeled, label_llm=False, label_rerank=False,
+                    batch_size=8, workers=2, progress_every=0)
+    assert len(ds) == len(labeled)
+    ddir = ex.pack.root / "dataset"
+    assert (ddir / "queries.jsonl").exists()
+    assert list((ddir / "shards").glob("feat_*.npy"))            # feature shards on disk
+    assert (ddir / "checkpoint.json").exists()
+
+    # swappable model head + train
+    ex.set_model("logreg", C=0.5)
+    m = ex.train(cv=3)
+    assert m["n"] == len(labeled)
+    assert 0.0 <= m["oracle_coverage"] <= 1.0
+    if m.get("cv_accuracy") is not None:
+        assert m["model"] == "logreg"
+        assert ex.pack.has("router.pkl")
+
+    # resume: rebuilding loads the shards, doesn't relabel (same length)
+    ds2 = ex.dataset(queries=labeled, resume=True, batch_size=8, progress_every=0)
+    assert len(ds2) == len(labeled)
+
+
+def test_make_model_registry():
+    from search_as_code.explore import MODEL_REGISTRY, make_model
+    assert {"hist_gb", "logreg", "random_forest", "mlp"} <= set(MODEL_REGISTRY)
+    assert hasattr(make_model("hist_gb"), "fit")
+    assert hasattr(make_model("logreg", C=0.1), "fit")
 
 
 def test_fingerprint_detects_drift(tmp_path):
