@@ -140,9 +140,10 @@ def build_dataset(explorer, *, n=5000, rephrases=2, k=10, P=25, label_llm=False,
 
         def _label(j):
             item, emb = batch[j], embs[j]
+            golds = item.get("gold_ids") or [item["gold_id"]]     # single or multi (qrels)
             ctx = StrategyContext(session, item["query"], P_pool=P, emb=emb, use_llm=label_llm,
                                   use_rerank=label_rerank, top_k=k, rerank_lock=rr_lock)
-            best, hits = label_via_templates(ctx, item["gold_id"], k=k)
+            best, hits = label_via_templates(ctx, set(golds), k=k)
             return j, featurize(item["query"], emb).astype(np.float32), best, hits
 
         rows = [None] * len(batch)
@@ -157,7 +158,10 @@ def build_dataset(explorer, *, n=5000, rephrases=2, k=10, P=25, label_llm=False,
                 rows[j] = (feat, best, hits)
 
         feats = np.stack([r[0] for r in rows])
-        labs = [{"query": batch[j]["query"], "gold_id": batch[j]["gold_id"],
+        labs = [{"query": batch[j]["query"],
+                 "gold_id": (batch[j].get("gold_ids") or [batch[j].get("gold_id")])[0],
+                 "gold_ids": batch[j].get("gold_ids") or [batch[j]["gold_id"]],
+                 "dataset": batch[j].get("dataset", ""),
                  "best": rows[j][1], "hits": rows[j][2]} for j in range(len(batch))]
         _atomic_write_bytes(sdir / f"feat_{bi:05d}.npy", lambda f: np.save(f, feats))
         _atomic_write_text(sdir / f"lab_{bi:05d}.jsonl",
@@ -269,6 +273,72 @@ def write_dataset_csv(pack, out_dir=None) -> dict[str, str]:
             w.writerow([t, TEMPLATE_DOCS[t]["tier"], TEMPLATE_COST.get(t), recall,
                         win_count[t], round(win_count[t] / n, 4) if n else 0.0])
     return {"labels": str(lpath), "template_recall": str(tpath), "rows": n}
+
+
+def _tok(s: str) -> set:
+    import re
+    return set(re.findall(r"[a-z0-9]+", (s or "").lower()))
+
+
+def classify_failure(session, item, k=50, sem_lo=0.45, lex_lo=0.08,
+                     collision=5, band=0.02) -> dict:
+    """Diagnose why NO template solved a query, into one of four buckets:
+      - ``low_similarity``   : gold is far in BOTH semantic and lexical space -> no current
+                               signal (dense/keyword/hyde/regex) can find it => a NEW PRIMITIVE.
+      - ``synonym_metadata`` : semantically close but lexically disjoint -> synonyms / expansion
+                               / metadata concept needed.
+      - ``rank_collision``   : gold is retrievable but buried among many similarly-scored docs
+                               (poor rank due to collision).
+      - ``unexplained``      : none of the above cleanly explains the miss.
+    Uses cheap signals only (query/gold embeddings + token overlap + dense rank/score density).
+    """
+    import numpy as np
+
+    q = item["query"]
+    golds = {str(g) for g in (item.get("gold_ids") or [item["gold_id"]])}
+    qv = np.asarray(session.embedder.embed([q])[0], dtype=np.float32)
+    qv = qv / (np.linalg.norm(qv) + 1e-9)
+    qtok = _tok(q)
+    best_sem, best_lex = 0.0, 0.0
+    for d in session.store.get(list(golds)):
+        if getattr(d, "vector", None) is not None:
+            gv = np.asarray(d.vector, dtype=np.float32)
+            best_sem = max(best_sem, float(qv @ (gv / (np.linalg.norm(gv) + 1e-9))))
+        if d.text:
+            gt = _tok(d.text)
+            best_lex = max(best_lex, len(qtok & gt) / (len(qtok) + 1e-9))
+    res = session.store.query_vector(qv.tolist(), top_k=k)
+    scores = [float(h.score) for h in res]
+    gold_rank = next((i for i, h in enumerate(res) if h.id in golds), None)
+    near = sum(1 for s in scores if abs(s - scores[gold_rank]) <= band) if gold_rank is not None else 0
+
+    if best_sem < sem_lo and best_lex < lex_lo:
+        cat = "low_similarity"
+    elif best_lex < lex_lo:
+        cat = "synonym_metadata"
+    elif gold_rank is not None and near >= collision:
+        cat = "rank_collision"
+    else:
+        cat = "unexplained"
+    return {"category": cat, "sem": round(best_sem, 3), "lex": round(best_lex, 3),
+            "gold_rank": gold_rank, "near_density": near, "query": q[:90]}
+
+
+def analyze_failures(session, items, sample=300) -> dict:
+    """Bucket the unsolved queries into the four failure categories (see classify_failure)."""
+    from collections import Counter
+    cats, ex = Counter(), {}
+    for it in list(items)[:sample]:
+        try:
+            r = classify_failure(session, it)
+        except Exception:
+            continue
+        cats[r["category"]] += 1
+        ex.setdefault(r["category"], []).append(r)
+    n = sum(cats.values())
+    return {"checked": n, "categories": dict(cats),
+            "fractions": {c: round(v / n, 3) for c, v in cats.items()} if n else {},
+            "examples": {c: v[:4] for c, v in ex.items()}}
 
 
 def duplication_scan(session, items, sample=80, k=5, sim_thresh=0.9) -> dict:

@@ -35,6 +35,8 @@ from .training import (
     build_dataset,
     load_dataset,
     make_model,
+    analyze_failures,
+    classify_failure,
     duplication_scan,
     train_router_model,
     unsolved,
@@ -63,6 +65,8 @@ __all__ = [
     "best_from_hits",
     "unsolved",
     "duplication_scan",
+    "classify_failure",
+    "analyze_failures",
     "write_dataset_csv",
     "TEMPLATE_COST",
 ]
