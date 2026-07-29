@@ -27,15 +27,17 @@ from .engine import (
 )
 from .pack import ProfilePack
 from .report import write_csv_report
-from .router import TemplateRouter
-from .templates import TEMPLATE_DOCS, TEMPLATE_NAMES
+from .router import TemplateRouter, best_from_hits
+from .templates import TEMPLATE_COST, TEMPLATE_DOCS, TEMPLATE_NAMES
 from .training import (
     MODEL_REGISTRY,
     RouterDataset,
     build_dataset,
     load_dataset,
     make_model,
+    duplication_scan,
     train_router_model,
+    unsolved,
 )
 
 __all__ = [
@@ -57,4 +59,8 @@ __all__ = [
     "train_router_model",
     "make_model",
     "MODEL_REGISTRY",
+    "best_from_hits",
+    "unsolved",
+    "duplication_scan",
+    "TEMPLATE_COST",
 ]

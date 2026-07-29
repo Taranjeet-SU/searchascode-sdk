@@ -237,6 +237,10 @@ TEMPLATES: dict[str, Callable[[StrategyContext], ResultSet]] = {
 
 TEMPLATE_NAMES = list(TEMPLATES)
 
+# effort cost per tier — used to pick the CHEAPEST template that still solves a query
+# (recall@k), so the router learns the lightest strategy that works.
+_TIER_COST = {"light": 0, "medium": 1, "adaptive": 2, "deep": 3}
+
 # What each strategy does and why it is a DISTINCT choice (tier, does, differs).
 # Loaded by the router/prompt and rendered to docs/TEMPLATES.md.
 TEMPLATE_DOCS: dict[str, dict] = {
@@ -288,6 +292,11 @@ TEMPLATE_DOCS: dict[str, dict] = {
     "confidence_gated_exact": {"tier": "adaptive",
         "does": "part-number queries: try exact; escalate to dense+hyde only if weak",
         "differs": "adaptive around identifiers — cheap exact when confident, semantic backup when not"},
+}
+
+# cost rank per template (cheapest first) from its tier — for the winner policy
+TEMPLATE_COST: dict[str, int] = {
+    name: _TIER_COST.get(TEMPLATE_DOCS[name]["tier"], 5) for name in TEMPLATE_NAMES
 }
 
 

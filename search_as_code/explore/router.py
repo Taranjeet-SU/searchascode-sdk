@@ -12,7 +12,7 @@ from typing import Optional
 
 import numpy as np
 
-from .templates import TEMPLATE_NAMES, extract_codes, run_template
+from .templates import TEMPLATE_COST, TEMPLATE_NAMES, extract_codes, run_template
 
 _QWORDS = ("how", "what", "which", "where", "why", "when", "who", "can", "does", "is")
 
@@ -38,21 +38,21 @@ def featurize(query: str, emb: np.ndarray) -> np.ndarray:
     return np.concatenate([np.asarray(emb, dtype=np.float32), lexical_features(query)])
 
 
+def best_from_hits(hits: dict) -> str:
+    """Winner policy over recall@k hits: the **cheapest-effort** template that retrieved the
+    gold doc (so the router learns the lightest strategy that works). 'none' if all missed."""
+    winners = [t for t in TEMPLATE_NAMES if hits.get(t)]
+    if not winners:
+        return "none"
+    return min(winners, key=lambda t: (TEMPLATE_COST.get(t, 9), TEMPLATE_NAMES.index(t)))
+
+
 def label_via_templates(ctx, gold_id: str, k: int = 10):
-    """Run every strategy template for this query's context; return (best_template, hits)
-    where hits[name]=1 if gold is in that template's top-k. best = the template ranking gold
-    highest; 'none' if no strategy finds it."""
-    hits, best, best_rank = {}, "none", 1e9
-    for name in TEMPLATE_NAMES:
-        ids = run_template(name, ctx, top_k=k)
-        if gold_id in ids:
-            hits[name] = 1
-            rank = ids.index(gold_id)
-            if rank < best_rank:
-                best_rank, best = rank, name
-        else:
-            hits[name] = 0
-    return best, hits
+    """Run every strategy template; return (best_template, hits) where hits[name]=1 iff gold is
+    in that template's top-k (**recall@k** — the success criterion). The winner is the cheapest
+    template that succeeds (see :func:`best_from_hits`); a query no template solves is 'none'."""
+    hits = {name: int(gold_id in run_template(name, ctx, top_k=k)) for name in TEMPLATE_NAMES}
+    return best_from_hits(hits), hits
 
 
 class TemplateRouter:

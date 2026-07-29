@@ -185,20 +185,73 @@ def load_dataset(pack) -> RouterDataset:
         feats.append(np.load(f))
     for f in sorted(sdir.glob("lab_*.jsonl")):
         labs.extend(_read_jsonl(f))
-    X = np.concatenate(feats) if feats else np.zeros((0, 0), dtype=np.float32)
-    y = [r["best"] for r in labs]
     from collections import Counter
+
+    from .router import best_from_hits
+
+    X = np.concatenate(feats) if feats else np.zeros((0, 0), dtype=np.float32)
+    # derive the label from the stored per-template recall@k hits with the current winner
+    # policy (cheapest template that solves) — decoupled from the expensive labeling pass.
+    y = [best_from_hits(r.get("hits") or {}) for r in labs]
     any_hit = Counter()
     for r in labs:
         for t, h in (r.get("hits") or {}).items():
             any_hit[t] += h
     solved = sum(1 for lab in y if lab != "none")
-    meta = {"n": len(y), "solved": solved,
+    meta = {"n": len(y), "solved": solved, "unsolved": len(y) - solved,
             "oracle_coverage": round(solved / len(y), 4) if y else 0.0,
             "n_templates": len(TEMPLATE_NAMES),
             "label_distribution": dict(Counter(lab for lab in y if lab != "none")),
             "template_hit_rate@k": {t: round(any_hit[t] / len(y), 4) for t in TEMPLATE_NAMES} if y else {}}
     return RouterDataset(X=X, y=y, queries=[r["query"] for r in labs], meta=meta)
+
+
+def unsolved(pack) -> list[dict]:
+    """Queries that NO template solved (recall@k miss for all 16) — candidates for a new
+    primitive or a duplication issue (gold has near-dupes so an equivalent doc was retrieved)."""
+    from .router import best_from_hits
+    ddir = pack.root / "dataset" / "shards"
+    out = []
+    for f in sorted(ddir.glob("lab_*.jsonl")):
+        for r in _read_jsonl(f):
+            if best_from_hits(r.get("hits") or {}) == "none":
+                out.append({"query": r["query"], "gold_id": r["gold_id"]})
+    return out
+
+
+def duplication_scan(session, items, sample=80, k=5, sim_thresh=0.9) -> dict:
+    """For unsolved gold docs: is there a DIFFERENT doc that's a near-duplicate of the gold and
+    outranks it in dense search? If so, the 'miss' is likely a duplication artifact (an
+    equivalent doc was retrieved), not a genuine retrieval-capability gap.
+
+    Returns counts + examples; ``near_dup`` are dedup issues, the rest are new-primitive gaps.
+    """
+    items = list(items)[:sample]
+    checked = near_dup = 0
+    examples = []
+    for it in items:
+        gold = it["gold_id"]
+        try:
+            docs = session.store.get([gold])
+            gtext = docs[0].text if docs else None
+            if not gtext:
+                continue
+            gvec = session.embedder.embed([gtext])[0]
+            res = session.store.query_vector(gvec, top_k=k)
+        except Exception:
+            continue
+        checked += 1
+        others = [h for h in res if h.id != gold]
+        if others and float(others[0].score) >= sim_thresh:
+            near_dup += 1
+            if len(examples) < 10:
+                examples.append({"gold_id": gold, "near_dup_id": others[0].id,
+                                 "score": round(float(others[0].score), 3),
+                                 "query": it["query"][:80]})
+    return {"checked": checked, "near_dup": near_dup,
+            "near_dup_frac": round(near_dup / checked, 3) if checked else None,
+            "gap_frac": round(1 - near_dup / checked, 3) if checked else None,
+            "examples": examples}
 
 
 # --------------------------------------------------------------------------- #
