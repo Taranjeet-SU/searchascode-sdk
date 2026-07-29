@@ -424,7 +424,8 @@ def _read_jsonl(path: Path):
 
 
 def _load_query_list(queries):
-    """Accept a list of {query,gold_id}/(q,gold), or a path to queries.jsonl."""
+    """Accept a list of {query, gold_id | gold_ids | gold} / (q, gold), or a path to a jsonl.
+    Preserves the full gold SET (qrels have several relevant docs) and the dataset tag."""
     if isinstance(queries, (str, Path)):
         rows = _read_jsonl(Path(queries))
     else:
@@ -432,7 +433,13 @@ def _load_query_list(queries):
     out = []
     for it in rows:
         if isinstance(it, dict):
-            out.append({"query": it["query"], "gold_id": it.get("gold_id") or it.get("gold")})
+            golds = it.get("gold_ids")
+            single = it.get("gold_id") or it.get("gold")
+            golds = golds or ([single] if single is not None else [])
+            out.append({"query": it["query"],
+                        "gold_id": golds[0] if golds else None,
+                        "gold_ids": golds,
+                        "dataset": it.get("dataset", "")})
         else:
-            out.append({"query": it[0], "gold_id": it[1]})
+            out.append({"query": it[0], "gold_id": it[1], "gold_ids": [it[1]], "dataset": ""})
     return out

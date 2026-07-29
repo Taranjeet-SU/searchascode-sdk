@@ -227,6 +227,17 @@ def test_winner_policy_recall_and_cheapest():
     assert best_from_hits({"deep_all": 1}) == "deep_all"
 
 
+def test_load_query_list_preserves_gold_set():
+    # qrels items carry multiple relevant docs; the normalizer must keep the full set + dataset
+    from search_as_code.explore.training import _load_query_list
+    r = _load_query_list([{"query": "q", "gold_ids": ["a", "b"], "dataset": "nfcorpus"}])
+    assert r[0]["gold_ids"] == ["a", "b"] and r[0]["gold_id"] == "a"
+    assert r[0]["dataset"] == "nfcorpus"
+    # single-gold and tuple forms still work
+    assert _load_query_list([{"query": "q", "gold_id": "x"}])[0]["gold_ids"] == ["x"]
+    assert _load_query_list([("q", "y")])[0]["gold_ids"] == ["y"]
+
+
 def test_make_model_registry():
     from search_as_code.explore import MODEL_REGISTRY, make_model
     assert {"hist_gb", "logreg", "random_forest", "mlp"} <= set(MODEL_REGISTRY)
