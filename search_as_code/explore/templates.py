@@ -51,7 +51,8 @@ class StrategyContext:
     """Per-query memoized access to primitives, so templates compose without recomputing."""
 
     def __init__(self, session, query, P_pool: int = 25, emb=None,
-                 use_llm: bool = True, use_rerank: bool = True, top_k: int = 10):
+                 use_llm: bool = True, use_rerank: bool = True, top_k: int = 10,
+                 rerank_lock=None):
         self.s = session
         self.q = query
         self.P = P_pool
@@ -60,6 +61,7 @@ class StrategyContext:
         self.use_rerank = use_rerank and getattr(session, "reranker", None) is not None
         self.top_k = top_k
         self._c: dict = {}
+        self._rr_lock = rerank_lock            # serialize GPU reranker across worker threads
 
     def _memo(self, key, fn) -> ResultSet:
         if key not in self._c:
@@ -138,7 +140,11 @@ class StrategyContext:
         key = ("rr", tuple(rs.ids()[:40]))
         if key not in self._c:
             try:
-                self._c[key] = self.s.rerank(self.q, rs, top_k=self.top_k)
+                if self._rr_lock is not None:
+                    with self._rr_lock:
+                        self._c[key] = self.s.rerank(self.q, rs, top_k=self.top_k)
+                else:
+                    self._c[key] = self.s.rerank(self.q, rs, top_k=self.top_k)
             except Exception:
                 self._c[key] = rs
         return self._c[key]
