@@ -16,14 +16,30 @@ when the corpus fingerprint changes), and validate-before-keep (a tuning is kept
 if it beats baseline).
 """
 
-from .engine import ExploreContext, Stage, corpus_fingerprint, default_pipeline, explore
+from .engine import (
+    ExploreContext,
+    Explorer,
+    Stage,
+    corpus_fingerprint,
+    default_pipeline,
+    explore,
+    run_pipeline,
+)
 from .pack import ProfilePack
+from .report import write_csv_report
+from .router import TemplateRouter
+from .templates import TEMPLATE_NAMES
 
 __all__ = [
     "explore",
+    "Explorer",
     "ProfilePack",
     "Stage",
     "ExploreContext",
     "default_pipeline",
+    "run_pipeline",
     "corpus_fingerprint",
+    "write_csv_report",
+    "TemplateRouter",
+    "TEMPLATE_NAMES",
 ]

@@ -81,21 +81,10 @@ def corpus_fingerprint(store, k: int = 12) -> str:
     return f"n{count}-{h}"
 
 
-def explore(session, out: str, stages: Optional[list[Stage]] = None, *,
-            force: bool = False, config: Optional[dict] = None) -> ProfilePack:
-    """Run the exploration pipeline over ``session``'s corpus into a ProfilePack at ``out``.
-
-    Parameters
-    ----------
-    session : Session   the bound corpus (store + embedder + optional generator).
-    out     : str       directory for the ProfilePack (created if absent).
-    stages  : list      ordered Stage instances; defaults to :func:`default_pipeline`.
-    force   : bool       re-run every stage even if its artifacts exist.
-    config  : dict       knobs passed through to stages (sample sizes, k, etc.).
-    """
-    pack = ProfilePack.open(out)
+def run_pipeline(session, pack: ProfilePack, stages: Optional[list[Stage]] = None, *,
+                 force: bool = False, config: Optional[dict] = None) -> ProfilePack:
+    """Run the stage pipeline into ``pack`` (resumable, drift-aware, validate-before-keep)."""
     ctx = ExploreContext(session=session, pack=pack, config=config or {})
-
     fp = corpus_fingerprint(session.store)
     drift = pack.fingerprint_changed(fp)
     pack.set_fingerprint(fp)
@@ -131,6 +120,59 @@ def explore(session, out: str, stages: Optional[list[Stage]] = None, *,
             pack.record_stage(stage.name, "error", seconds=time.time() - t0,
                               note=f"{type(e).__name__}: {e}")
     return pack
+
+
+class Explorer:
+    """Handle returned by :func:`explore`. Wraps the ProfilePack (attribute access is
+    delegated) and adds :meth:`fit` — learn the template router from labeled queries.
+
+        explorer = sac.explore(session, out="pack/")
+        m = explorer.fit(n=5000)          # label queries -> train router -> metrics
+        print(m["cv_accuracy"])
+        tmpl = explorer.route("part number for AGFC019")   # predicted template
+    """
+
+    def __init__(self, session, pack: ProfilePack, config: Optional[dict] = None):
+        self.session = session
+        self.pack = pack
+        self.config = config or {}
+        self.router = None
+
+    def __getattr__(self, name):        # delegate is_done/read_json/report/... to the pack
+        return getattr(self.pack, name)
+
+    def fit(self, queries=None, n: int = 5000, rephrases: int = 2, k: int = 10,
+            P: int = 25, label_llm: bool = False, label_rerank: bool = False,
+            progress_every: int = 100):
+        """Label queries by which template retrieves their gold doc, then train the router.
+
+        ``queries``: iterable of ``{"query","gold_id"}`` (or ``(query, gold_id)``). If None,
+        generate ~``n`` grounded synthetic queries (each + ``rephrases`` paraphrases) from the
+        corpus sample. ``label_llm``/``label_rerank`` toggle the hyde/decompose pools and the
+        cross-encoder pass during labeling (off by default — those cost an LLM/GPU call per
+        query at label time). Returns a metrics dict and writes router.* to the pack.
+        """
+        from .fit import fit_router
+        return fit_router(self, queries=queries, n=n, rephrases=rephrases, k=k, P=P,
+                          label_llm=label_llm, label_rerank=label_rerank,
+                          progress_every=progress_every)
+
+    def route(self, query: str) -> str:
+        if self.router is None:
+            from .router import TemplateRouter
+            p = self.pack.path("router.pkl")
+            self.router = TemplateRouter.load(p) if p.exists() else TemplateRouter()
+        emb = self.session.embedder.embed([query])[0]
+        return self.router.predict(query, emb)
+
+
+def explore(session, out: str, stages: Optional[list[Stage]] = None, *,
+            force: bool = False, config: Optional[dict] = None) -> "Explorer":
+    """Run the exploration pipeline over ``session``'s corpus into a ProfilePack at ``out``,
+    and return an :class:`Explorer` (delegates to the pack; adds ``.fit()``/``.route()``)."""
+    pack = ProfilePack.open(out)
+    run_pipeline(session, pack, stages, force=force, config=config)
+    return Explorer(session, pack, config=config)
 
 
 def default_pipeline() -> list[Stage]:

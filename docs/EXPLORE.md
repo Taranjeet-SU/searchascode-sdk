@@ -31,6 +31,36 @@ re-deriving it.
 | 7 | `codegen` | planned | (situation→chain) templates + (query→code) few-shots + **sandbox-validated new primitives** + prompt overrides |
 | — | `validate` | planned | held-out retrieval eval; **keep only tunings that beat baseline**; `REPORT.md` |
 
+## The template router — `explore.fit(...)`
+`sac.explore(...)` returns an **`Explorer`** (it delegates to the pack, and adds `.fit()`):
+
+```python
+explorer = sac.explore(session, out="pack/")     # sample/profile/synthesize/validate
+metrics  = explorer.fit(n=5000)                   # label queries -> train router
+print(metrics["cv_accuracy"], metrics["router_lift_over_fixed"])
+tmpl = explorer.route("part number for AGFC019")  # predicted template for a query
+```
+
+**20 templates** (`sac.TEMPLATE_NAMES`) are named recipes composed from primitives —
+`dense`, `keyword`, `hybrid[_dense_heavy|_kw_heavy]`, `hyde[_dense|_hybrid]`,
+`decompose[_dense]`, `*_rerank`, `all_rrf`/`all_rerank`, and code-oriented `exact` / `regex` /
+`exact_dense` / `code_fusion` / `code_rerank`.
+
+**How `fit` works:**
+1. **Collect queries** — either the `queries=[{"query","gold_id"}, ...]` you pass, or ~`n`
+   **grounded synthetic** queries (each + `rephrases` paraphrases) generated from the corpus.
+2. **Label** — compute the base pools *once* per query (dense/keyword/hyde/decompose/exact/regex),
+   then every template is a cheap recombination; the label is the template that ranks the query's
+   `gold_id` highest (`none` if no template finds it).
+3. **Featurize** — query embedding + lexical signals (length, #part-numbers, has-digit, question-ish…).
+4. **Train** — `HistGradientBoosting` (XGB-style) with cross-validation.
+5. **Report** — `cv_accuracy`, `oracle_coverage` (any template finds gold), `best_single_template_acc`
+   (always-pick-one baseline) and **`router_lift_over_fixed`** (does routing beat a fixed template?).
+
+Writes `router.pkl`, `router_labels.jsonl`, `router_meta.json`. Labeling knobs: `label_llm`
+(hyde/decompose pools — an LLM call per query at label time, default off) and `label_rerank`
+(cross-encoder pass, default off) trade fidelity for speed at scale.
+
 ## ProfilePack (the artifact)
 A directory + `manifest.json`. Each stage writes its own file(s); the manifest records every
 stage's `status` (`ok` / `rejected` / `error` / `planned` / `skipped`), timing, and a summary.
