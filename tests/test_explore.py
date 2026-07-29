@@ -201,6 +201,16 @@ def test_training_dataset_setmodel_train(tmp_path):
     ds2 = ex.dataset(queries=labeled, resume=True, batch_size=8, progress_every=0)
     assert len(ds2) == len(labeled)
 
+    # CSV export: per-query recall + per-template recall summary
+    from search_as_code.explore import TEMPLATE_NAMES, write_dataset_csv
+    paths = write_dataset_csv(ex.pack)
+    assert paths["rows"] == len(labeled)
+    head = open(paths["labels"]).readline()
+    assert "winner" in head and "hit_light_dense" in head
+    trec = open(paths["template_recall"]).read().splitlines()
+    assert trec[0].startswith("template,tier,cost,recall@k")
+    assert len(trec) == len(TEMPLATE_NAMES) + 1
+
 
 def test_winner_policy_recall_and_cheapest():
     from search_as_code.explore import TEMPLATE_COST, best_from_hits
