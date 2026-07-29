@@ -45,8 +45,10 @@ def _collect_queries(explorer, queries, n, rephrases, gen_llm):
     from .stages import _gen_queries
     ctx = ExploreContext(session=session, pack=pack, config=config)
     per_doc = int(config.get("synth_per_doc", 3))
-    need_base = max(1, n // (1 + max(0, rephrases)))
-    n_docs = max(1, need_base // per_doc + 1)
+    # Oversample docs: real yield per doc (after gen/rephrase variance) is well below the
+    # ideal per_doc*(1+rephrases), so estimate conservatively (~3 usable queries/doc) and let
+    # the len(out)>=n check stop early once we have enough.
+    n_docs = max(50, n // 3 + 20)
     try:
         sample = session.store.sample(n_docs)
     except Exception:
