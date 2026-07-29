@@ -23,7 +23,10 @@ def altera_session():
     global _session
     if _session is None:
         altera.embedder()  # warm gte-alt-v1 (via the standard SDK embedder)
-        embed_batch = lambda ts: [altera.embed(t) for t in ts]
+        # TRUE batch (one forward per batch) — the SDK embedder handles the gte-alt-v1
+        # meta-buffer/device quirks; far faster than one-at-a-time for the router fit.
+        def embed_batch(ts):
+            return altera.embedder().embed(list(ts))
         _session = sac.Session(
             "opensearch", index=altera.FT_DOC, hosts=[altera.OS_URL], dim=768,
             text_field=altera.FTP + "content", vector_field=altera.FT_VECTOR,
