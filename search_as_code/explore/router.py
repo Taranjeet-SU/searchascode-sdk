@@ -47,12 +47,30 @@ def best_from_hits(hits: dict) -> str:
     return min(winners, key=lambda t: (TEMPLATE_COST.get(t, 9), TEMPLATE_NAMES.index(t)))
 
 
-def label_via_templates(ctx, gold_id: str, k: int = 10):
-    """Run every strategy template; return (best_template, hits) where hits[name]=1 iff gold is
-    in that template's top-k (**recall@k** — the success criterion). The winner is the cheapest
-    template that succeeds (see :func:`best_from_hits`); a query no template solves is 'none'."""
-    hits = {name: int(gold_id in run_template(name, ctx, top_k=k)) for name in TEMPLATE_NAMES}
-    return best_from_hits(hits), hits
+def label_via_templates(ctx, gold_id: str, k: int = 10, cascade: bool = True):
+    """Return (best_template, hits) where hits[name]=1 iff gold is in that template's top-k
+    (**recall@k** — the success criterion) and best = the cheapest template that succeeds.
+
+    ``cascade`` (default): evaluate templates cheapest-first and **stop at the first cost group
+    that solves the query** — so the expensive LLM strategies only run on the queries the cheap
+    ones miss (which is exactly the unsolved/gap subset). This is exact for the winner label; it
+    only under-measures the hit-rate of dear templates on easy queries.
+    """
+    from itertools import groupby
+
+    order = sorted(TEMPLATE_NAMES, key=lambda t: (TEMPLATE_COST.get(t, 99), TEMPLATE_NAMES.index(t)))
+    hits: dict = {}
+    if not cascade:
+        for name in order:
+            hits[name] = int(gold_id in run_template(name, ctx, top_k=k))
+        return best_from_hits(hits), hits
+    for _cost, grp in groupby(order, key=lambda t: TEMPLATE_COST.get(t, 99)):
+        grp = list(grp)
+        for name in grp:
+            hits[name] = int(gold_id in run_template(name, ctx, top_k=k))
+        if any(hits[n] for n in grp):
+            return best_from_hits(hits), hits     # cheapest solver is in this group
+    return "none", hits
 
 
 class TemplateRouter:

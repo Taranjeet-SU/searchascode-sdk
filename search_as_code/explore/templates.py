@@ -294,9 +294,18 @@ TEMPLATE_DOCS: dict[str, dict] = {
         "differs": "adaptive around identifiers — cheap exact when confident, semantic backup when not"},
 }
 
-# cost rank per template (cheapest first) from its tier — for the winner policy
+# templates whose strategy issues an LLM query-side op (rephrase/hyde/decompose/expand) — the
+# real cost driver at label time. An LLM template is always dearer than any non-LLM one.
+TEMPLATE_USES_LLM: set = {
+    "rephrase_rerank", "hyde_rerank", "multi_rephrase", "decompose_rerank",
+    "deep_hyde_decompose", "deep_all", "score_guarded", "escalating", "confidence_gated_exact",
+}
+
+# cost rank per template (cheapest first): tier + a large penalty for using the LLM. Drives both
+# the winner policy (cheapest template that solves) and the cascade labeling order.
 TEMPLATE_COST: dict[str, int] = {
-    name: _TIER_COST.get(TEMPLATE_DOCS[name]["tier"], 5) for name in TEMPLATE_NAMES
+    name: _TIER_COST.get(TEMPLATE_DOCS[name]["tier"], 5) + (10 if name in TEMPLATE_USES_LLM else 0)
+    for name in TEMPLATE_NAMES
 }
 
 
