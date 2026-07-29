@@ -55,9 +55,12 @@ def _by_rerank(ids: list[str], rr: Optional[dict]) -> list[str]:
 # base pools — computed ONCE per query, shared by all templates                #
 # --------------------------------------------------------------------------- #
 def base_pools(session, query: str, P: int = 25, use_llm: bool = True,
-               use_codes: bool = True):
+               use_codes: bool = True, query_vec=None):
     """Return (pools, docs): pools = {name: [ids]}, docs = {id: text} harvested from the
-    retrieved hits (so a rerank pass needs no extra fetches)."""
+    retrieved hits (so a rerank pass needs no extra fetches).
+
+    ``query_vec`` (optional): a precomputed query embedding — reused for the dense pool so
+    the caller doesn't pay a second embed (e.g. when it already embedded for features)."""
     pools: dict[str, list[str]] = {}
     docs: dict[str, str] = {}
 
@@ -73,7 +76,10 @@ def base_pools(session, query: str, P: int = 25, use_llm: bool = True,
                 docs[h.id] = getattr(h.document, "text", None) or ""
         return ids
 
-    pools["dense"] = _run(lambda: session.search(query, top_k=P, mode="dense"))
+    if query_vec is not None:
+        pools["dense"] = _run(lambda: session.store.query_vector(query_vec, top_k=P))
+    else:
+        pools["dense"] = _run(lambda: session.search(query, top_k=P, mode="dense"))
     pools["keyword"] = _run(lambda: session.search(query, top_k=P, mode="keyword"))
     if use_llm and session.generator is not None:
         pools["hyde"] = _run(lambda: session.hyde_search(query, top_k=P))

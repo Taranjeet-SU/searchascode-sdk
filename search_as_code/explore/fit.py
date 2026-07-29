@@ -52,7 +52,7 @@ def _collect_queries(explorer, queries, n, rephrases, gen_llm):
     except Exception:
         sample = []
     out = []
-    for d in sample:
+    for di, d in enumerate(sample):
         text = getattr(d, "text", None) or ""
         for _diff, q in _gen_queries(ctx, text, per_doc):
             out.append({"query": q, "gold_id": d.id})
@@ -60,7 +60,20 @@ def _collect_queries(explorer, queries, n, rephrases, gen_llm):
                 out.append({"query": rp, "gold_id": d.id})
             if len(out) >= n:
                 return out[:n]
+        if (di + 1) % 25 == 0:
+            print(f"[fit] generated {len(out)}/{n} queries from {di + 1} docs", flush=True)
     return out[:n]
+
+
+def _batch_embed(session, texts, bs=64):
+    """Embed all query texts in batches (one forward per batch) — much cheaper than a
+    per-query call when the backend embedder can batch."""
+    out = []
+    for i in range(0, len(texts), bs):
+        out.extend(session.embedder.embed(texts[i:i + bs]))
+        if len(texts) > bs and (i // bs) % 10 == 0:
+            print(f"[fit] embedded {min(i + bs, len(texts))}/{len(texts)} queries", flush=True)
+    return out
 
 
 def fit_router(explorer, *, queries=None, n=5000, rephrases=2, k=10, P=25,
@@ -71,20 +84,23 @@ def fit_router(explorer, *, queries=None, n=5000, rephrases=2, k=10, P=25,
     if not data:
         raise RuntimeError("no queries to fit on (provide queries= or ensure the store samples)")
 
+    # embed all queries up front in batches — far cheaper than one-at-a-time, and the
+    # vector is reused for both the dense pool and the feature row.
+    embs = _batch_embed(session, [it["query"] for it in data], bs=64)
+    emb_dim = len(embs[0]) if embs else 0
+
     rows, X, y = [], [], []
     per_template = Counter()
     any_hit = Counter()          # how often each template retrieves gold (oracle view)
     solved = 0
-    emb_dim = 0
     for i, item in enumerate(data):
         q, gold = item["query"], item["gold_id"]
-        pools, docs = base_pools(session, q, P=P, use_llm=label_llm)
+        emb = embs[i]
+        pools, docs = base_pools(session, q, P=P, use_llm=label_llm, query_vec=emb)
         rr = rerank_cache(session, q, pools, docs=docs) if label_rerank else None
         best, hits = label_from_pools(pools, rr, gold, k=k)
         for name, h in hits.items():
             any_hit[name] += h
-        emb = session.embedder.embed([q])[0]
-        emb_dim = len(emb)
         X.append(featurize(q, emb)); y.append(best)
         if best != "none":
             solved += 1; per_template[best] += 1
