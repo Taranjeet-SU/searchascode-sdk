@@ -337,9 +337,13 @@ class OpenSearchStore(VectorStore):
     def count(self) -> int:
         return int(self.client.count(index=self.index)["count"])
 
-    def sample(self, n: int = 5) -> list[Document]:
-        body = {"size": n, "query": {"function_score": {"query": {"match_all": {}},
-                                                        "random_score": {}}}}
+    def sample(self, n: int = 5, fields: Optional[Sequence[str]] = None) -> list[Document]:
+        # Only pull the text field (+ any requested extras) — never the whole _source: on
+        # wide docs the full source is ~15 KB/doc, so a large sample can be many MB and time
+        # out. The vector is always excluded.
+        want = list(fields) if fields else [self.text_field]
+        body = {"size": n, "_source": want,
+                "query": {"function_score": {"query": {"match_all": {}}, "random_score": {}}}}
         out = []
         for h in self.client.search(index=self.index, body=body)["hits"]["hits"]:
             src = dict(h.get("_source", {}))
