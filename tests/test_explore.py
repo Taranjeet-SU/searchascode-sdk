@@ -123,6 +123,47 @@ def test_synthesize_and_validate(tmp_path):
     assert pack.stage_status("router") == "planned"
 
 
+def test_templates_and_router_fit(tmp_path):
+    from search_as_code.explore import TEMPLATE_NAMES
+    from search_as_code.explore.templates import apply_template, base_pools
+
+    assert len(TEMPLATE_NAMES) == 20
+
+    s = sac.Session("memory", dim=32)
+    s.add(_corpus())
+    ex = explore(s, out=str(tmp_path / "pack"))
+
+    # base pools + a template produce ranked ids
+    pools, docs = base_pools(s, "Agilex 7 transceivers", P=10, use_llm=False)
+    assert "dense" in pools and "keyword" in pools
+    assert isinstance(apply_template("hybrid", pools, None, top_k=5), list)
+
+    # fit on explicit labeled queries (gold_id = a real doc id)
+    labeled = []
+    for i in range(8):
+        labeled += [
+            {"query": f"Agilex 7 transceiver detail {i}", "gold_id": f"p{i}"},
+            {"query": f"Device AGFC0{i} logic elements", "gold_id": f"c{i}"},
+            {"query": f"install Quartus step {i}", "gold_id": f"l{i}"},
+        ]
+    m = ex.fit(queries=labeled, rephrases=0, label_llm=False, label_rerank=False,
+               progress_every=0)
+    assert m["n_labeled"] == len(labeled)
+    assert 0.0 <= m["oracle_coverage"] <= 1.0
+    assert m["n_templates"] == 20
+    assert set(m["template_hit_rate@k"]) == set(TEMPLATE_NAMES)
+    assert pack_has(ex, "router_meta.json") and pack_has(ex, "router_labels.jsonl")
+    if m.get("cv_accuracy") is not None:
+        assert 0.0 <= m["cv_accuracy"] <= 1.0
+        assert pack_has(ex, "router.pkl")
+        # a fitted router predicts a known template name
+        assert ex.route("part number for AGFC03") in TEMPLATE_NAMES
+
+
+def pack_has(explorer, name):
+    return explorer.pack.has(name)
+
+
 def test_fingerprint_detects_drift(tmp_path):
     s = _session()
     fp1 = corpus_fingerprint(s.store)
