@@ -12,7 +12,7 @@ from typing import Optional
 
 import numpy as np
 
-from .templates import TEMPLATE_NAMES, extract_codes, run_template
+from .templates import TEMPLATE_COST, TEMPLATE_NAMES, extract_codes, run_template
 
 _QWORDS = ("how", "what", "which", "where", "why", "when", "who", "can", "does", "is")
 
@@ -38,21 +38,39 @@ def featurize(query: str, emb: np.ndarray) -> np.ndarray:
     return np.concatenate([np.asarray(emb, dtype=np.float32), lexical_features(query)])
 
 
-def label_via_templates(ctx, gold_id: str, k: int = 10):
-    """Run every strategy template for this query's context; return (best_template, hits)
-    where hits[name]=1 if gold is in that template's top-k. best = the template ranking gold
-    highest; 'none' if no strategy finds it."""
-    hits, best, best_rank = {}, "none", 1e9
-    for name in TEMPLATE_NAMES:
-        ids = run_template(name, ctx, top_k=k)
-        if gold_id in ids:
-            hits[name] = 1
-            rank = ids.index(gold_id)
-            if rank < best_rank:
-                best_rank, best = rank, name
-        else:
-            hits[name] = 0
-    return best, hits
+def best_from_hits(hits: dict) -> str:
+    """Winner policy over recall@k hits: the **cheapest-effort** template that retrieved the
+    gold doc (so the router learns the lightest strategy that works). 'none' if all missed."""
+    winners = [t for t in TEMPLATE_NAMES if hits.get(t)]
+    if not winners:
+        return "none"
+    return min(winners, key=lambda t: (TEMPLATE_COST.get(t, 9), TEMPLATE_NAMES.index(t)))
+
+
+def label_via_templates(ctx, gold_id: str, k: int = 10, cascade: bool = True):
+    """Return (best_template, hits) where hits[name]=1 iff gold is in that template's top-k
+    (**recall@k** — the success criterion) and best = the cheapest template that succeeds.
+
+    ``cascade`` (default): evaluate templates cheapest-first and **stop at the first cost group
+    that solves the query** — so the expensive LLM strategies only run on the queries the cheap
+    ones miss (which is exactly the unsolved/gap subset). This is exact for the winner label; it
+    only under-measures the hit-rate of dear templates on easy queries.
+    """
+    from itertools import groupby
+
+    order = sorted(TEMPLATE_NAMES, key=lambda t: (TEMPLATE_COST.get(t, 99), TEMPLATE_NAMES.index(t)))
+    hits: dict = {}
+    if not cascade:
+        for name in order:
+            hits[name] = int(gold_id in run_template(name, ctx, top_k=k))
+        return best_from_hits(hits), hits
+    for _cost, grp in groupby(order, key=lambda t: TEMPLATE_COST.get(t, 99)):
+        grp = list(grp)
+        for name in grp:
+            hits[name] = int(gold_id in run_template(name, ctx, top_k=k))
+        if any(hits[n] for n in grp):
+            return best_from_hits(hits), hits     # cheapest solver is in this group
+    return "none", hits
 
 
 class TemplateRouter:

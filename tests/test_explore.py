@@ -202,6 +202,21 @@ def test_training_dataset_setmodel_train(tmp_path):
     assert len(ds2) == len(labeled)
 
 
+def test_winner_policy_recall_and_cheapest():
+    from search_as_code.explore import TEMPLATE_COST, best_from_hits
+
+    # no template solved -> none
+    assert best_from_hits({}) == "none"
+    assert best_from_hits({"deep_all": 0, "light_dense": 0}) == "none"
+    # among solvers, the cheapest tier wins (recall@k gate, not rank)
+    assert best_from_hits({"deep_all": 1, "light_dense": 1}) == "light_dense"
+    assert TEMPLATE_COST["light_dense"] < TEMPLATE_COST["deep_all"]
+    # a medium beats a deep when both solve
+    assert best_from_hits({"deep_hyde_decompose": 1, "hyde_rerank": 1}) == "hyde_rerank"
+    # only a deep solves -> deep is the label
+    assert best_from_hits({"deep_all": 1}) == "deep_all"
+
+
 def test_make_model_registry():
     from search_as_code.explore import MODEL_REGISTRY, make_model
     assert {"hist_gb", "logreg", "random_forest", "mlp"} <= set(MODEL_REGISTRY)

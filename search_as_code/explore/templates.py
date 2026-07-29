@@ -237,6 +237,10 @@ TEMPLATES: dict[str, Callable[[StrategyContext], ResultSet]] = {
 
 TEMPLATE_NAMES = list(TEMPLATES)
 
+# effort cost per tier — used to pick the CHEAPEST template that still solves a query
+# (recall@k), so the router learns the lightest strategy that works.
+_TIER_COST = {"light": 0, "medium": 1, "adaptive": 2, "deep": 3}
+
 # What each strategy does and why it is a DISTINCT choice (tier, does, differs).
 # Loaded by the router/prompt and rendered to docs/TEMPLATES.md.
 TEMPLATE_DOCS: dict[str, dict] = {
@@ -288,6 +292,20 @@ TEMPLATE_DOCS: dict[str, dict] = {
     "confidence_gated_exact": {"tier": "adaptive",
         "does": "part-number queries: try exact; escalate to dense+hyde only if weak",
         "differs": "adaptive around identifiers — cheap exact when confident, semantic backup when not"},
+}
+
+# templates whose strategy issues an LLM query-side op (rephrase/hyde/decompose/expand) — the
+# real cost driver at label time. An LLM template is always dearer than any non-LLM one.
+TEMPLATE_USES_LLM: set = {
+    "rephrase_rerank", "hyde_rerank", "multi_rephrase", "decompose_rerank",
+    "deep_hyde_decompose", "deep_all", "score_guarded", "escalating", "confidence_gated_exact",
+}
+
+# cost rank per template (cheapest first): tier + a large penalty for using the LLM. Drives both
+# the winner policy (cheapest template that solves) and the cascade labeling order.
+TEMPLATE_COST: dict[str, int] = {
+    name: _TIER_COST.get(TEMPLATE_DOCS[name]["tier"], 5) + (10 if name in TEMPLATE_USES_LLM else 0)
+    for name in TEMPLATE_NAMES
 }
 
 
