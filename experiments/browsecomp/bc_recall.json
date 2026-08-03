@@ -1,0 +1,44 @@
+{
+  "config": {
+    "n_sample": 60,
+    "workers": 4,
+    "budget": 8,
+    "corpus_size": 100195,
+    "k_list": [
+      10,
+      20
+    ]
+  },
+  "arms": {
+    "dense": {
+      "recall@10": 0.0608,
+      "recall@20": 0.1282,
+      "all_golds@10": 0.0167,
+      "all_golds@20": 0.05,
+      "avg_searches": 1.0,
+      "avg_turns": 0.0,
+      "avg_in_tokens": 0,
+      "avg_out_tokens": 0
+    },
+    "tool": {
+      "recall@10": 0.0338,
+      "recall@20": 0.0421,
+      "all_golds@10": 0.0167,
+      "all_golds@20": 0.0167,
+      "avg_searches": 7.47,
+      "avg_turns": 7.93,
+      "avg_in_tokens": 10423,
+      "avg_out_tokens": 783
+    },
+    "sac": {
+      "recall@10": 0.0517,
+      "recall@20": 0.0517,
+      "all_golds@10": 0.0167,
+      "all_golds@20": 0.0167,
+      "avg_searches": 6.13,
+      "avg_turns": 1.0,
+      "avg_in_tokens": 508,
+      "avg_out_tokens": 313
+    }
+  }
+}

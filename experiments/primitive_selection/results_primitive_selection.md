@@ -24,6 +24,39 @@ registry: `search_as_code/explore/templates.py:TEMPLATE_DOCS`; docs: `docs/TEMPL
 Cost is `tier + LLM penalty`, so non-LLM templates sort first (used by both the winner policy and
 the cascade labeler).
 
+### 1a. Primitives each template composes
+Every template is built from the same SDK primitive set — the difference is *which* primitives it
+chains and whether it gates on a score signal. `LLM?` marks templates that issue an LLM query-side
+op (hyde/decompose/rephrase/expand), the real cost driver at label time. (Source of truth:
+`templates.py`; primitive impls: `search_as_code/primitives.py` + `Session` search methods.)
+
+| template | tier | primitives used (in order) | LLM? |
+|---|---|---|---|
+| `light_dense` | light | `dense` (vector search) | — |
+| `light_keyword` | light | `keyword` (BM25) | — |
+| `light_hybrid` | light | `hybrid` (RRF-fuse of dense+keyword) | — |
+| `rephrase_rerank` | light | `rephrase_search` → `rerank` (cross-encoder) | ✓ |
+| `dense_rerank` | medium | `dense` → `rerank` | — |
+| `hyde_rerank` | medium | `hyde_search` → `rerank` | ✓ |
+| `mmr_diverse` | medium | `dense` → `mmr` (diversify) | — |
+| `prf_rerank` | medium | `prf_search` (pseudo-relevance feedback) → `rerank` | — |
+| `multi_rephrase` | medium | `expand_search` (N rephrasings) → `fuse` → `rerank` | ✓ |
+| `exact_partnum` | medium | `extract_codes` → `query_phrase`/`regex` + `dense` → `fuse` → `rerank` (else `hybrid`→`rerank`) | — |
+| `decompose_rerank` | deep | `decompose_search` (sub-query fan-out) → `fuse` → `rerank` | ✓ |
+| `deep_hyde_decompose` | deep | `fuse(hyde_search, decompose_search, dense)` → `rerank` | ✓ |
+| `deep_all` | deep | `fuse(dense, keyword, hyde_search, decompose_search)` → `rerank` → `mmr` | ✓ |
+| `score_guarded` | adaptive | `hybrid`; if `weak` (margin/thin gate) → `fuse(hyde_search, decompose_search, hybrid)` → `rerank` | ✓ |
+| `escalating` | adaptive | `dense` → (gate) `hybrid` → (gate) `fuse(hyde_search, decompose_search, hybrid)` → `rerank` | ✓ |
+| `confidence_gated_exact` | adaptive | `exact`+`regex`; if `weak` → `fuse(exact, dense, hyde_search)` → `rerank` (else `hyde_search`→`rerank`) | ✓ |
+
+**Primitive glossary:** `dense` = single vector search · `keyword` = BM25 · `hybrid` = RRF fuse of
+dense+keyword · `hyde_search` = generate hypothetical answer, then dense on it · `decompose_search`
+= split into sub-queries, fan out, fuse · `rephrase_search` = rewrite the query once ·
+`expand_search` = N query variants, fuse · `prf_search` = enrich from top hits (no LLM) ·
+`query_phrase`/`regex` = exact identifier match · `fuse` = RRF combine of pools · `rerank` =
+cross-encoder re-scoring · `mmr` = maximal-marginal-relevance diversification · `weak` = the
+"top score fell off" gate (empty / <3 hits / low top-1↔top-2 margin) that drives the adaptive tier.
+
 ## 2. Labeling & training (`explore.dataset()` → `explore.train()`)
 - **Grounded synthetic queries** generated from the corpus (`explore.synthesize`); the query's
   source doc is the gold (leakage-free).
