@@ -120,15 +120,32 @@ def _samples(session, ids, n: int = 5) -> str:
     return "\n".join(f"[{d.id}] {(d.text or '')[:140]}" for d in docs) or "(none)"
 
 
-def run_sac(session, query: str, chat=None, k: int = 10, judge_chat=None, max_retries: int = 3) -> dict:
+def run_sac(session, query: str, chat=None, k: int = 10, judge_chat=None, max_retries: int = 3,
+            deep: bool = True, oracle_gold=None, hint: str = "") -> dict:
+    """Deep code-mode agent: write program → judge → deepen (persistent sandbox) up to max_retries.
+
+    ``oracle_gold`` (measurement ONLY): if a gold id set is passed, the per-hop LLM judge is
+    replaced by an ORACLE that stops as soon as all gold ids are in the retrieved set. This gives
+    the *minimal* deepening depth/cost — an upper bound on how few hops a perfect judge would need.
+    In production ``oracle_gold`` is None and the LLM-as-judge / semantic acceptance decides when to
+    stop (it cannot see the gold). Use the oracle only to report the "ideal-judge" cost alongside
+    the real LLM-judge cost — never as the deployed stopping rule.
+    """
     from langchain_core.messages import SystemMessage, HumanMessage
 
+    # deep = default: ensemble + consensus prompt; deep=False = the lean dense-first prompt.
+    system_prompt = sac_surface.SAC_DEEP_SYSTEM if deep else sac_surface.SAC_SYSTEM
+    if hint:   # optional corpus-grounded guidance (e.g. explore fewshot exemplars) appended to the system prompt
+        system_prompt = system_prompt + "\n\n" + hint
+    retry_tmpl = sac_surface.SAC_DEEP_RETRY_TEMPLATE if deep else sac_surface.SAC_RETRY_TEMPLATE
     chat = chat or lc_chat()
     judge_chat = judge_chat or chat
     usage = Usage()
     t0 = time.time()
     box = LocalExecutor(session)          # ONE executor → namespace persists across hops
     box._globals["query"] = query
+    for _k in ("agreement", "lists", "answerable"):   # clear cross-query state (session is reused)
+        session.forget(_k)
     attempts, feedback, ids, code, reasoning = [], None, [], "", ""
     prev_stdout, prev_samples, verdict = "", "", ""
     best_ids, best_conf = [], -1.0            # keep the highest-confidence hop, never lose a good one
@@ -136,35 +153,48 @@ def run_sac(session, query: str, chat=None, k: int = 10, judge_chat=None, max_re
     for hop in range(max_retries + 1):
         user_msg = f"Query: {query}"
         if hop > 0:  # feed samples + stdout + judge verdict back so the model deepens its exploration
-            user_msg = sac_surface.SAC_RETRY_TEMPLATE.format(
+            user_msg = retry_tmpl.format(
                 verdict=verdict, feedback=feedback, samples=prev_samples,
                 stdout=prev_stdout or "(none)", code=code)
-        msgs = [SystemMessage(content=sac_surface.SAC_SYSTEM), HumanMessage(content=user_msg)]
+        msgs = [SystemMessage(content=system_prompt), HumanMessage(content=user_msg)]
         resp = chat.invoke(msgs)
         _account(usage, resp)
         reasoning, code = _split_reasoning_code(_text(resp))
         result = box.run(code)            # prior variables (dense, kw, pool, ...) still live here
         ids = [str(x) for x in (result.evidence or [])][:k] if isinstance(result.evidence, list) else []
-        if max_retries == 0:              # fast mode: single pass, skip the judge LLM call
+        if oracle_gold is not None:       # ORACLE stop (measurement): stop as soon as gold is covered
+            accept = set(str(g) for g in oracle_gold) <= set(ids)
+            feedback, verdict, conf = "", ("ORACLE_PASS" if accept else "ORACLE_FAIL"), (1.0 if accept else 0.0)
+        elif max_retries == 0:            # fast mode: single pass, skip the judge LLM call
             accept, feedback, verdict, conf = True, "", "SKIPPED", 1.0
         else:
             accept, feedback, conf = judge(judge_chat, query, ids, session, usage)
             verdict = "PASS" if accept else "FAIL"
+        # deep mode: the generated code stores the consensus agreement (0-1). LOW agreement means
+        # the strategies DISAGREE (likely partial/uncertain answer) → force a richer hop 2, even if
+        # the (lenient) judge passed or confidence looks high.
+        agree = session.recall("agreement") if deep else None
+        answerable = session.recall("answerable")   # False ⇒ answer likely absent ⇒ don't waste a hop
+        low_agree = (deep and isinstance(agree, (int, float)) and agree < 0.6
+                     and hop < max_retries and answerable is not False
+                     and oracle_gold is None)   # oracle mode: don't force extra hops once gold is covered
+        if low_agree and accept:
+            verdict, feedback = "LOW_AGREEMENT", f"consensus agreement {agree} is low — strategies disagree; enrich on new axes"
         if ids and conf > best_conf:      # keep the best hop so refinement can't destroy a good result
             best_conf, best_ids = conf, ids
         prev_stdout = (result.stdout or "")[:1200]
         prev_samples = _samples(session, ids)
         attempts.append({"hop": hop, "reasoning": reasoning, "code": code, "ok": result.ok,
                          "error": result.error, "stdout": prev_stdout, "samples": prev_samples,
-                         "prompt": user_msg, "ids": ids, "judge": verdict,
+                         "prompt": user_msg, "ids": ids, "judge": verdict, "agreement": agree,
                          "confidence": round(conf, 2), "feedback": feedback})
-        if accept or conf >= 0.75 or hop == max_retries:   # short-circuit when confident
+        if (accept or conf >= 0.75 or hop == max_retries) and not low_agree:   # short-circuit when confident AND strategies agree
             break
 
     ids = best_ids or ids                 # return the highest-confidence hop, not necessarily the last
     return {"path": "sac", "ids": ids, "latency_s": time.time() - t0, "usage": usage.as_dict(),
             "code": code, "reasoning": reasoning, "ok": attempts[-1]["ok"], "hops": len(attempts),
-            "attempts": attempts, "system_prompt": sac_surface.SAC_SYSTEM,
+            "attempts": attempts, "system_prompt": system_prompt,
             "trace": [{"op": f"hop {a['hop']} · judge {a['judge']}", "returned": len(a["ids"])} for a in attempts]}
 
 

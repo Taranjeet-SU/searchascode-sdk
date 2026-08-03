@@ -190,3 +190,114 @@ bash experiments/multi_hop_synth_queries/run_fair.sh 100 6 6
 python -m experiments.multi_hop_synth_queries.make_charts
 ```
 Outputs: `recall_fair.json`, `recall_fair_perquery.jsonl`, `figures/*.png`.
+
+## 11. Deep-mode SAC — the cost of going deep, and what explore adds
+
+Deep-mode SAC (`phase1.agents.run_sac(..., deep=True, max_retries=3)`) writes a Python program, an LLM-as-judge grades the retrieved evidence, and on failure (or low ensemble agreement) it writes a NEW, wider program with the sandbox variables PERSISTING across hops (prior learning). We measure two deep arms — **sac_deep** (before explore) and **sac_deep+explore** (the same agent, hop-1 codegen prompt seeded with the `session.describe(llm=True)` corpus profile + recommended primitives, injected as an extra guidance message; the judge is left unbiased) — against the reused dense / tool / single-shot-sac baselines from `recall_fair.json` / `su_recall.json`. Reranker: CrossEncoder (ms-marco-MiniLM), used identically by both deep arms. n=50 queries/hop, workers=4, 0 errors. `avg searches` counts underlying retrieval calls (search + fan-out sub-searches + hyde/prf/answerability), so deep's fan-out reads higher than the single-shot search budget.
+
+**HotpotQA**
+
+| hops | arm | recall@10 | all_golds@10 | avg hops | avg searches | avg in_tok | avg out_tok |
+|---|---|---|---|---|---|---|---|
+| **2** | dense | 0.845 | 0.710 | 1.00 | 1.0 | 0 | 0 |
+|  | tool | 0.895 | 0.820 | 5.43 | 4.7 | 4,634 | 318 |
+|  | sac (single-shot) | 0.950 | 0.910 | 1.00 | 4.2 | 339 | 146 |
+|  | **sac_deep** | 0.920 | 0.860 | 1.18 | 3.0 | 1,654 | 311 |
+|  | **sac_deep+explore** | 0.790 | 0.740 | 1.60 | 7.6 | 2,720 | 622 |
+| **3** | dense | 0.667 | 0.390 | 1.00 | 1.0 | 0 | 0 |
+|  | tool | 0.753 | 0.490 | 6.60 | 5.5 | 7,190 | 477 |
+|  | sac (single-shot) | 0.830 | 0.640 | 1.00 | 4.9 | 363 | 177 |
+|  | **sac_deep** | 0.813 | 0.520 | 1.24 | 3.6 | 1,810 | 363 |
+|  | **sac_deep+explore** | 0.700 | 0.480 | 1.72 | 9.0 | 3,030 | 764 |
+| **4** | dense | 0.575 | 0.270 | 1.00 | 1.0 | 0 | 0 |
+|  | tool | 0.635 | 0.230 | 6.93 | 5.6 | 7,878 | 519 |
+|  | sac (single-shot) | 0.765 | 0.450 | 1.00 | 5.4 | 378 | 202 |
+|  | **sac_deep** | 0.745 | 0.440 | 1.30 | 4.3 | 1,967 | 454 |
+|  | **sac_deep+explore** | 0.610 | 0.400 | 1.74 | 10.2 | 3,122 | 818 |
+
+**SearchUnify docs**
+
+| hops | arm | recall@10 | all_golds@10 | avg hops | avg searches | avg in_tok | avg out_tok |
+|---|---|---|---|---|---|---|---|
+| **2** | dense | 0.950 | 0.910 | 1.00 | 1.0 | 0 | 0 |
+|  | tool | 0.835 | 0.700 | 3.31 | 3.6 | 2,244 | 280 |
+|  | sac (single-shot) | 0.975 | 0.950 | 1.00 | 4.3 | 339 | 146 |
+|  | **sac_deep** | 0.890 | 0.780 | 1.00 | 1.0 | 1,376 | 152 |
+|  | **sac_deep+explore** | 0.890 | 0.780 | 1.06 | 1.7 | 1,792 | 225 |
+| **3** | dense | 0.813 | 0.550 | 1.00 | 1.0 | 0 | 0 |
+|  | tool | 0.750 | 0.400 | 3.63 | 4.2 | 2,983 | 350 |
+|  | sac (single-shot) | 0.893 | 0.720 | 1.00 | 4.8 | 348 | 164 |
+|  | **sac_deep** | 0.780 | 0.480 | 1.06 | 1.7 | 1,508 | 205 |
+|  | **sac_deep+explore** | 0.780 | 0.480 | 1.06 | 1.7 | 1,797 | 221 |
+| **4** | dense | 0.715 | 0.290 | 1.00 | 1.0 | 0 | 0 |
+|  | tool | 0.718 | 0.270 | 3.60 | 4.6 | 3,081 | 392 |
+|  | sac (single-shot) | 0.838 | 0.530 | 1.00 | 5.2 | 359 | 180 |
+|  | **sac_deep** | 0.645 | 0.240 | 1.00 | 1.0 | 1,395 | 166 |
+|  | **sac_deep+explore** | 0.630 | 0.240 | 1.06 | 1.7 | 1,797 | 231 |
+
+**What the numbers say (honest read):**
+- **Going deep is affordable, not a blow-up.** The judge-gated deepening stays bounded: deep-mode averages only **1.18-1.30 hops** (i.e. only ~20-30% of queries ever deepen past hop 1), **3.0-4.3 searches**, **1,654-1,967 input tokens**, **~$0.0012-$0.0015/query** on HotpotQA. Deep mode reaches solid absolute recall@10 (0.92/0.81/0.745) and all_golds@10 (0.86/0.52/0.44) at that modest, predictable premium — the feared multi-hop token explosion does not happen because the calibrated judge stops most queries at one hop.
+- **But the premium doesn't beat the cheap single-shot harness here.** The reused single-shot SAC (decompose->fuse, budget 6, ~340-380 in-tok) already scores 0.95/0.83/0.765 — so deep mode spends ~5x the input tokens for roughly-equal (slightly lower) recall on these already-tractable synthetic multi-hop sets. The value of 'going deep' is real (bounded cost, strong absolute recall) but it is not free recall over a well-tuned single pass.
+- **Explore as a static prompt hint HURT on HotpotQA and was neutral on SU — and always cost more.** Seeding the deep agent with the `describe(llm=True)` corpus profile dropped HotpotQA recall@10 by **-0.130/-0.113/-0.135** (0.92->0.79, 0.81->0.70, 0.745->0.61) while **~2.4-2.6x-ing the searches** (2.98->7.6, 3.64->9.0, 4.30->10.2) and roughly doubling tokens/cost. On SU it left recall unchanged and only added cost. The blanket 'this is prose, decompose across sub-facts, go wide' instruction pushed the agent to **over-decompose / over-fan-out**, knocking golds out of the top-10 on hops that a single hybrid+rerank already solved.
+- **Verdict — more guidance is not better.** Injecting explore's learnings as a STATIC prompt hint adds cost and can actively hurt. Explore's value should be delivered through the **learned per-query router** (see §7 primitive-selection: pick the right primitive/template per query), not a corpus-wide 'always go wide' instruction bolted onto the agent's prompt. The deep loop's own strength is a wide hop-1 pool + rerank with judge-bounded deepening; pouring extra blanket guidance into it degrades that.
+
+![retrieval quality](figures/deep_quality_hotpotqa.png)
+![cost of going deep](figures/deep_cost_hotpotqa.png)
+
+
+## 12. Ablation — does the full primitive set (rerank/hyde/prf + Qwen) help multi-gold?
+
+We upgraded the code arm to expose the **full primitive set** (`rerank`, `hyde`, `prf`, `mmr`,
+`POOL=50` wide candidate pooling) with a **real Qwen3-Reranker** attached (vs the earlier stubbed
+no-op rerank), then re-ran. **Honest finding: for MULTI-GOLD retrieval it does not help, and a naive
+rerank-the-union recipe HURTS.**
+
+On the **clean SU comparison** (n=100, *identical* queries — dense is byte-identical before/after):
+
+| hop | sac (minimal `decompose→fuse`) | sac (full primitives, rerank-forward) |
+|---|---|---|
+| 2 | **0.975 / 0.950** | 0.940 / 0.880 |
+| 3 | **0.893 / 0.720** | 0.860 / 0.640 |
+| 4 | **0.838 / 0.530** | 0.780 / 0.430 |
+
+**Mechanism:** a cross-encoder reranks by *whole-question* relevance, so a doc that satisfies only
+**one** of the N sub-facts scores low and gets pushed out of the top-10 — reranking the fused union
+trades *set coverage* for single-doc precision. `decompose → search each sub-fact → fuse` preserves
+per-sub-fact coverage, which is what all-golds@10 needs. (The **HotpotQA** before/after looked like a
+gain, but that comparison was confounded — old n=100 vs new n=50 — so ignore it; the SU clean paired
+comparison is the trustworthy one.)
+
+**Qwen vs MiniLM:** the paper-caliber Qwen3-Reranker is the right reranker *where reranking helps*
+(single-gold precision), but on multi-gold coverage no reranker beats fuse.
+
+**Takeaway:** the headline §4 numbers use the **minimal `decompose→fuse` recipe** — the best recipe
+for multi-gold. `rerank`/`hyde`/`prf` remain available (they help single-gold corpora, e.g.
+BrowseComp) but are **not** the default move on multi-hop. Primitive availability ≠ "use them all."
+
+## 13. Deep-SAC + explore guidance — fewshot exemplars work where the static hint fails
+
+"What does explore add to deep-SAC?" §11 tested a **static** corpus-profile hint (`describe()`) and
+it HURT. Here we add a third arm: **`sac_deep_fewshot`** injects the explore **fewshot exemplar
+block** (`explore.fewshot_block()` — per-winning-template example queries mined from the labeling
+pass) as the hop-1 hint, vs `sac_deep` (no hint) and `sac_deep_explore` (the static hint). n=12/hop.
+
+### HotpotQA (recall@10 / all_golds@10 / avg searches / avg in-tok)
+| hop | sac_deep | sac_deep + static hint | **sac_deep + fewshot** |
+|---|---|---|---|
+| 2 | 0.792 / 0.750 · 12.0 · 3216 | 0.792 / 0.750 · 12.0 · 3575 | **0.875 / 0.833 · 9.2 · 2695** |
+| 3 | 0.750 / 0.417 · 3.8 · 1843 | 0.500 / 0.333 · 15.2 · 4140 | 0.750 / 0.417 · 3.8 · 1575 |
+| 4 | 0.667 / 0.333 · 1.0 · 1347 | 0.479 / 0.250 · 15.8 · 4194 | 0.667 / 0.333 · 6.5 · 2382 |
+
+### SU — recall ties across arms (0.958 / 0.778 / 0.583 for 2/3/4-hop); fewshot is cheapest on tokens (e.g. 3-hop 995 vs 1372 vs 1617).
+
+**Findings (honest):**
+1. **Fewshot exemplars help or match, never hurt** — +0.083 recall on HotpotQA 2-hop, parity at
+   3/4-hop and across all SU hops.
+2. **The static hint HURTS** — HotpotQA 3-hop 0.75→0.50, 4-hop 0.667→0.48, and it **over-fans-out
+   to ~15 searches** (a blanket "decompose / go wide" instruction the agent follows blindly).
+3. **No token premium despite a 5× larger hint** — grounded exemplars make the agent **search less**
+   (fewer wasted hops), so `sac_deep_fewshot` costs *fewer* tokens overall.
+
+**Takeaway:** explore's value into a code-mode agent comes from **evidence** (real per-template
+winning exemplars via `fewshot_block` / `route_plan`), not a corpus-wide rule. That is the deployable
+form of the routing lift in `experiments/explore_learning/`.

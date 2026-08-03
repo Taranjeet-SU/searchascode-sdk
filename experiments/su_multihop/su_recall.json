@@ -1,0 +1,89 @@
+{
+  "2hop": {
+    "n": 100,
+    "arms": {
+      "dense": {
+        "recall@10": 0.95,
+        "all_golds@10": 0.91,
+        "avg_searches": 1.0,
+        "avg_model_turns": 0.0,
+        "avg_in_tokens": 0,
+        "avg_out_tokens": 0
+      },
+      "tool": {
+        "recall@10": 0.795,
+        "all_golds@10": 0.62,
+        "avg_searches": 3.85,
+        "avg_model_turns": 5.57,
+        "avg_in_tokens": 8474,
+        "avg_out_tokens": 610
+      },
+      "sac": {
+        "recall@10": 0.94,
+        "all_golds@10": 0.88,
+        "avg_searches": 4.59,
+        "avg_model_turns": 1.0,
+        "avg_in_tokens": 546,
+        "avg_out_tokens": 260
+      }
+    }
+  },
+  "3hop": {
+    "n": 100,
+    "arms": {
+      "dense": {
+        "recall@10": 0.8133,
+        "all_golds@10": 0.55,
+        "avg_searches": 1.0,
+        "avg_model_turns": 0.0,
+        "avg_in_tokens": 0,
+        "avg_out_tokens": 0
+      },
+      "tool": {
+        "recall@10": 0.7133,
+        "all_golds@10": 0.37,
+        "avg_searches": 4.31,
+        "avg_model_turns": 6.06,
+        "avg_in_tokens": 10537,
+        "avg_out_tokens": 664
+      },
+      "sac": {
+        "recall@10": 0.86,
+        "all_golds@10": 0.64,
+        "avg_searches": 4.98,
+        "avg_model_turns": 1.0,
+        "avg_in_tokens": 555,
+        "avg_out_tokens": 289
+      }
+    }
+  },
+  "4hop": {
+    "n": 100,
+    "arms": {
+      "dense": {
+        "recall@10": 0.715,
+        "all_golds@10": 0.29,
+        "avg_searches": 1.0,
+        "avg_model_turns": 0.0,
+        "avg_in_tokens": 0,
+        "avg_out_tokens": 0
+      },
+      "tool": {
+        "recall@10": 0.65,
+        "all_golds@10": 0.21,
+        "avg_searches": 4.69,
+        "avg_model_turns": 5.95,
+        "avg_in_tokens": 11022,
+        "avg_out_tokens": 755
+      },
+      "sac": {
+        "recall@10": 0.78,
+        "all_golds@10": 0.43,
+        "avg_searches": 5.54,
+        "avg_model_turns": 1.0,
+        "avg_in_tokens": 566,
+        "avg_out_tokens": 320
+      }
+    }
+  }
+}

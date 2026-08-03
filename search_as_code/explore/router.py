@@ -47,12 +47,17 @@ def best_from_hits(hits: dict) -> str:
     return min(winners, key=lambda t: (TEMPLATE_COST.get(t, 9), TEMPLATE_NAMES.index(t)))
 
 
-def label_via_templates(ctx, gold, k: int = 10, cascade: bool = True):
-    """Return (best_template, hits) where hits[name]=1 iff a gold doc is in that template's top-k
-    (**recall@k** — the success criterion) and best = the cheapest template that succeeds.
+def label_via_templates(ctx, gold, k: int = 10, cascade: bool = True, all_golds: bool = True):
+    """Return (best_template, hits) where best = the **cheapest template that returns ALL the gold
+    answers** in its top-k, and hits[name]=1 iff that template met the success criterion.
 
-    ``gold``: a single id or a set/list of relevant ids (qrels can have several) — a template
-    solves if it retrieves ANY of them in its top-k.
+    ``gold``: a single id or a set/list of relevant ids (qrels / multi-hop can have several).
+
+    ``all_golds`` (**default True** = cheapest-to-all-golds): a template "solves" a query iff **ALL**
+    gold ids are in its top-k (``gold_set ⊆ top_k``) — the correct criterion when the gold is a SET
+    of N documents that must ALL be retrieved (multi-hop). This **reduces exactly to single-gold
+    recall@k when the gold set has one element** (``{g} ⊆ got`` ≡ ``g ∈ got``), so single-gold
+    corpora (BEIR) are unaffected. Set ``all_golds=False`` for the older "ANY gold in top-k" gate.
 
     ``cascade`` (default): evaluate templates cheapest-first and **stop at the first cost group
     that solves the query** — so the expensive LLM strategies only run on the queries the cheap
@@ -64,7 +69,8 @@ def label_via_templates(ctx, gold, k: int = 10, cascade: bool = True):
     golds = {gold} if isinstance(gold, str) else set(gold)
 
     def _hit(name):
-        return int(bool(golds & set(run_template(name, ctx, top_k=k))))
+        got = set(run_template(name, ctx, top_k=k))
+        return int(golds <= got) if all_golds else int(bool(golds & got))
 
     order = sorted(TEMPLATE_NAMES, key=lambda t: (TEMPLATE_COST.get(t, 99), TEMPLATE_NAMES.index(t)))
     hits: dict = {}
@@ -96,6 +102,23 @@ class TemplateRouter:
         x = featurize(query, emb).reshape(1, -1)
         return str(self.model.predict(x)[0])
 
+    def route_plan(self, query: str, emb: np.ndarray, top_k: int = 3) -> list[str]:
+        """A ranked strategy CASCADE for one query: the top_k templates by predicted probability
+        (cheapest-first among near-ties). The code agent executes it as t1 → escalate to t2 → t3,
+        which is where routing actually pays off (chaining, not betting on a single template).
+        Falls back to a single predict when the head has no ``predict_proba``."""
+        if self.model is None:
+            return ["all_rerank"]
+        x = featurize(query, emb).reshape(1, -1)
+        if not hasattr(self.model, "predict_proba"):
+            return [str(self.model.predict(x)[0])]
+        from .templates import TEMPLATE_COST
+        proba = self.model.predict_proba(x)[0]
+        classes = list(getattr(self.model, "classes_", self.classes))
+        order = sorted(range(len(classes)),
+                       key=lambda i: (-float(proba[i]), TEMPLATE_COST.get(str(classes[i]), 99)))
+        return [str(classes[i]) for i in order[:top_k]]
+
     def save(self, path) -> None:
         with open(path, "wb") as f:
             pickle.dump({"model": self.model, "classes": self.classes,
@@ -106,6 +129,19 @@ class TemplateRouter:
         with open(path, "rb") as f:
             d = pickle.load(f)
         return cls(d["model"], d["classes"], d["emb_dim"], d.get("metrics", {}))
+
+
+def format_route_plan(plan: list[str]) -> str:
+    """Render a :meth:`TemplateRouter.route_plan` cascade as a per-query prompt hint the code
+    agent can follow — the learned ``t1 → t2 → t3`` plan, with what each strategy does."""
+    from .templates import TEMPLATE_DOCS
+    if not plan:
+        return ""
+    steps = " → ".join(plan)
+    detail = "; ".join(f"{t} ({TEMPLATE_DOCS.get(t, {}).get('does', '')})" for t in plan)
+    return (f"Learned strategy plan for THIS query (router-ranked, cheapest-effective first): "
+            f"{steps}. Execute as a cascade — start with the first; escalate to the next only if "
+            f"the result looks weak. What each does: {detail}.")
 
 
 def train_router(X: np.ndarray, y: np.ndarray, seed: int = 0) -> dict:

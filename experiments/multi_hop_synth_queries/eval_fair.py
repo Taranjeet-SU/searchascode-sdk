@@ -2,8 +2,12 @@
 search budget. Only the harness differs (one tool per turn, with results in context) vs (one
 program that CHAINS the same tools, results out of context).
 
-Shared tools over the hotpotqa Session (each `search` counts against a per-query budget):
-  search(query, mode)     decompose(query)->subqs     rephrase(query)->paraphrases     rerank(query, ids)
+Shared tools over the hotpotqa Session (each retrieval counts against a per-query budget):
+  search(query, mode)  hyde(query)  prf(query)  decompose(query)  rephrase(query)
+  fuse(id_lists)  rerank(query, ids=None)  mmr(query, ids=None)
+Retrieval primitives pool a WIDE candidate set (POOL) in the sandbox — only the final top-K
+leaves as model context; rerank/mmr/fuse reorder that pool (free, they don't cost budget). A
+real cross-encoder reranker is attached, so the code-mode arm can retrieve-wide-then-rerank.
 Metric: recall@10 = |gold ∩ top10|/N and all_golds@10, over the multi-hop datasets.
 
     python -m experiments.multi_hop_synth_queries.eval_fair [per_dataset=120] [workers=5] [budget=6]
@@ -26,6 +30,7 @@ from phase1.llm import LLM
 
 DATA = Path(__file__).parent / "data"
 K = 10
+POOL = 50   # wide candidate pool kept in the sandbox; rerank/mmr operate on it, only top-K is returned
 
 
 def _rrf(lists, k=60):
@@ -37,30 +42,56 @@ def _rrf(lists, k=60):
 
 
 class Tools:
-    """The shared toolset both harnesses use; enforces a per-query search budget."""
+    """The shared toolset both harnesses use; enforces a per-query retrieval budget.
+
+    Retrieval primitives (search/hyde/prf) each cost 1 of the budget and pool ~POOL candidates
+    (with text) in the sandbox — only a small preview leaves as model context. rerank/mmr/fuse
+    reorder the accumulated pool and are FREE (they issue no new retrieval). A real cross-encoder
+    reranker is attached to the Session, so `rerank` is a genuine precision step, not a no-op."""
     def __init__(self, session, gen, budget):
         self.s, self.gen, self.budget = session, gen, budget
         self.searches = 0
-        self.pool = []          # every search's ranked ids (for RRF fallback)
+        self.pool = []          # every retrieval's ranked ids (for RRF fallback)
         self.docs = {}          # id -> title
+        self.hits = {}          # id -> Hit (with text, so rerank/mmr can score)
 
-    def search(self, query, mode="dense"):
+    def _absorb(self, rs):
+        ids = []
+        for h in rs:
+            ids.append(h.id)
+            self.docs[h.id] = ((h.document.metadata or {}).get("title", "") if h.document else "")
+            self.hits[h.id] = h
+        self.pool.append(ids)
+        return ids
+
+    def _retrieve(self, fn):
         if self.searches >= self.budget:
             return []
         self.searches += 1
         try:
-            rs = self.s.search(query, top_k=K, mode=mode if mode in ("dense", "keyword", "hybrid") else "dense")
+            rs = fn()
+            try:
+                rs = self.s.hydrate(rs)      # ensure candidate text is present for reranking
+            except Exception:
+                pass
         except Exception:
             return []
-        ids = []
-        for h in rs:
-            ids.append(h.id); self.docs[h.id] = (h.document.metadata or {}).get("title", "")
-        self.pool.append(ids)
-        return [{"id": h.id, "title": self.docs[h.id]} for h in rs[:6]]
+        ids = self._absorb(rs)
+        return [{"id": i, "title": self.docs[i]} for i in ids[:8]]
+
+    def search(self, query, mode="dense"):
+        m = mode if mode in ("dense", "keyword", "hybrid") else "dense"
+        return self._retrieve(lambda: self.s.search(query, top_k=POOL, mode=m))
+
+    def hyde(self, query):
+        return self._retrieve(lambda: self.s.hyde_search(query, top_k=POOL))
+
+    def prf(self, query):
+        return self._retrieve(lambda: self.s.prf_search(query, top_k=POOL))
 
     def decompose(self, query):
         try:
-            return self.s.decompose_search and self._subqs(query)
+            return self._subqs(query)
         except Exception:
             return [query]
 
@@ -75,8 +106,37 @@ class Tools:
                               system="You paraphrase search queries.")
         return [x.strip("-•* ").strip() for x in r.splitlines() if x.strip()][:3] or [query]
 
-    def rerank(self, query, ids):
-        return list(ids)      # no cross-encoder here; keep parity cheap (both may call it, it's a no-op reorder)
+    def _resultset(self, ids):
+        from search_as_code.types import ResultSet
+        return ResultSet([self.hits[i] for i in ids if i in self.hits])
+
+    def _poolset(self):
+        seen, order = set(), []
+        for lst in self.pool:
+            for i in lst:
+                if i not in seen:
+                    seen.add(i); order.append(i)
+        return self._resultset(order)
+
+    def rerank(self, query, ids=None, top_k=None):
+        """Cross-encoder rerank of `ids` (or the WHOLE accumulated pool if ids is None) -> ranked ids."""
+        rs = self._resultset(ids) if ids else self._poolset()
+        if not rs:
+            return list(ids or [])
+        try:
+            return self.s.rerank(query, rs, top_k=top_k or K).ids()
+        except Exception:
+            return [h.id for h in rs][:(top_k or K)]
+
+    def mmr(self, query, ids=None, top_k=None):
+        """MMR-diversify `ids` (or the whole pool) -> ranked ids."""
+        rs = self._resultset(ids) if ids else self._poolset()
+        if not rs:
+            return list(ids or [])
+        try:
+            return self.s.mmr(query, rs, top_k=top_k or K).ids()
+        except Exception:
+            return [h.id for h in rs][:(top_k or K)]
 
     def final(self, ids=None):
         cand = [i for i in (ids or []) if i in self.docs]
@@ -91,11 +151,23 @@ TOOL_SCHEMAS = [
         "description": "Search the corpus. Returns ranked {id,title}. Costs 1 of your search budget.",
         "parameters": {"type": "object", "properties": {"query": {"type": "string"},
             "mode": {"type": "string", "enum": ["dense", "keyword", "hybrid"]}}, "required": ["query"]}}},
+    {"type": "function", "function": {"name": "hyde",
+        "description": "Retrieve on a hypothetical-answer embedding (bridges vocabulary gap). Costs 1 budget.",
+        "parameters": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}}},
+    {"type": "function", "function": {"name": "prf",
+        "description": "Retrieve with pseudo-relevance-feedback expansion. Costs 1 budget.",
+        "parameters": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}}},
     {"type": "function", "function": {"name": "decompose",
         "description": "Split the question into sub-questions (each targets a DIFFERENT document). Returns a list.",
         "parameters": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}}},
     {"type": "function", "function": {"name": "rephrase",
         "description": "Get 3 paraphrases of a query. Returns a list.",
+        "parameters": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}}},
+    {"type": "function", "function": {"name": "rerank",
+        "description": "Cross-encoder rerank of everything retrieved so far for `query`. Returns the top {id,title}. Free.",
+        "parameters": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}}},
+    {"type": "function", "function": {"name": "mmr",
+        "description": "MMR-diversify everything retrieved so far for `query` (kills near-duplicates). Returns top {id,title}. Free.",
         "parameters": {"type": "object", "properties": {"query": {"type": "string"}}, "required": ["query"]}}},
     {"type": "function", "function": {"name": "finish",
         "description": "Submit the final ranked list of up to 10 document ids that together answer the question.",
@@ -103,9 +175,10 @@ TOOL_SCHEMAS = [
                        "required": ["doc_ids"]}}},
 ]
 TOOL_SYS = ("You retrieve the SET of documents needed to answer a multi-hop question — it needs "
-            "SEVERAL different documents. Use `decompose` to split it, `search` each sub-question "
-            "(you have a limited search budget), `rephrase` if a search misses, then `finish` with "
-            "the ~10 ids that TOGETHER cover all parts. Call one or few tools per turn.")
+            "SEVERAL different documents. Use `decompose` to split it, `search`/`hyde`/`prf` each "
+            "sub-question (limited retrieval budget), `rephrase` if a search misses, `rerank` to "
+            "pull the best candidates forward, then `finish` with the ~10 ids that TOGETHER cover "
+            "all parts. Call one or few tools per turn.")
 
 
 def tool_harness(chat, tools: Tools, q, max_steps=10):
@@ -126,10 +199,17 @@ def tool_harness(chat, tools: Tools, q, max_steps=10):
             name, args, cid = c["name"], c["args"], c["id"]
             if name == "search":
                 obs = tools.search(args.get("query", q), args.get("mode", "dense"))
+            elif name == "hyde":
+                obs = tools.hyde(args.get("query", q))
+            elif name == "prf":
+                obs = tools.prf(args.get("query", q))
             elif name == "decompose":
                 obs = tools.decompose(args.get("query", q))
             elif name == "rephrase":
                 obs = tools.rephrase(args.get("query", q))
+            elif name in ("rerank", "mmr"):
+                fn = tools.rerank if name == "rerank" else tools.mmr
+                obs = [{"id": i, "title": tools.docs.get(i, "")} for i in fn(args.get("query", q))[:8]]
             elif name == "finish":
                 picked = [str(x) for x in args.get("doc_ids", [])]; obs = "ok"; stop = True
             else:
@@ -145,23 +225,33 @@ def tool_harness(chat, tools: Tools, q, max_steps=10):
 # --------------------------------------------------------------------------- #
 CODE_SYS = ("You are a search-as-code agent. Write ONE Python program (no prose) to retrieve the "
             "documents needed for a MULTI-HOP question that needs SEVERAL different documents. "
-            "Available functions (same budget on `search`):\n"
-            "  search(query, mode='dense'|'keyword'|'hybrid') -> [{'id','title'}]\n"
-            "  decompose(query) -> [subquestions]\n  rephrase(query) -> [paraphrases]\n"
+            "Available functions (search/hyde/prf each cost 1 of a limited retrieval budget; "
+            "rerank/mmr/fuse are FREE reorders of what you've already retrieved):\n"
+            "  search(query, mode='dense'|'keyword'|'hybrid') -> [{'id','title'}]  # pools ~50, shows top 8\n"
+            "  hyde(query) -> like search but on a hypothetical-answer embedding (vocabulary gap)\n"
+            "  prf(query) -> like search but pseudo-relevance-feedback expanded\n"
+            "  decompose(query) -> [subquestions]      rephrase(query) -> [paraphrases]\n"
             "  fuse(list_of_id_lists) -> merged id list (RRF)\n"
-            "Chain them: decompose the question, search each sub-question, fuse the results, and set "
-            "`results` to the final list of up to 10 ids that TOGETHER cover all parts. Example:\n"
+            "  rerank(query, ids) -> ids re-scored by a cross-encoder for a SINGLE query\n"
+            "  mmr(query, ids=None) -> ids diversified (kills near-duplicates)\n"
+            "COVER all the parts: decompose the question, search each sub-question (+ the full "
+            "question), and FUSE the pools. Fusing preserves coverage of the SEVERAL golds a "
+            "multi-hop question needs. NOTE: `rerank(question, ...)` scores whole-question relevance, "
+            "so it can DROP docs that satisfy only ONE sub-fact — use it to sharpen a SINGLE "
+            "sub-pool, not over the fused union. Set `results` to up to 10 ids covering all parts:\n"
             "```\nsubs = decompose(question)\npools = [[h['id'] for h in search(s)] for s in subs]\n"
             "pools.append([h['id'] for h in search(question)])\nresults = fuse(pools)[:10]\n```\n"
-            "Return ONLY the code in a ``` block.")
+            "(hyde/prf give extra recall on a hard sub-fact; rerank(s, [h['id'] for h in search(s)]) "
+            "sharpens one sub-pool before fusing.) Return ONLY the code in a ``` block.")
 
 
 def code_harness(gen, tools: Tools, q):
     r = gen.complete(f"Question: {q}\n\nWrite the program.", system=CODE_SYS)
     m = re.search(r"```(?:python)?\s*(.*?)```", r, re.DOTALL)
     code = m.group(1) if m else r
-    ns = {"question": q, "search": tools.search, "decompose": tools.decompose,
-          "rephrase": tools.rephrase, "fuse": _rrf, "results": None}
+    ns = {"question": q, "search": tools.search, "hyde": tools.hyde, "prf": tools.prf,
+          "decompose": tools.decompose, "rephrase": tools.rephrase,
+          "rerank": tools.rerank, "mmr": tools.mmr, "fuse": _rrf, "results": None}
     try:
         exec(compile(code, "<sac>", "exec"), ns)  # noqa: S102
     except Exception:
@@ -188,6 +278,7 @@ def main():
     session = sac.Session("opensearch", index="hotpotqa", dim=common.DIM, hosts=[common.OS_HOST],
                           text_field="text", vector_field="vector", embedder=embed,
                           generator=gen.as_generator())
+    session.reranker = sac.QwenReranker()   # Qwen3-Reranker (paper-caliber LLM reranker), not the weak MiniLM CE
     chat = agents.lc_chat()
     arms = ["dense", "tool", "sac"]
     keys = ["recall", "all", "n", "searches", "steps", "in", "out"]

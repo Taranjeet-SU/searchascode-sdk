@@ -148,6 +148,17 @@ class Explorer:
         return getattr(self.pack, name)
 
     # ---- training API ----------------------------------------------------
+    def exemplars(self, per_template: int = 3) -> dict:
+        """Per-winning-template example queries mined from the labeling pass (see training.py)."""
+        from .training import fewshot_exemplars
+        return fewshot_exemplars(self.pack, per_template=per_template)
+
+    def fewshot_block(self, per_template: int = 3, max_templates: int = 8) -> str:
+        """A ready-to-inject prompt block of learned strategy exemplars for THIS corpus — feed to a
+        SAC / deep agent so it chooses a primitive chain from evidence, not a static hint."""
+        from .training import fewshot_exemplars, format_fewshot_block
+        return format_fewshot_block(self.exemplars(per_template=per_template), max_templates=max_templates)
+
     def set_model(self, model="hist_gb", **params) -> "Explorer":
         """Choose the router head: a MODEL_REGISTRY name ('hist_gb','logreg','random_forest',
         'mlp'), a factory callable, or an estimator instance. Extra kwargs go to the model."""
@@ -156,14 +167,19 @@ class Explorer:
         return self
 
     def dataset(self, *, n=5000, rephrases=2, k=10, P=25, label_llm=False, label_rerank=False,
-                workers=1, batch_size=256, resume=True, queries=None, progress_every=1):
+                workers=1, batch_size=256, resume=True, queries=None, progress_every=1,
+                all_golds=True):
         """Build (or resume/load) the atomic sharded router dataset — generate/collect queries,
-        embed on GPU, label against every template, persist per-batch shards. See training.py."""
+        embed on GPU, label against every template, persist per-batch shards. See training.py.
+
+        Winner policy = **cheapest template that returns ALL gold answers** (``all_golds=True``,
+        default). Reduces to single-gold recall@k when a query has one gold, so single-gold corpora
+        are unaffected; set ``all_golds=False`` for the older "ANY gold in top-k" gate."""
         from .training import build_dataset
         self._dataset = build_dataset(
             self, n=n, rephrases=rephrases, k=k, P=P, label_llm=label_llm,
             label_rerank=label_rerank, workers=workers, batch_size=batch_size,
-            resume=resume, queries=queries, progress_every=progress_every)
+            resume=resume, queries=queries, progress_every=progress_every, all_golds=all_golds)
         return self._dataset
 
     def train(self, cv: int = 5, **model_params):
@@ -208,6 +224,21 @@ class Explorer:
             self.router = TemplateRouter.load(p) if p.exists() else TemplateRouter()
         emb = self.session.embedder.embed([query])[0]
         return self.router.predict(query, emb)
+
+    def route_plan(self, query: str, top_k: int = 3) -> list:
+        """Ranked strategy cascade (t1 → t2 → t3) for a query — see TemplateRouter.route_plan."""
+        if self.router is None:
+            from .router import TemplateRouter
+            p = self.pack.path("router.pkl")
+            self.router = TemplateRouter.load(p) if p.exists() else TemplateRouter()
+        emb = self.session.embedder.embed([query])[0]
+        return self.router.route_plan(query, emb, top_k=top_k)
+
+    def plan_prompt(self, query: str, top_k: int = 3) -> str:
+        """A per-query prompt hint: the learned template cascade for THIS query, ready to inject
+        into a SAC / deep agent so it executes the plan in code (routing depth, not identity)."""
+        from .router import format_route_plan
+        return format_route_plan(self.route_plan(query, top_k=top_k))
 
 
 def explore(session, out: str, stages: Optional[list[Stage]] = None, *,

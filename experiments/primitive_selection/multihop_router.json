@@ -1,0 +1,385 @@
+[
+  {
+    "corpus": "hotpotqa_multihop",
+    "n": 600,
+    "solved": 540,
+    "oracle_coverage": 0.9,
+    "always_dense_acc": 0.613,
+    "best_single_template": "light_dense",
+    "best_single_acc": 0.613,
+    "router_cv": {
+      "hist_gb": {
+        "cv_accuracy": 0.6166666666666667,
+        "cv_std": 0.02777777777777779,
+        "cv_folds": 2,
+        "train_accuracy": 1.0,
+        "best_single_template_acc": 0.613,
+        "router_lift_over_fixed": 0.0037
+      },
+      "logreg": {
+        "cv_accuracy": 0.6055555555555555,
+        "cv_std": 0.020370370370370372,
+        "cv_folds": 2,
+        "train_accuracy": 0.6555555555555556,
+        "best_single_template_acc": 0.613,
+        "router_lift_over_fixed": -0.0074
+      }
+    },
+    "headline_lift_vs_always_dense": 0.0037,
+    "label_distribution": {
+      "light_dense": 331,
+      "light_keyword": 119,
+      "light_hybrid": 20,
+      "exact_partnum": 18,
+      "dense_rerank": 8,
+      "hyde_rerank": 6,
+      "multi_rephrase": 12,
+      "decompose_rerank": 8,
+      "rephrase_rerank": 9,
+      "score_guarded": 7,
+      "deep_all": 2
+    },
+    "template_all_golds@10_recall": {
+      "light_dense": 0.5517,
+      "light_keyword": 0.67,
+      "light_hybrid": 0.695,
+      "rephrase_rerank": 0.015,
+      "dense_rerank": 0.0133,
+      "hyde_rerank": 0.01,
+      "mmr_diverse": 0.0,
+      "prf_rerank": 0.0033,
+      "multi_rephrase": 0.02,
+      "exact_partnum": 0.035,
+      "decompose_rerank": 0.0133,
+      "deep_hyde_decompose": 0.0117,
+      "deep_all": 0.015,
+      "score_guarded": 0.0117,
+      "escalating": 0.0117,
+      "confidence_gated_exact": 0.0
+    },
+    "per_hop": {
+      "2hop": {
+        "n": 200,
+        "solved": 198,
+        "oracle_coverage": 0.99,
+        "winners": {
+          "light_dense": 157,
+          "light_keyword": 31,
+          "light_hybrid": 7,
+          "exact_partnum": 1,
+          "dense_rerank": 1,
+          "hyde_rerank": 1
+        }
+      },
+      "3hop": {
+        "n": 200,
+        "solved": 181,
+        "oracle_coverage": 0.905,
+        "winners": {
+          "light_dense": 108,
+          "light_keyword": 45,
+          "multi_rephrase": 6,
+          "light_hybrid": 5,
+          "decompose_rerank": 3,
+          "exact_partnum": 4,
+          "rephrase_rerank": 3,
+          "hyde_rerank": 2,
+          "dense_rerank": 4,
+          "score_guarded": 1
+        }
+      },
+      "4hop": {
+        "n": 200,
+        "solved": 161,
+        "oracle_coverage": 0.805,
+        "winners": {
+          "light_dense": 66,
+          "exact_partnum": 13,
+          "light_keyword": 43,
+          "rephrase_rerank": 6,
+          "light_hybrid": 8,
+          "score_guarded": 6,
+          "deep_all": 2,
+          "decompose_rerank": 5,
+          "multi_rephrase": 6,
+          "hyde_rerank": 3,
+          "dense_rerank": 3
+        }
+      }
+    },
+    "failure_taxonomy": {
+      "checked": 60,
+      "categories": {
+        "unexplained": 29,
+        "rank_collision": 31
+      },
+      "fractions": {
+        "unexplained": 0.483,
+        "rank_collision": 0.517
+      },
+      "examples": {
+        "unexplained": [
+          {
+            "category": "unexplained",
+            "sem": 0.0,
+            "lex": 0.316,
+            "gold_rank": null,
+            "near_density": 0,
+            "query": "What significant events related to the year 1917 and the year 2017 involved a major city a"
+          },
+          {
+            "category": "unexplained",
+            "sem": 0.0,
+            "lex": 0.308,
+            "gold_rank": 0,
+            "near_density": 1,
+            "query": "Which music festivals mentioned took place in the United States, and which composition by "
+          },
+          {
+            "category": "unexplained",
+            "sem": 0.0,
+            "lex": 0.433,
+            "gold_rank": 0,
+            "near_density": 1,
+            "query": "What is the meaning of the Greek word that appears in the name of an ancient divination pr"
+          },
+          {
+            "category": "unexplained",
+            "sem": 0.0,
+            "lex": 0.286,
+            "gold_rank": 0,
+            "near_density": 3,
+            "query": "Which individual named Atkins has been recognized with major acting awards in both British"
+          }
+        ],
+        "rank_collision": [
+          {
+            "category": "rank_collision",
+            "sem": 0.0,
+            "lex": 0.2,
+            "gold_rank": 2,
+            "near_density": 50,
+            "query": "Which individual named James was involved in political or military service in the United S"
+          },
+          {
+            "category": "rank_collision",
+            "sem": 0.0,
+            "lex": 0.429,
+            "gold_rank": 2,
+            "near_density": 50,
+            "query": "Which Australian rules footballer born before 1900 played for a university team during Wor"
+          },
+          {
+            "category": "rank_collision",
+            "sem": 0.0,
+            "lex": 0.477,
+            "gold_rank": 2,
+            "near_density": 50,
+            "query": "Which Canadian rock band released a double compilation album in 1990 without their partici"
+          },
+          {
+            "category": "rank_collision",
+            "sem": 0.0,
+            "lex": 0.214,
+            "gold_rank": 1,
+            "near_density": 50,
+            "query": "What are the roles or titles associated with leadership positions in Australian football, "
+          }
+        ]
+      }
+    },
+    "csv_paths": {
+      "labels": "/home/taranjeet.bakshi/code_search_harness/experiments/primitive_selection/csv_hotpotqa_multihop/labels.csv",
+      "template_recall": "/home/taranjeet.bakshi/code_search_harness/experiments/primitive_selection/csv_hotpotqa_multihop/template_recall.csv",
+      "rows": 600
+    }
+  },
+  {
+    "corpus": "su_multihop",
+    "n": 450,
+    "solved": 377,
+    "oracle_coverage": 0.8378,
+    "always_dense_acc": 0.687,
+    "best_single_template": "light_dense",
+    "best_single_acc": 0.687,
+    "router_cv": {
+      "hist_gb": {
+        "cv_accuracy": 0.6843386243386244,
+        "cv_std": 0.022887007728336226,
+        "cv_folds": 3,
+        "train_accuracy": 1.0,
+        "best_single_template_acc": 0.687,
+        "router_lift_over_fixed": -0.0027
+      },
+      "logreg": {
+        "cv_accuracy": 0.663005291005291,
+        "cv_std": 0.03339530981465943,
+        "cv_folds": 3,
+        "train_accuracy": 0.6949602122015915,
+        "best_single_template_acc": 0.687,
+        "router_lift_over_fixed": -0.024
+      }
+    },
+    "headline_lift_vs_always_dense": -0.0027,
+    "label_distribution": {
+      "light_dense": 259,
+      "light_keyword": 68,
+      "score_guarded": 3,
+      "light_hybrid": 25,
+      "exact_partnum": 3,
+      "mmr_diverse": 7,
+      "rephrase_rerank": 3,
+      "dense_rerank": 6,
+      "hyde_rerank": 3
+    },
+    "template_all_golds@10_recall": {
+      "light_dense": 0.5756,
+      "light_keyword": 0.5911,
+      "light_hybrid": 0.6956,
+      "rephrase_rerank": 0.0067,
+      "dense_rerank": 0.0133,
+      "hyde_rerank": 0.0067,
+      "mmr_diverse": 0.02,
+      "prf_rerank": 0.0067,
+      "multi_rephrase": 0.0,
+      "exact_partnum": 0.0133,
+      "decompose_rerank": 0.0,
+      "deep_hyde_decompose": 0.0,
+      "deep_all": 0.0,
+      "score_guarded": 0.0067,
+      "escalating": 0.0067,
+      "confidence_gated_exact": 0.0
+    },
+    "per_hop": {
+      "2hop": {
+        "n": 150,
+        "solved": 146,
+        "oracle_coverage": 0.9733,
+        "winners": {
+          "light_dense": 135,
+          "light_keyword": 6,
+          "score_guarded": 1,
+          "light_hybrid": 2,
+          "exact_partnum": 1,
+          "mmr_diverse": 1
+        }
+      },
+      "3hop": {
+        "n": 150,
+        "solved": 128,
+        "oracle_coverage": 0.8533,
+        "winners": {
+          "light_dense": 80,
+          "light_keyword": 30,
+          "light_hybrid": 9,
+          "exact_partnum": 2,
+          "mmr_diverse": 3,
+          "score_guarded": 1,
+          "rephrase_rerank": 1,
+          "dense_rerank": 2
+        }
+      },
+      "4hop": {
+        "n": 150,
+        "solved": 103,
+        "oracle_coverage": 0.6867,
+        "winners": {
+          "light_keyword": 32,
+          "light_hybrid": 14,
+          "light_dense": 44,
+          "score_guarded": 1,
+          "mmr_diverse": 3,
+          "hyde_rerank": 3,
+          "dense_rerank": 4,
+          "rephrase_rerank": 2
+        }
+      }
+    },
+    "failure_taxonomy": {
+      "checked": 73,
+      "categories": {
+        "unexplained": 51,
+        "rank_collision": 22
+      },
+      "fractions": {
+        "unexplained": 0.699,
+        "rank_collision": 0.301
+      },
+      "examples": {
+        "unexplained": [
+          {
+            "category": "unexplained",
+            "sem": 0.922,
+            "lex": 0.8,
+            "gold_rank": 1,
+            "near_density": 4,
+            "query": "Which platforms support installing a SearchUnify search client, and how can you find out w"
+          },
+          {
+            "category": "unexplained",
+            "sem": 0.902,
+            "lex": 0.636,
+            "gold_rank": 0,
+            "near_density": 1,
+            "query": "What types of files can be attached to a case and what is the maximum file size allowed fo"
+          },
+          {
+            "category": "unexplained",
+            "sem": 0.906,
+            "lex": 0.458,
+            "gold_rank": 0,
+            "near_density": 1,
+            "query": "How can a Community Manager customize and activate specific analytics reports for their ro"
+          },
+          {
+            "category": "unexplained",
+            "sem": 0.928,
+            "lex": 0.68,
+            "gold_rank": 0,
+            "near_density": 2,
+            "query": "What are the steps to create an application user with administrative privileges in Microso"
+          }
+        ],
+        "rank_collision": [
+          {
+            "category": "rank_collision",
+            "sem": 0.908,
+            "lex": 0.727,
+            "gold_rank": 6,
+            "near_density": 24,
+            "query": "How does SearchUnify enable users to find information across multiple content sources, and"
+          },
+          {
+            "category": "rank_collision",
+            "sem": 0.84,
+            "lex": 0.389,
+            "gold_rank": 2,
+            "near_density": 15,
+            "query": "How can you request search results from a specific page number while also specifying a dat"
+          },
+          {
+            "category": "rank_collision",
+            "sem": 0.912,
+            "lex": 0.679,
+            "gold_rank": 0,
+            "near_density": 5,
+            "query": "How can an admin restrict a user's ability to make API calls, ensure the user sees only re"
+          },
+          {
+            "category": "rank_collision",
+            "sem": 0.885,
+            "lex": 0.593,
+            "gold_rank": 4,
+            "near_density": 23,
+            "query": "How can a first-time user set up a new content source from Jira using SearchUnify APIs, an"
+          }
+        ]
+      }
+    },
+    "csv_paths": {
+      "labels": "/home/taranjeet.bakshi/code_search_harness/experiments/primitive_selection/csv_su_multihop/labels.csv",
+      "template_recall": "/home/taranjeet.bakshi/code_search_harness/experiments/primitive_selection/csv_su_multihop/template_recall.csv",
+      "rows": 450
+    }
+  }
+]

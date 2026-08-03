@@ -1,0 +1,36 @@
+{
+  "n": 450,
+  "solved": 377,
+  "unsolved": 73,
+  "oracle_coverage": 0.8378,
+  "n_templates": 16,
+  "label_distribution": {
+    "light_dense": 259,
+    "light_keyword": 68,
+    "score_guarded": 3,
+    "light_hybrid": 25,
+    "exact_partnum": 3,
+    "mmr_diverse": 7,
+    "rephrase_rerank": 3,
+    "dense_rerank": 6,
+    "hyde_rerank": 3
+  },
+  "template_hit_rate@k": {
+    "light_dense": 0.5756,
+    "light_keyword": 0.5911,
+    "light_hybrid": 0.6956,
+    "rephrase_rerank": 0.0067,
+    "dense_rerank": 0.0133,
+    "hyde_rerank": 0.0067,
+    "mmr_diverse": 0.02,
+    "prf_rerank": 0.0067,
+    "multi_rephrase": 0.0,
+    "exact_partnum": 0.0133,
+    "decompose_rerank": 0.0,
+    "deep_hyde_decompose": 0.0,
+    "deep_all": 0.0,
+    "score_guarded": 0.0067,
+    "escalating": 0.0067,
+    "confidence_gated_exact": 0.0
+  }
+}
