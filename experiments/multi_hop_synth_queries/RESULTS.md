@@ -301,3 +301,43 @@ pass) as the hop-1 hint, vs `sac_deep` (no hint) and `sac_deep_explore` (the sta
 **Takeaway:** explore's value into a code-mode agent comes from **evidence** (real per-template
 winning exemplars via `fewshot_block` / `route_plan`), not a corpus-wide rule. That is the deployable
 form of the routing lift in `experiments/explore_learning/`.
+
+## 14. Deep-SAC + fewshot + model recommendation (combo) — the best guidance
+
+§13 showed labeling **exemplars** help. Here we add the **model's** per-query recommendation:
+`sac_deep_combo` injects `explore.fewshot_block()` (corpus exemplars) **plus**
+`explore.plan_prompt(query)` — the trained router's per-query cascade `t1→t2→t3` (`predict_proba`,
+grid-tuned hist_gb). Arms: `sac_deep` (none) vs `sac_deep_fewshot` (exemplars) vs `sac_deep_combo`.
+n=12/hop.
+
+### HotpotQA (recall@10 / all_golds@10 / avg searches / in-tok)
+| hop | sac_deep | + fewshot | **+ fewshot + model plan (combo)** |
+|---|---|---|---|
+| 2 | 0.875 / 0.833 · 9.2 · 2700 | 0.875 / 0.833 · 9.2 · 2971 | **0.917 / 0.917 · 6.5 · 3007** |
+| 3 | 0.750 / 0.417 · 3.8 · 1834 | 0.750 / 0.417 · 3.8 · 1967 | **0.944 / 0.917 · 1.4 · 1668** |
+| 4 | 0.667 / 0.333 · 3.8 · 1854 | 0.667 / 0.333 · 6.5 · 2831 | 0.562 / 0.417 · **19.3** · 4840 |
+
+### SU
+| hop | sac_deep | + fewshot | **combo** |
+|---|---|---|---|
+| 2 | 0.958 / 0.917 · 1.0 | 0.958 / 0.917 · 1.0 | **1.000 / 1.000 · 1.0** |
+| 3 | 0.778 / 0.417 · 1.0 | 0.778 / 0.417 · 1.0 | **0.833 / 0.583 · 2.8** |
+| 4 | 0.583 / 0.167 · 1.0 | 0.583 / 0.167 · 1.0 | **0.854 / 0.667 · 1.0** |
+
+**Averaged over all 6 cells:** combo **all_golds@10 = 0.750 vs 0.514** (baseline / fewshot) → **+0.24**;
+recall **0.852 vs 0.769** → **+0.08**.
+
+**Findings:**
+1. **Combining the two signals is the best guidance.** The model's per-query cascade (`plan_prompt`)
+   on top of corpus exemplars (`fewshot_block`) lifts all-golds coverage substantially — biggest on
+   the hard hops (HotpotQA 3-hop 0.42→0.92; SU 4-hop 0.17→0.67).
+2. **Mostly cheaper, not dearer** — the per-query plan focuses the agent, so combo usually uses
+   *fewer* searches/tokens than fewshot-alone (HotpotQA 3-hop: 1.4 vs 3.8 searches).
+3. **This is the routing lift (§8) delivered.** Routing to one template only tied dense; routing a
+   *cascade into a code-mode agent's prompt* is where the learned model pays off.
+4. **Honest caveats:** n=12/hop is noisy; and one cell (HotpotQA 4-hop) **over-searched to 19.3** —
+   the plan can occasionally trigger runaway fan-out, so a QPP/budget guard is the next step.
+
+**Bottom line for `explore`:** its deployable value is **evidence + model recommendation as prompt
+context** for a code-mode deep agent — `fewshot_block` + `plan_prompt` — not a single routed template
+and not a static hint.

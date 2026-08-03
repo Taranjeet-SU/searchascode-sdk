@@ -123,7 +123,25 @@ def recall(gold, ids):
     return (len(g & top) / len(g) if g else 0.0), int(g <= top)
 
 
-ARMS = ["sac_deep", "sac_deep_explore", "sac_deep_fewshot"]
+ARMS = ["sac_deep", "sac_deep_fewshot", "sac_deep_combo"]
+
+
+def build_explorer(name, session):
+    """Explorer with a TRAINED router (train+save if the pack has none) so plan_prompt() — the
+    model's per-query t1->t2->t3 recommendation — is available for the combo arm."""
+    from pathlib import Path as _P
+    from search_as_code.explore import Explorer, ProfilePack
+    pack_map = {"hotpotqa": "pack_hotpotqa_multihop", "su": "pack_su_multihop"}
+    pdir = _P(__file__).parents[1] / "primitive_selection" / pack_map.get(name, "")
+    try:
+        ex = Explorer(session, ProfilePack.open(str(pdir)))
+        ex.set_model("hist_gb", learning_rate=0.1, max_depth=8, max_iter=400)
+        m = ex.train(cv=3)
+        print(f"[{name}] router trained (cv_acc={m.get('cv_accuracy')}); plan_prompt ready", flush=True)
+        return ex
+    except Exception as e:  # noqa: BLE001
+        print(f"[{name}] router unavailable ({e}) -> combo falls back to fewshot only", flush=True)
+        return None
 
 
 def build_fewshot(name) -> str:
@@ -146,7 +164,7 @@ def _blank_agg():
     return {a: dict.fromkeys(_KEYS, 0.0) for a in ARMS}
 
 
-def run_query(store, embedder, reranker, generator, chat, hint, fewshot_hint, q, gold):
+def run_query(store, embedder, reranker, generator, chat, hint, fewshot_hint, explorer, q, gold):
     """Run all deep arms on one query with fresh, per-query, instrumented sessions."""
     out = {}
     for arm in ARMS:
@@ -156,6 +174,16 @@ def run_query(store, embedder, reranker, generator, chat, hint, fewshot_hint, q,
             use_chat = HintChat(chat, hint)
         elif arm == "sac_deep_fewshot":
             use_chat = HintChat(chat, fewshot_hint) if fewshot_hint else chat
+        elif arm == "sac_deep_combo":
+            # fewshot exemplars (labeling evidence) + the model's per-query t1->t2->t3 recommendation
+            combo = fewshot_hint
+            if explorer is not None:
+                try:
+                    plan = explorer.plan_prompt(q, top_k=3)
+                    combo = (fewshot_hint + "\n\n" + plan) if fewshot_hint else plan
+                except Exception:  # noqa: BLE001
+                    pass
+            use_chat = HintChat(chat, combo) if combo else chat
         else:
             use_chat = chat
         try:
@@ -181,7 +209,8 @@ def bench_corpus(name, store, embedder, reranker, generator, datasets, per_hop, 
     prof_session = sac.Session(store, embedder=embedder, reranker=reranker, generator=generator)
     hint = build_hint(prof_session)
     fewshot_hint = build_fewshot(name)
-    print(f"\n[{name}] static hint ({len(hint)} chars); fewshot hint ({len(fewshot_hint)} chars)\n", flush=True)
+    explorer = build_explorer(name, prof_session)   # trained router for plan_prompt (combo arm)
+    print(f"\n[{name}] fewshot hint ({len(fewshot_hint)} chars); combo = fewshot + per-query plan_prompt\n", flush=True)
 
     lock = threading.Lock()
     result, records = {}, []
@@ -194,7 +223,7 @@ def bench_corpus(name, store, embedder, reranker, generator, datasets, per_hop, 
 
         def one(r):
             q, gold = r["query"], r["gold_ids"]
-            m = run_query(store, embedder, reranker, generator, chat, hint, fewshot_hint, q, gold)
+            m = run_query(store, embedder, reranker, generator, chat, hint, fewshot_hint, explorer, q, gold)
             with lock:
                 for a in ARMS:
                     d = m[a]
@@ -309,8 +338,8 @@ def main():
         print("[su] FAILED:\n" + traceback.format_exc(), flush=True)
         srec = []
 
-    (HERE / "deep_recall_fewshot.json").write_text(json.dumps(out, indent=2))
-    with (HERE / "deep_recall_fewshot_perquery.jsonl").open("w") as f:
+    (HERE / "deep_recall_combo.json").write_text(json.dumps(out, indent=2))
+    with (HERE / "deep_recall_combo_perquery.jsonl").open("w") as f:
         for r in (hrec + srec):
             f.write(json.dumps(r) + "\n")
     print(f"\n[deep_sac] wrote deep_recall.json + deep_recall_perquery.jsonl "
