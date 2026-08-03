@@ -1,0 +1,44 @@
+{
+  "2hop": {
+    "dense": {
+      "recall@10": 0.8367,
+      "all_golds@10": 0.7067
+    },
+    "tool": {
+      "recall@10": 0.9033,
+      "all_golds@10": 0.82
+    },
+    "sac": {
+      "recall@10": 0.9367,
+      "all_golds@10": 0.88
+    }
+  },
+  "3hop": {
+    "dense": {
+      "recall@10": 0.6778,
+      "all_golds@10": 0.4067
+    },
+    "tool": {
+      "recall@10": 0.8,
+      "all_golds@10": 0.5667
+    },
+    "sac": {
+      "recall@10": 0.8022,
+      "all_golds@10": 0.5533
+    }
+  },
+  "4hop": {
+    "dense": {
+      "recall@10": 0.5867,
+      "all_golds@10": 0.2733
+    },
+    "tool": {
+      "recall@10": 0.6833,
+      "all_golds@10": 0.3133
+    },
+    "sac": {
+      "recall@10": 0.7417,
+      "all_golds@10": 0.38
+    }
+  }
+}
