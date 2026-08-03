@@ -123,6 +123,13 @@ into a **code-mode agent** as prompt context (chaining beats picking one):
 - **`explore.route_plan(query)` / `plan_prompt(query)`** — a per-query ranked cascade like
   `light_dense → light_keyword → decompose_rerank` the agent executes as "try, escalate if weak."
 
+**Two different sources — do not confuse them:** `fewshot_block` is mined from the **labeling**
+(the ground-truth cheapest template that actually won per query), so it is *evidence*, not a
+prediction. `route_plan`/`plan_prompt` is the **trained model's** per-query recommendation
+(`predict_proba` cascade). The deep-SAC validation in `RESULTS.md §13` used **`fewshot_block`**
+(labeling exemplars); combining it with the model's `plan_prompt` is an open next step. A concrete
+rendered `fewshot_block` for both corpora is checked in at **`fewshot_examples.md`**.
+
 ## 6. Failure taxonomy (the actionable per-corpus output)
 
 Unsolved queries (no template got all golds@10) bucketed by cheap signals:
