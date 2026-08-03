@@ -25,6 +25,7 @@ from .engine import (
     explore,
     run_pipeline,
 )
+from .multihop import generate_multihop
 from .pack import ProfilePack
 from .report import write_csv_report
 from .router import TemplateRouter, best_from_hits
@@ -68,5 +69,6 @@ __all__ = [
     "classify_failure",
     "analyze_failures",
     "write_dataset_csv",
+    "generate_multihop",
     "TEMPLATE_COST",
 ]
