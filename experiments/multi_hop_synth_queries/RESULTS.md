@@ -111,6 +111,16 @@ fixed decompose→fan-out→fuse recipe**: batch the searches, fuse in code, kee
 out of context. (Implication: this recipe could be **hardcoded** — it is essentially
 `decompose_search` — dropping even the per-query code-gen call.)
 
+### 5b. Important caveat — this used *single-shot* SAC (no deepen-on-failure)
+The SAC arm here writes **one** program and stops (`turns=1`). The full standard agent
+(`phase1.agents.run_sac`, deep mode) does more: it writes code → a **judge** checks the retrieved
+evidence → if insufficient it writes **new, deeper code** with the **sandbox variables persisting
+across hops** (prior learning) → up to `max_retries`. That iterative deepen-on-failure loop would
+lift recall on the queries single-shot SAC misses (all_golds@10 at 3–4 hop especially), at the cost
+of a few extra turns — still far below tool-mode's 5–7. So these numbers are a **lower bound** for
+SAC; benchmarking the deep agent as a `sac_deep` arm is the next step (see
+`experiments/explore_improvement/`).
+
 ## 6. Why SAC wins the token/turn axis (mechanism)
 Tool-calling re-feeds the **entire growing transcript** (every prior search's results) into the
 model each turn, so input tokens **grow with hop depth**. SAC issues all searches inside one
@@ -141,7 +151,36 @@ with difficulty. Combined with the earlier null result on single-hop IR, the hon
 *execution/efficiency* win (context stays out of the model), realized through a fixed
 decompose→fan-out→fuse recipe.**
 
-## 9. Reproduce
+## 9. Cross-dataset validation — SearchUnify product docs
+We re-ran the identical harness on a second corpus: **3,318 SearchUnify documentation pages**
+(`docs.searchunify.com`, document-level — clean, no chunk duplicacy), with SU multi-hop synthetic
+queries built by the same `generate_multihop` (150/hop).
+
+| hops | arm | recall@10 | all_golds@10 | searches | turns | in_tok |
+|---|---|---|---|---|---|---|
+| **2** | dense | 0.950 | 0.910 | 1.0 | 0 | 0 |
+| | tool | 0.835 | 0.700 | 3.6 | 3.3 | 2,244 |
+| | **sac** | **0.975** | **0.950** | 4.3 | **1** | **339** |
+| **3** | dense | 0.813 | 0.550 | 1.0 | 0 | 0 |
+| | tool | 0.750 | 0.400 | 4.2 | 3.6 | 2,983 |
+| | **sac** | **0.893** | **0.720** | 4.8 | **1** | **348** |
+| **4** | dense | 0.715 | 0.290 | 1.0 | 0 | 0 |
+| | tool | 0.718 | 0.270 | 4.6 | 3.6 | 3,081 |
+| | **sac** | **0.838** | **0.530** | 5.2 | **1** | **359** |
+
+**Insights (real product docs):**
+- **SAC wins recall@10 and all_golds@10 at every hop**, and its edge over dense **grows with N**
+  (+0.03/+0.08/+0.12 recall; +0.04/+0.17/+0.24 all-golds) — the same difficulty-scaling as HotpotQA.
+- **Tool-calling *underperforms plain dense* here** (0.835 vs 0.950 at 2-hop). On a small, clean,
+  well-separated corpus the tool agent's iterative reformulation dilutes/drifts, while SAC's
+  structured decompose→fuse helps — an *even stronger* case for code-mode over tool-calling than
+  HotpotQA.
+- **Token/turn efficiency holds:** SAC ~340–360 in-tok / **1 turn** vs tool ~2,200–3,100 / 3.3–3.6
+  turns (~8× fewer tokens; the ratio is smaller than HotpotQA's 14–21× only because this corpus's
+  docs are shorter, so tool-mode's re-fed results are smaller).
+- Same single-shot caveat as §5b — deep-mode SAC would lift the 3-/4-hop all-golds further.
+
+## 10. Reproduce
 ```
 # 1. generate datasets (standard fn or the experiment driver)
 bash experiments/multi_hop_synth_queries/run.sh 1000 8 2   # and 3, 4
