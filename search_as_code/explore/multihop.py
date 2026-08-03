@@ -13,7 +13,7 @@ Method (chain-of-related-docs):
 
 Works over any :class:`~search_as_code.Session` (store.sample + keyword search + generator), so it
 runs on memory, OpenSearch, or any adapter. See ``experiments/multi_hop_synth_queries`` for a
-runnable driver and the HotpotQA/SearchUnify datasets built with it.
+runnable driver and the multi-hop datasets built with it.
 """
 
 from __future__ import annotations
