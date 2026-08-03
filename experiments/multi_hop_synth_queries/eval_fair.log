@@ -1,0 +1,40 @@
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+Loading weights:   0%|          | 0/199 [00:00<?, ?it/s]Loading weights: 100%|██████████| 199/199 [00:00<00:00, 27668.20it/s]
+[fair 2hop] 20/120 dense=r0.90/all0.80/srch1.0 tool=r0.85/all0.80/srch4.3 sac=r0.97/all0.95/srch4.2
+[fair 2hop] 40/120 dense=r0.85/all0.72/srch1.0 tool=r0.79/all0.70/srch4.7 sac=r0.95/all0.93/srch4.2
+[fair 2hop] 60/120 dense=r0.82/all0.67/srch1.0 tool=r0.82/all0.73/srch4.8 sac=r0.94/all0.90/srch4.1
+[fair 2hop] 80/120 dense=r0.83/all0.68/srch1.0 tool=r0.86/all0.78/srch4.8 sac=r0.94/all0.90/srch4.2
+[fair 2hop] 100/120 dense=r0.84/all0.71/srch1.0 tool=r0.86/all0.77/srch4.7 sac=r0.95/all0.92/srch4.2
+[fair 2hop] 120/120 dense=r0.84/all0.72/srch1.0 tool=r0.87/all0.78/srch4.7 sac=r0.95/all0.92/srch4.2
+
+===== 2-hop (n=120, budget=6) =====
+  arm    recall@10  all@10  searches  turns  in_tok  out_tok
+  dense      0.842   0.717       1.0    0.0       0        0
+  tool       0.871   0.783       4.7    5.5    4625      311
+  sac        0.954   0.917       4.2    1.0     339      145
+[fair 3hop] 20/120 dense=r0.73/all0.45/srch1.0 tool=r0.77/all0.55/srch5.5 sac=r0.82/all0.65/srch4.6
+[fair 3hop] 40/120 dense=r0.71/all0.47/srch1.0 tool=r0.79/all0.55/srch5.4 sac=r0.85/all0.70/srch4.8
+[fair 3hop] 60/120 dense=r0.71/all0.45/srch1.0 tool=r0.78/all0.53/srch5.4 sac=r0.84/all0.68/srch4.8
+[fair 3hop] 80/120 dense=r0.69/all0.41/srch1.0 tool=r0.78/all0.55/srch5.5 sac=r0.84/all0.66/srch4.9
+[fair 3hop] 100/120 dense=r0.67/all0.39/srch1.0 tool=r0.78/all0.55/srch5.5 sac=r0.82/all0.62/srch5.0
+[fair 3hop] 120/120 dense=r0.67/all0.40/srch1.0 tool=r0.78/all0.52/srch5.5 sac=r0.81/all0.61/srch4.9
+
+===== 3-hop (n=120, budget=6) =====
+  arm    recall@10  all@10  searches  turns  in_tok  out_tok
+  dense      0.669   0.400       1.0    0.0       0        0
+  tool       0.775   0.517       5.5    7.0    7743      500
+  sac        0.814   0.608       4.9    1.0     364      179
+[fair 4hop] 20/120 dense=r0.68/all0.30/srch1.0 tool=r0.71/all0.20/srch5.7 sac=r0.81/all0.40/srch5.5
+[fair 4hop] 40/120 dense=r0.56/all0.20/srch1.0 tool=r0.66/all0.17/srch5.8 sac=r0.76/all0.35/srch5.4
+[fair 4hop] 60/120 dense=r0.56/all0.23/srch1.0 tool=r0.62/all0.18/srch5.8 sac=r0.74/all0.40/srch5.3
+[fair 4hop] 80/120 dense=r0.58/all0.26/srch1.0 tool=r0.64/all0.24/srch5.5 sac=r0.75/all0.46/srch5.3
+[fair 4hop] 100/120 dense=r0.57/all0.27/srch1.0 tool=r0.64/all0.27/srch5.6 sac=r0.76/all0.44/srch5.4
+[fair 4hop] 120/120 dense=r0.57/all0.26/srch1.0 tool=r0.63/all0.26/srch5.6 sac=r0.76/all0.45/srch5.3
+
+===== 4-hop (n=120, budget=6) =====
+  arm    recall@10  all@10  searches  turns  in_tok  out_tok
+  dense      0.567   0.258       1.0    0.0       0        0
+  tool       0.629   0.258       5.6    7.4    8556      546
+  sac        0.756   0.450       5.3    1.0     378      200
+
+[fair] saved recall_fair.json

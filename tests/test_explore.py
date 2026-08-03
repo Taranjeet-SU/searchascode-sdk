@@ -238,6 +238,30 @@ def test_load_query_list_preserves_gold_set():
     assert _load_query_list([("q", "y")])[0]["gold_ids"] == ["y"]
 
 
+def test_generate_multihop(tmp_path):
+    import json as _json
+    from search_as_code.explore import generate_multihop
+
+    def gen(prompt):
+        # the generator must see N documents and be asked for a multi-doc question
+        assert "ALL" in prompt and "DOCUMENT 1" in prompt and "DOCUMENT 2" in prompt
+        return [_json.dumps({"question": "which alpha relates to which beta?",
+                             "facts": ["fact a", "fact b"]})]
+
+    s = sac.Session("memory", dim=32, generator=gen)
+    # docs that share keywords so keyword-neighbors form chains
+    s.add([{"id": f"d{i}", "text": f"alpha beta gamma topic {i} shared keywords device fpga"}
+           for i in range(30)])
+    qs = generate_multihop(s, n_docs=2, target=5, workers=2, sample_chunk=20, progress_every=0)
+    assert 1 <= len(qs) <= 5
+    for q in qs:
+        assert q["n_docs"] == 2 and len(q["gold_ids"]) == 2 and q["query"]
+    # NONE responses are skipped, not forced
+    qs2 = generate_multihop(s, n_docs=2, target=3, generator=lambda p: ["NONE"],
+                            workers=2, sample_chunk=20, progress_every=0)
+    assert qs2 == []
+
+
 def test_make_model_registry():
     from search_as_code.explore import MODEL_REGISTRY, make_model
     assert {"hist_gb", "logreg", "random_forest", "mlp"} <= set(MODEL_REGISTRY)
