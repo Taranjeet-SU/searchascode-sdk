@@ -1,0 +1,21 @@
+{
+  "n": 15,
+  "arms": {
+    "oneshot": {
+      "recall@10": 0.0267,
+      "recall@20": 0.0267,
+      "all_golds@10": 0.0,
+      "avg_searches": 8.07,
+      "avg_hops": 1.0,
+      "avg_in_tokens": 2134
+    },
+    "deep_mono": {
+      "recall@10": 0.0267,
+      "recall@20": 0.0267,
+      "all_golds@10": 0.0,
+      "avg_searches": 33.87,
+      "avg_hops": 3.07,
+      "avg_in_tokens": 5862
+    }
+  }
+}

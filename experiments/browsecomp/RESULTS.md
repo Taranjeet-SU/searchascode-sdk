@@ -110,3 +110,37 @@ over the SAME retriever, not a leaderboard entry.
 - `bc_perquery.jsonl` — per-query recall for all 3 arms.
 - `queries_decrypted.jsonl` — decrypted queries.
 - `build_index.py` / `eval.py` / `bc_common.py` — reproduction scripts.
+
+## BrowseComp — explore router + deep-SAC (completing all three datasets)
+
+HotpotQA and SU got the `explore` router-learning and a proper deep-SAC run; BrowseComp had only
+the 3-arm harness. Filling that gap (honest expectation: BrowseComp is the near-floor corpus, so
+neither should help — running it documents that consistently).
+
+### Deep-SAC (monotone) vs one-shot — n=15
+| arm | recall@10 | all_golds@10 | avg searches | avg hops | in-tok |
+|---|---|---|---|---|---|
+| oneshot (`run_sac deep=False`) | 0.027 | 0.000 | 8.1 | 1.0 | 2,134 |
+| deep_mono (`run_sac deep=True, monotone=True`) | 0.027 | 0.000 | **33.9** | 3.07 | **5,862** |
+
+Deep buys **zero** recall over one-shot on this corpus but spends ~4× the searches and ~2.7× the
+tokens — going deep just burns budget when the golds aren't reachable by the retriever. (The
+monotone fix held: deep *tied* one-shot, it didn't lose.) all_golds@10 = 0 — needing all ~3 golds in
+the top-10 out of 100,195 docs is effectively impossible.
+
+### Explore template-router — n=150, recall@10 (any-gold) gate
+all_golds@10 is hopeless here, so the router was labeled on the lenient any-gold gate (≥1 of N golds
+in top-10). Even so:
+
+- **oracle = 0.353** — 65% of queries are unsolvable by *any* of the 16 templates (a coverage
+  ceiling, not a routing gap).
+- **Winner mix differs from the synthetic data:** of 53 solved, `light_dense` is only **45%**, while
+  **`hyde_rerank` wins 21%** (11/53), with `dense_rerank`/`rephrase_rerank` also contributing.
+
+**The key cross-corpus finding:** the "light tier dominates" pattern from the synthetic multi-hop
+data does **not** hold on BrowseComp. Its real research queries have a vocabulary gap between the
+question and the doc wording, so **HyDE (hypothetical-answer embedding) genuinely wins** where a
+plain dense pass can't. Template diversity pays off *when the corpus demands it* — evidence that the
+monopoly on the synth data is partly a property of the keyword-shared query generator, not a
+universal truth. The dominant BrowseComp story remains **coverage** (65% unsolved), i.e. a
+new-primitive / stronger-retriever problem, not a routing one.
