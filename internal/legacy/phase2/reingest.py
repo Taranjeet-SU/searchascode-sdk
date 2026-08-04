@@ -11,7 +11,7 @@ import numpy as np
 
 import search_as_code as sac
 from phase1 import common
-from phase2 import embed_models
+from internal.legacy.phase2 import embed_models
 
 
 def main(key: str):

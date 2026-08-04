@@ -30,7 +30,7 @@ RECIPE = {
 
 
 def mine_exemplars(dataset):
-    from phase2 import beir
+    from internal.legacy.phase2 import beir
     rd = common.REPO / "phase2" / "runs" / f"router_data_{dataset}.json"
     if not rd.exists():
         rd = common.REPO / "phase2" / "runs" / "router_data.json"  # legacy fiqa
@@ -51,7 +51,7 @@ def mine_exemplars(dataset):
 
 
 def calibrate_judge(dataset, n):
-    from phase2 import beir
+    from internal.legacy.phase2 import beir
     queries, qr, index = beir.eval_data(dataset)
     qids = [x for x in qr if any(v > 0 for v in qr[x].values())][:n]
     em = SentenceTransformer(common.EMB_MODEL, device="cuda")

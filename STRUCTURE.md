@@ -48,7 +48,7 @@ The agentic harness the experiments drive, plus the doc rules.
 |---|---|
 | `soul.md` | **read first** — the docs "constitution": what each `.md` is for, the *standard-vs-internal* rule |
 | `phase1/` | the agent harness experiments import: `agents.run_sac`, `llm`, `common`, `sac_surface`, sandbox |
-| `phase2/`, `phase3/`, `phase4/` | earlier eval phases (BEIR/qrels, answer-gen/metrics) — **not** imported by experiments |
+| `internal/legacy/phase2/`, `internal/legacy/phase3/`, `phase4/` | earlier eval phases (BEIR/qrels, answer-gen/metrics) — **not** imported by experiments |
 | `benchmarks/`, `benchmark_changelog.md` | benchmark harness + its log |
 
 > **The one rule that governs placement** (`soul.md`): *generalizable* code/learnings → the standard

@@ -85,7 +85,7 @@ pts**) and nDCG@10, **~2.1× faster**, **~1.6× cheaper**, **2× the prompt-cach
 hit** (54% vs 27%), and **<½ the LLM calls** — because intermediate results stay
 in the sandbox instead of flowing back through context. Reproduce with
 `python -m phase1.benchmark -n 100`; full run log in
-[`benchmark_changelog.md`](benchmark_changelog.md), narrative in
+[`CHANGELOG.md`](CHANGELOG.md), narrative in
 [`phase1/RESULTS.md`](phase1/RESULTS.md).
 
 ## 🧰 Capabilities
@@ -142,7 +142,7 @@ Full map + placement rules: **[`STRUCTURE.md`](STRUCTURE.md)**. Quick orientatio
 | [`docs/CACHING.md`](docs/CACHING.md) | passing the SDK surface to the LLM efficiently |
 | [`docs/SELECTION.md`](docs/SELECTION.md) | exposing the SDK in the prompt + how the LLM picks the right primitive (55 sources) |
 | [`docs/RESEARCH.md`](docs/RESEARCH.md) | 150-source research base |
-| [`benchmark_changelog.md`](benchmark_changelog.md) | scalability / throughput / latency / token benchmarks |
+| [`CHANGELOG.md`](CHANGELOG.md) | scalability / throughput / latency / token benchmarks |
 | [`phase1/`](phase1/) | OpenSearch benchmark: base vs tool-calling vs SAC + live UI |
 
 ## 🖥️ Live trace UI

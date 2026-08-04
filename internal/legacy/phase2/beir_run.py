@@ -18,7 +18,7 @@ from sentence_transformers import SentenceTransformer
 import search_as_code as sac
 from phase1 import agents, common
 from phase1.llm import LLM
-from phase2 import beir
+from internal.legacy.phase2 import beir
 
 RUNS = Path(common.REPO) / "phase2" / "runs"
 DIM = 768

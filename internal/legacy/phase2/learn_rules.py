@@ -32,7 +32,7 @@ Choose the SINGLE most useful, generalizable rule. Prefer alias/glossary/synonym
 
 
 def mine(dataset: str, n: int, max_cases: int):
-    from phase2 import beir
+    from internal.legacy.phase2 import beir
     q, qr, index = beir.eval_data(dataset)
     qids = [x for x in qr if any(v > 0 for v in qr[x].values())][:n]
     em = SentenceTransformer(common.EMB_MODEL, device="cuda")

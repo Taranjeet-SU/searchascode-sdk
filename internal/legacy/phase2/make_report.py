@@ -1,5 +1,5 @@
-"""Auto-assemble the DETAILED, paper-ready multi-dataset report from phase2/runs/*.json.
-Backfills corpus/query/gold stats from phase2/data for older run JSONs. Renders whatever
+"""Auto-assemble the DETAILED, paper-ready multi-dataset report from internal.legacy.phase2/runs/*.json.
+Backfills corpus/query/gold stats from internal.legacy.phase2/data for older run JSONs. Renders whatever
 datasets have completed. Run any time:
 
     python -m phase2.make_report
@@ -10,7 +10,7 @@ import json
 from pathlib import Path
 
 from phase1 import common
-from phase2 import beir
+from internal.legacy.phase2 import beir
 
 RUNS = Path(common.REPO) / "phase2" / "runs"
 DATA = Path(common.REPO) / "phase2" / "data"
@@ -200,7 +200,7 @@ def main():
           "# regenerate this report from runs/*.json",
           "python -m phase2.make_report",
           "```", ""]
-    L += [f"_Auto-generated from phase2/runs/*.json — {len(rows)} datasets rendered: {', '.join(rows)}._", ""]
+    L += [f"_Auto-generated from internal.legacy.phase2/runs/*.json — {len(rows)} datasets rendered: {', '.join(rows)}._", ""]
 
     OUT.write_text("\n".join(L))
     print(f"wrote {OUT} ({len(rows)} datasets: {', '.join(rows)})")
