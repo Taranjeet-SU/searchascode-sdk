@@ -168,3 +168,64 @@ Unsolved queries (no template got all golds@10) bucketed by cheap signals:
 4. **Next:** 3-class difficulty labels (predictable) instead of the noisy 16-way; QPP-gated
    escalation; fit the router on BrowseComp to complete "all three"; validate `plan_prompt` +
    `fewshot_block` inside deep-SAC.
+
+## 9. Appendix — full template distribution (total, per-hop, and train-vs-predicted)
+
+### 9a. Total winner distribution over all 16 templates (cheapest all-golds@10 solver)
+Numbers are % of *solved* queries. HotpotQA n=600 (solved 540); SU n=450 (solved 377).
+
+| template | tier | HotpotQA % | SU % |
+|---|---|---|---|
+| light_dense | light | **61.3** | **68.7** |
+| light_keyword | light | **22.0** | **18.0** |
+| light_hybrid | light | 3.7 | 6.6 |
+| exact_partnum | medium | 3.3 | 0.8 |
+| multi_rephrase | medium | 2.2 | 0.0 |
+| rephrase_rerank | light | 1.7 | 0.8 |
+| dense_rerank | medium | 1.5 | 1.6 |
+| decompose_rerank | deep | 1.5 | 0.0 |
+| score_guarded | adaptive | 1.3 | 0.8 |
+| hyde_rerank | medium | 1.1 | 0.8 |
+| mmr_diverse | medium | 0.0 | 1.9 |
+| deep_all | deep | 0.4 | 0.0 |
+| prf_rerank, multi_rephrase*, escalating, confidence_gated_exact, deep_hyde_decompose | — | 0.0 | 0.0 |
+
+5 templates (HotpotQA) / 7 (SU) **never win a single query**. Tier rollup (% of *all* queries incl.
+unsolved): HotpotQA light 89 / medium 8 / deep 2 / adaptive 1; SU light 94 / medium 5 / adaptive 1.
+
+### 9b. Per-hop — the monopoly is a 2-hop phenomenon (tier %, all queries incl. unsolved)
+| tier | HotpotQA 2d | 3d | 4d | SU 2d | 3d | 4d |
+|---|---|---|---|---|---|---|
+| light | **98** | 80 | **62** | **95** | 80 | **61** |
+| medium | 2 | 8 | 12 | 1 | 5 | 7 |
+| deep | 0 | 2 | 4 | 0 | 0 | 0 |
+| adaptive | 0 | 0 | 3 | 1 | 1 | 1 |
+| **none (unsolved)** | 1 | 10 | **20** | 3 | 15 | **31** |
+
+`light_dense` alone falls 78%→54%→**33%** (HotpotQA) and 90%→53%→**29%** (SU) as docs increase;
+the medium/deep templates only appear at 3/4-hop, and *unsolved* explodes (all-golds@10 gets much
+harder with N).
+
+### 9c. Training labels vs model predictions — mode collapse
+The model doesn't just reflect the label skew, it **amplifies** it (5-fold out-of-fold predictions):
+
+| template | HotpotQA train% → pred% | SU train% → pred% |
+|---|---|---|
+| light_dense | 61.3 → **84.3** | 68.7 → **86.5** |
+| light_keyword | 22.0 → 14.4 | 18.0 → 9.8 |
+| light_hybrid | 3.7 → 0.2 | 6.6 → 2.4 |
+| exact_partnum | 3.3 → 0.4 | 0.8 → 0.0 |
+| multi_rephrase | 2.2 → 0.0 | 0.0 → 0.0 |
+
+The model predicts only **7 of 11** (HotpotQA) / **4 of 9** (SU) templates that ever win — it
+collapses to `light_dense`, discarding the minority winners. This is why routed-recall gains only
+0.55→0.62 (§8) instead of reaching the 0.90 oracle; the fix is class-rebalancing + discriminative
+features + fewer, orthogonal templates.
+
+### 9d. Cross-corpus contrast — BrowseComp breaks the pattern
+BrowseComp (real research queries, n=150, **any-gold** gate since all-golds@10 ≈ 0 over 100k): oracle
+only **0.353** (65% unsolvable). Of the solved: `light_dense` only **45%**, **`hyde_rerank` 21%**,
+`dense_rerank`/`rephrase_rerank` also win — HyDE bridges the query↔doc vocabulary gap the light tier
+can't. So the light-tier monopoly is partly a property of the **keyword-shared synthetic query
+generator**, not universal; different corpora reward different primitives. (Details:
+`experiments/browsecomp/RESULTS.md`.)
