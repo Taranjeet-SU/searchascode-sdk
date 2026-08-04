@@ -341,3 +341,36 @@ recall **0.852 vs 0.769** → **+0.08**.
 **Bottom line for `explore`:** its deployable value is **evidence + model recommendation as prompt
 context** for a code-mode deep agent — `fewshot_block` + `plan_prompt` — not a single routed template
 and not a static hint.
+
+## 15. Deep-SAC monotonicity — why deep lost to one-shot, and the (partial) fix
+
+**The problem (a reviewer caught it):** by construction deep-SAC's hop-1 should equal one-shot and
+deepening should only add — so deep should never lose to one-shot. It did. Root causes in
+`run_sac`: (1) deep's hop-1 used a *different* prompt (`SAC_DEEP_SYSTEM` ensemble) than one-shot's
+lean recipe; (2) it returned the single highest-**judge-confidence** hop, so a confidently-wrong
+deeper hop overwrote a correct hop-1; (3) deepening reranked a wider pool, hurting multi-gold
+coverage (§12).
+
+**The fix (`run_sac(monotone=True)`, now default):** (1) hop-0 uses the lean one-shot recipe,
+escalating to the ensemble prompt only on hop-2+; (2) candidates ACCUMULATE and the final answer is
+an **RRF-fusion of every hop** (coverage-preserving), not the best-confidence hop.
+
+Three arms, all via `run_sac` (n=15/hop, HotpotQA+SU):
+
+| | recall@10 | all_golds@10 |
+|---|---|---|
+| oneshot (`deep=False, max_retries=0`) | 0.843 | 0.600 |
+| deep_legacy (`monotone=False`) | 0.772 | **0.522** (loses on 5/6 cells) |
+| deep_mono (`monotone=True`) | 0.846 | **0.611** (parity; wins on the hard hops) |
+
+Per-cell all_golds@10 (oneshot / legacy / mono): HotpotQA 2h 0.93/0.87/0.87 · 3h 0.53/0.40/0.60 ·
+4h 0.20/0.33/0.27; SU 2h 1.00/0.87/0.87 · 3h 0.53/0.47/0.53 · 4h 0.40/0.20/0.53.
+
+**Honest verdict:** the fix closes the aggregate gap (0.522→0.611, back to one-shot parity) and wins
+on hard hops, but it is **not** monotone-by-construction — it still loses on both **2-hop** cells,
+because (a) hop-0 is a *fresh, nondeterministic* LLM call (≠ the standalone one-shot result), and
+(b) RRF fusion can dilute when the judge *wrongly* forces a hop-2 on an already-correct hop-0. So
+the real guarantee is "deep ≥ one-shot **iff** we don't deepen an already-good hop-0." **Next step:
+a confidence/QPP gate** that returns hop-0 untouched when it is strong (don't deepen easy queries) —
+exactly what the 2-hop losses point to. Cost: monotone accumulates → more searches (~10–17 vs 8) at
+similar tokens.
