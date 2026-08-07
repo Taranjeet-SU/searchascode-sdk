@@ -26,6 +26,21 @@ r.dynamic_prompt   # the pre-loop prompt (intent + recalled memory + skill catal
 | **Control loop** | `loop.py` | bounded **Plan–Execute–Verify**: try planned skills in order, verify each against a **pluggable reward**, keep the best, stop when accepted. `verify` defaults to non-empty but takes a gold check (eval) or a teacher-reranker score (prod) — a *reliable* reward instead of the unreliable self-judge. |
 | **Subagents** | `loop.py` + `harness.py` | multi-hop → `decompose_query` → one **child harness per sub-question** (`spawn`), results **RRF-fused** for coverage. Bounded recursion depth. |
 | **Hooks + dynamic prompt** | `hooks.py` | pre-loop hooks (triage → recall memory → select skills → **assemble the dynamic prompt**) and post-loop hooks (write outcome + remember the winning skill). Swap/extend hooks to customize the pipeline. |
+| **Forge (self-modification)** | `forge.py` | after a solve, the agent **creates/modifies what it learned** and persists it — `create_skill`/`create_primitive` (compose retrievers into a new named recipe), `create_subagent`, `refine_prompt` (append a learned rule to the self-modifiable supplemental prompt), `remember`. `reflect()` runs this **online** after each query; a `HarnessStore` persists skills/subagents/rules so the **next session loads and uses them**. |
+
+## Self-improvement (online, cross-session)
+
+```python
+h = sac.Harness(session, store_path="agent_store", learn=True)
+h.run("Compare the Agilex 7 transceivers and the Quartus install steps")
+#  -> solves, then FORGES: a 'learned_multihop_*' skill (decompose+dense+keyword fused),
+#     a sub-agent template, a learned rule ("decompose + FUSE, don't rerank the union"),
+#     and a memory win — all persisted to agent_store/.
+h2 = sac.Harness(session, store_path="agent_store", learn=True)   # NEW session
+#  -> loads the forged skill + learned rules; they show up in h2.skills and every dynamic_prompt.
+```
+The base prompt stays **immutable**; the forged rules are the **self-modifiable supplemental prompt**
+(`LEARNED RULES (…)`), matching the Continual-Harness prefix + refinable-state design.
 
 ## How it maps to best practices
 - **4 harness elements + Plan-Execute-Verify** — the 2026 harness-engineering consensus (loop / tools / context+memory / control).
@@ -35,12 +50,18 @@ r.dynamic_prompt   # the pre-loop prompt (intent + recalled memory + skill catal
 - **Subagents as function calls + self-modifiable memory** — the prime-agent RLM / Continual-Harness shape.
 
 ## Honest status (what's done vs the frontier)
-**Done:** triage, skills+registry, working+cross-session memory with recall, Plan-Execute-Verify loop
-with pluggable reward, subagents for multi-hop, pre/post hooks + dynamic prompt, `sac.Harness`.
-**Not yet (the continual-learning frontier — see `open_problems.md`):** (1) a *teacher-scored* reward
-wired in by default (we expose the hook; the self-judge is still the fallback); (2) *skill creation*
-(the agent synthesizing new skills from observed gaps — we ship a fixed library); (3) *online*
-refinement of the dynamic prompt during a run (we write memory post-run, not mid-loop). These are the
-prime-agent Continual-Harness capabilities our data argues for next.
+**Done:** triage; skills+registry; working+cross-session memory with recall; Plan-Execute-Verify loop
+with pluggable reward; subagents for multi-hop; pre/post hooks + dynamic prompt; **the Forge —
+online creation of skills / subagents / composed primitives / memory + a self-modifiable supplemental
+prompt, persisted and reused across sessions**; `sac.Harness(learn=True)`.
+
+**Not yet (the remaining frontier — see `open_problems.md`):**
+1. **LLM-proposed forging.** `reflect()` is rule-based (deterministic, testable); it doesn't yet ask a
+   model to *propose* novel skills/primitives from the trajectory (only promotes known-good compositions).
+2. **Composition-only primitives.** A forged "primitive" composes *existing* retrievers (a safe recipe
+   DSL) — the agent can't yet author a brand-new *atomic* retrieval algorithm as sandboxed code.
+3. **Teacher-scored reward by default.** The reward is pluggable; the default is a non-empty heuristic,
+   not a frontier-teacher score (Continual-Harness process-reward co-learning).
+4. **Mid-loop refinement.** Forging happens post-solve; not yet *during* the loop.
 
 Tests: `tests/test_agent_harness.py` (no GPU/LLM — memory backend + dependency-free embedder).

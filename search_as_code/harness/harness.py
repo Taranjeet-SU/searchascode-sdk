@@ -25,6 +25,7 @@ from __future__ import annotations
 from typing import Optional
 
 from .context import HarnessContext, HarnessResult
+from .forge import HarnessForge, HarnessStore, reflect
 from .hooks import DEFAULT_POST_HOOKS, DEFAULT_PRE_HOOKS
 from .loop import decompose_query, default_verify, fuse_ids, plan_execute_verify
 from .memory import AgentMemory
@@ -39,11 +40,16 @@ class Harness:
                  skills: Optional[SkillRegistry] = None, generator=None, verify=None,
                  pre_hooks=None, post_hooks=None, max_steps: int = 3, base_prompt: str = BASE_PROMPT,
                  use_subagents: bool = True, memory_path: Optional[str] = None,
-                 _depth: int = 0, max_depth: int = 1):
+                 store: Optional[HarnessStore] = None, store_path: Optional[str] = None,
+                 learn: bool = False, _depth: int = 0, max_depth: int = 1):
         self.session = session
         emb = getattr(session, "embedder", None) if session is not None else None
         self.memory = memory or AgentMemory(path=memory_path, embedder=emb)
         self.skills = skills or SkillRegistry(embedder=emb)
+        # self-modifiable state: load forged skills/subagents/rules + register them (usable online)
+        self.store = store if store is not None else HarnessStore(store_path)
+        self.forge = HarnessForge(self.store, self.skills, self.memory)
+        self.learn = learn
         self.generator = generator or getattr(session, "generator", None)
         self.verify = verify or default_verify
         self.pre_hooks = pre_hooks if pre_hooks is not None else DEFAULT_PRE_HOOKS
@@ -58,7 +64,9 @@ class Harness:
     def run(self, query: str, top_k: int = 10) -> HarnessResult:
         ctx = HarnessContext(query=query, session=self.session, memory=self.memory,
                              skills=self.skills, generator=self.generator, top_k=top_k)
-        ctx.scratch["base_prompt"] = self.base_prompt
+        # immutable base + self-modifiable supplemental prompt (learned rules) — Continual-Harness style
+        learn_block = self.store.learnings_block() if self.store else ""
+        ctx.scratch["base_prompt"] = self.base_prompt + (("\n\n" + learn_block) if learn_block else "")
         for hook in self.pre_hooks:          # PRE: triage → recall memory → select skills → prompt
             hook(ctx)
         dynamic_prompt = ctx.scratch.get("dynamic_prompt", "")
@@ -74,6 +82,8 @@ class Harness:
         ctx.result = result
         for hook in self.post_hooks:         # POST: write memory / refine
             hook(ctx)
+        if self.learn:                       # ONLINE self-improvement: forge skills/subagents/rules
+            result.meta["forged"] = reflect(ctx, result, self.forge)
         return result
 
     def child(self) -> "Harness":
@@ -81,6 +91,7 @@ class Harness:
         return Harness(self.session, memory=self.memory, skills=self.skills, generator=self.generator,
                        verify=self.verify, pre_hooks=self.pre_hooks, post_hooks=[], max_steps=self.max_steps,
                        base_prompt=self.base_prompt, use_subagents=self.use_subagents,
+                       store=self.store, learn=False,       # subagents reuse forged skills; only parent learns
                        _depth=self._depth + 1, max_depth=self.max_depth)
 
     def spawn(self, task: str, top_k: int = 10) -> HarnessResult:

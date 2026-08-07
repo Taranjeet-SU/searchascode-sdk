@@ -4,7 +4,8 @@ from __future__ import annotations
 
 import search_as_code as sac
 from search_as_code.harness import (
-    AgentMemory, Harness, SkillRegistry, triage, extract_codes, decompose_query, fuse_ids,
+    AgentMemory, Harness, HarnessForge, HarnessStore, SkillRegistry,
+    triage, extract_codes, decompose_query, fuse_ids,
 )
 
 
@@ -131,3 +132,40 @@ def test_harness_cross_session_memory(tmp_path):
     assert h2.memory.stats()["longterm"] >= 1
     r = h2.run("AGFC07 error status", top_k=5)
     assert "RELEVANT MEMORY" in r.dynamic_prompt               # recalled the persisted win
+
+
+# ---- self-improvement / forge (the paper's "second iteration") ------------
+def test_forge_creates_and_registers_skill():
+    reg = SkillRegistry()
+    store = HarnessStore()
+    forge = HarnessForge(store, reg)
+    name = forge.create_skill("dense_kw_fused", "corpus with vocab gaps",
+                              retrievers=["dense", "keyword"], combine="fuse")
+    assert name in reg.names()                                 # usable online, same run
+    s = _session()
+    ids = reg.get("dense_kw_fused").run(s, "Agilex 7 transceivers", top_k=5)
+    assert isinstance(ids, list) and ids                       # forged skill actually runs (composes)
+
+
+def test_forge_refine_prompt_and_persist(tmp_path):
+    store = HarnessStore(path=str(tmp_path / "hstore"))
+    forge = HarnessForge(store, SkillRegistry())
+    forge.refine_prompt("For error-code queries, use exact_lookup first.")
+    forge.create_skill("learned_x", "x queries", retrievers=["dense", "hyde"])
+    store2 = HarnessStore(path=str(tmp_path / "hstore"))        # reload = cross-session
+    assert store2.learnings and "exact_lookup" in store2.learnings[0]
+    assert "learned_x" in store2.skills
+
+
+def test_harness_online_learning_end_to_end(tmp_path):
+    """Solve → forge a skill + learned rule → persist → NEW session loads and uses it (online)."""
+    sp = str(tmp_path / "store")
+    h = Harness(_session(), store_path=sp, learn=True)
+    r = h.run("Compare the Agilex 7 transceivers and the Quartus install steps", top_k=6)
+    assert r.meta.get("forged")                                # created artifacts from the solve
+    assert any(n.startswith("learned_multihop") for n in h.store.skills)
+    # a fresh harness (new session) loads the forged skill + learned rule and injects the rule
+    h2 = Harness(_session(), store_path=sp, learn=True)
+    assert any(n.startswith("learned_multihop") for n in h2.skills.names())   # forged skill online
+    r2 = h2.run("Compare the transceivers and install steps", top_k=6)
+    assert "LEARNED RULES" in r2.dynamic_prompt                # self-modifiable prompt in effect

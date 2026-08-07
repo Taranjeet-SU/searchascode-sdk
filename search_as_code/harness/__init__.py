@@ -6,6 +6,7 @@ cross-session memory + dynamic prompt + subagents + pluggable reward. See ``harn
 from __future__ import annotations
 
 from .context import HarnessContext, HarnessResult, StepResult
+from .forge import HarnessForge, HarnessStore, LearnedSkill, LearnedSubagent, reflect
 from .harness import BASE_PROMPT, Harness
 from .hooks import DEFAULT_POST_HOOKS, DEFAULT_PRE_HOOKS
 from .loop import decompose_query, default_verify, fuse_ids, plan_execute_verify
@@ -21,4 +22,5 @@ __all__ = [
     "HarnessContext", "HarnessResult", "StepResult",
     "plan_execute_verify", "decompose_query", "fuse_ids", "default_verify",
     "DEFAULT_PRE_HOOKS", "DEFAULT_POST_HOOKS",
+    "HarnessForge", "HarnessStore", "LearnedSkill", "LearnedSubagent", "reflect",
 ]
