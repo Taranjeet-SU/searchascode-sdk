@@ -106,6 +106,11 @@ class Harness:
             r = self.spawn(sub, top_k=top_k)
             pools.append(r.ids)
             sub_traces.append({"query": sub, "ids": r.ids, "skill": r.skill})
+            # cross-hop memory: write each sub-question's FINDING into the shared memory so the NEXT
+            # subagent (and later hops) recall it — not just the query text.
+            if self.memory is not None:
+                self.memory.observe(f"sub-question \"{sub[:70]}\" -> found {r.ids[:3]} via {r.skill}",
+                                    kind="finding")
         pools.append(self._run_loop(ctx, top_k).ids)          # also the full question
         fused = fuse_ids(pools)[:top_k]
         return HarnessResult(ids=fused, skill="subagents", score=1.0 if fused else 0.0,

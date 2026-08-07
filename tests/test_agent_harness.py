@@ -112,3 +112,22 @@ def test_harness_pluggable_verify_reward():
     h = Harness(s, verify=verify, max_steps=3)
     r = h.run("Agilex 7 variant 1 data-center acceleration", top_k=5)
     assert isinstance(r.score, float) and r.steps
+
+
+def test_harness_cross_hop_findings():
+    """Subagents share one memory; each writes its FINDING so later hops can recall it."""
+    h = Harness(_session())
+    h.run("Compare the Agilex 7 transceivers and the Quartus install steps", top_k=6)
+    findings = [w for w in h.memory.working if w.kind == "finding"]
+    assert len(findings) >= 2                                  # every subagent wrote a finding
+    assert h.memory.working_context(kinds={"finding"})         # available to the next hop's prompt
+
+
+def test_harness_cross_session_memory(tmp_path):
+    """Long-term memory persists across Harness instances (sessions) via memory_path."""
+    path = str(tmp_path / "hmem.jsonl")
+    Harness(_session(), memory_path=path).run("Device AGFC03 error transceiver count", top_k=5)
+    h2 = Harness(_session(), memory_path=path)                 # fresh 'session', same store
+    assert h2.memory.stats()["longterm"] >= 1
+    r = h2.run("AGFC07 error status", top_k=5)
+    assert "RELEVANT MEMORY" in r.dynamic_prompt               # recalled the persisted win

@@ -26,6 +26,10 @@ def pre_recall_memory(ctx) -> None:
     if ctx.recalled:
         lines = "\n".join(f"- {m.content}" for m in ctx.recalled)
         ctx.prompt_parts.append(f"RELEVANT MEMORY (what worked on similar queries):\n{lines}")
+    # cross-hop: surface in-session findings from earlier hops/subagents into this run's prompt
+    findings = ctx.memory.working_context(max_chars=600, kinds={"finding", "outcome"})
+    if findings:
+        ctx.prompt_parts.append(f"IN-SESSION FINDINGS (earlier hops/subagents):\n{findings}")
     ctx.memory.observe(ctx.query, kind="query")
 
 
