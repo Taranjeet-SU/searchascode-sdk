@@ -39,6 +39,7 @@ from .explore import (
     TemplateRouter,
     explore,
 )
+from .harness import AgentMemory, Harness, SkillRegistry, triage
 from .primitives import (
     abstain,
     auto_filter,
@@ -81,6 +82,7 @@ __all__ = [
     "Session", "route", "Sandbox", "LocalExecutor", "ExecResult",
     # exploration / onboarding
     "explore", "ProfilePack", "Explorer", "TemplateRouter", "TEMPLATE_NAMES", "TEMPLATE_DOCS",
+    "Harness", "AgentMemory", "SkillRegistry", "triage",
     # primitives
     "fan_out", "fuse", "dedup", "rerank", "freshness", "extract",
     "mmr", "expand", "decompose", "rephrase", "rrf", "topics", "auto_filter", "score_cutoff",

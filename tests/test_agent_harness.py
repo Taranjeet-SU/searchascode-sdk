@@ -1,0 +1,114 @@
+"""Tests for the agentic harness (no GPU / no LLM — memory backend + dependency-free embedder)."""
+
+from __future__ import annotations
+
+import search_as_code as sac
+from search_as_code.harness import (
+    AgentMemory, Harness, SkillRegistry, triage, extract_codes, decompose_query, fuse_ids,
+)
+
+
+def _session():
+    s = sac.Session("memory", dim=32)
+    s.add([{"id": f"p{i}", "text": f"The Agilex 7 FPGA family supports high-bandwidth designs. "
+            f"Variant {i} targets data-center acceleration."} for i in range(8)]
+          + [{"id": f"c{i}", "text": f"Device=AGFC0{i} | LEs={100000+i} | Transceivers=96 | PCIe=Gen5"}
+             for i in range(8)]
+          + [{"id": f"l{i}", "text": f"Install Quartus step {i}: open project, compile design."}
+             for i in range(8)])
+    return s
+
+
+# ---- triage ---------------------------------------------------------------
+def test_triage_error_code():
+    it = triage("Device AGFC03 shows error, what is the transceiver count")
+    assert it.kind == "error_code" and it.recommended_skill == "exact_lookup"
+    assert "AGFC03" in extract_codes("Device AGFC03 transceiver count")
+
+
+def test_triage_definition_and_multihop():
+    assert triage("What is the Agilex 7 FPGA").kind == "definition"
+    it = triage("Compare the Agilex 7 transceivers and the Quartus install steps")
+    assert it.kind == "multi_hop" and it.depth == "multi" and it.recommended_skill == "decompose_fuse"
+    assert triage("who is the lead architect").kind == "entity_factoid"
+
+
+def test_decompose_and_fuse():
+    subs = decompose_query("the Agilex 7 transceivers and the Quartus install steps")
+    assert len(subs) >= 2
+    assert fuse_ids([["a", "b"], ["b", "c"]])[0] == "b"   # b appears in both -> ranked first
+
+
+# ---- memory ---------------------------------------------------------------
+def test_memory_in_session_and_cross_session(tmp_path):
+    m = AgentMemory(path=str(tmp_path / "mem.jsonl"))
+    m.observe("query: transceiver count", kind="query")
+    m.remember("skill 'exact_lookup' worked for AGFC codes", kind="skill_win", skill="exact_lookup")
+    assert m.stats()["longterm"] == 1
+    hits = m.recall("AGFC transceiver", k=3)
+    assert hits and "exact_lookup" in hits[0].content
+    m2 = AgentMemory(path=str(tmp_path / "mem.jsonl"))     # cross-session: reload from disk
+    assert m2.stats()["longterm"] == 1 and m2.recall("AGFC", k=1)
+
+
+def test_memory_flush_promotes_working():
+    m = AgentMemory()
+    m.observe("outcome: dense_lookup got 5 hits", kind="outcome")
+    m.observe("just a query", kind="query")
+    n = m.flush()
+    assert n == 1 and m.stats()["longterm"] == 1
+
+
+# ---- skills ---------------------------------------------------------------
+def test_skill_registry_progressive_disclosure_and_find():
+    reg = SkillRegistry()
+    assert {"dense_lookup", "decompose_fuse", "exact_lookup", "hyde_bridge"} <= set(reg.names())
+    summ = reg.summaries()
+    assert "decompose_fuse" in summ and "cost" in summ            # short catalog, not full detail
+    found = reg.find("multi-hop question needing several documents", k=2)
+    assert any(s.name == "decompose_fuse" for s in found)
+
+
+def test_skill_runs_over_session():
+    s = _session()
+    reg = SkillRegistry()
+    ids = reg.get("dense_lookup").run(s, "Agilex 7 transceivers", top_k=5)
+    assert isinstance(ids, list) and 0 < len(ids) <= 5
+
+
+# ---- harness (end-to-end) -------------------------------------------------
+def test_harness_single_query():
+    h = Harness(_session())
+    r = h.run("What is the Agilex 7 FPGA", top_k=5)
+    assert r.ids and r.intent == "definition"
+    assert r.skill in h.skills.names()
+    assert r.dynamic_prompt and "AVAILABLE SKILLS" in r.dynamic_prompt   # dynamic prompt assembled
+    assert r.steps                                                       # control-loop trace
+
+
+def test_harness_multihop_spawns_subagents():
+    h = Harness(_session())
+    r = h.run("Compare the Agilex 7 transceivers and the Quartus install steps", top_k=6)
+    assert r.intent == "multi_hop" and r.skill == "subagents"
+    assert len(r.subagents) >= 2 and all("ids" in sa for sa in r.subagents)  # real subagents ran
+    assert r.ids                                                             # fused result
+
+
+def test_harness_writes_memory_and_recalls_next_time():
+    s = _session()
+    h = Harness(s)
+    h.run("Device AGFC03 error transceiver count", top_k=5)     # error_code -> should log a skill_win
+    assert h.memory.stats()["longterm"] >= 1
+    r2 = h.run("AGFC05 error status", top_k=5)                  # similar query recalls prior win
+    assert "RELEVANT MEMORY" in r2.dynamic_prompt
+
+
+def test_harness_pluggable_verify_reward():
+    s = _session()
+    gold = {"p1"}
+    def verify(ctx, ids):                       # gold-based reward instead of the self-judge
+        hit = len(gold & set(ids[:10])) / len(gold)
+        return (hit >= 1.0, hit)
+    h = Harness(s, verify=verify, max_steps=3)
+    r = h.run("Agilex 7 variant 1 data-center acceleration", top_k=5)
+    assert isinstance(r.score, float) and r.steps
