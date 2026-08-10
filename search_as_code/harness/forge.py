@@ -20,6 +20,7 @@ or LLM-proposed — it decides what to forge from the trajectory.
 from __future__ import annotations
 
 import json
+import re
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
 from typing import Optional
@@ -64,6 +65,57 @@ class LearnedSkill:
                      description=f"forged: {combine}({'+'.join(retrievers)})")
 
 
+def _safe_globals():
+    """Restricted globals for executing an LLM-authored primitive (retrieval logic only)."""
+    import importlib
+    import re as _re
+    import search_as_code as sac
+    from search_as_code import primitives as P
+    _bi = __builtins__ if isinstance(__builtins__, dict) else vars(__builtins__)
+    allowed = {k: _bi[k] for k in ("len", "range", "list", "dict", "set", "tuple", "sorted", "min",
+               "max", "enumerate", "zip", "str", "int", "float", "bool", "sum", "any", "all", "map",
+               "filter", "reversed", "abs", "round", "isinstance", "getattr", "hasattr", "print")
+               if k in _bi}
+    _mods = {"re", "math", "collections", "itertools", "statistics", "json"}
+
+    def _imp(name, *a, **k):
+        if name.split(".")[0] not in _mods:
+            raise ImportError(f"import '{name}' not allowed in a primitive")
+        return importlib.import_module(name)
+    allowed["__import__"] = _imp
+    return {"__builtins__": allowed, "sac": sac, "P": P, "fuse": P.fuse, "re": _re}
+
+
+@dataclass
+class CodePrimitive:
+    """A genuinely NEW retrieval primitive the LLM authored as code (not a composition of existing
+    retrievers). Persisted as source; executed in a restricted sandbox as a registered skill."""
+    name: str
+    when_to_use: str
+    code: str                           # defines `def run(session, query, top_k): -> ids | ResultSet`
+    origin: str = "llm_code"
+    tags: list = field(default_factory=lambda: ["learned", "code"])
+
+    def to_skill(self, _registry=None) -> "Skill":
+        ns: dict = {}
+        exec(compile(self.code, f"<primitive:{self.name}>", "exec"), _safe_globals(), ns)  # noqa: S102
+        fn = ns.get("run")
+        if not callable(fn):
+            raise ValueError(f"authored primitive '{self.name}' has no run(session, query, top_k)")
+
+        def run(session, query, top_k=10, **_):
+            try:
+                out = fn(session, query, top_k)
+            except Exception:
+                return []
+            if out is None:
+                return []
+            return out.ids()[:top_k] if hasattr(out, "ids") else [str(x) for x in out][:top_k]
+
+        return Skill(self.name, self.when_to_use, run, tags=self.tags, cost=2,
+                     description="LLM-authored code primitive")
+
+
 @dataclass
 class LearnedSubagent:
     name: str
@@ -80,6 +132,7 @@ class HarnessStore:
         self.path = Path(path) if path else None
         self.skills: dict[str, LearnedSkill] = {}
         self.subagents: dict[str, LearnedSubagent] = {}
+        self.code_primitives: dict[str, CodePrimitive] = {}
         self.learnings: list[str] = []
         if self.path and self.path.exists():
             self.load()
@@ -94,6 +147,10 @@ class HarnessStore:
             for ln in (p / "subagents.jsonl").read_text().splitlines():
                 if ln.strip():
                     d = json.loads(ln); self.subagents[d["name"]] = LearnedSubagent(**d)
+        if (p / "code_primitives.jsonl").exists():
+            for ln in (p / "code_primitives.jsonl").read_text().splitlines():
+                if ln.strip():
+                    d = json.loads(ln); self.code_primitives[d["name"]] = CodePrimitive(**d)
         if (p / "learnings.md").exists():
             self.learnings = [x[2:].strip() for x in (p / "learnings.md").read_text().splitlines()
                               if x.strip().startswith("- ")]
@@ -108,6 +165,9 @@ class HarnessStore:
         with (self.path / "subagents.jsonl").open("w") as f:
             for s in self.subagents.values():
                 f.write(json.dumps(asdict(s)) + "\n")
+        with (self.path / "code_primitives.jsonl").open("w") as f:
+            for c in self.code_primitives.values():
+                f.write(json.dumps(asdict(c)) + "\n")
         (self.path / "learnings.md").write_text(
             "# Learned rules (self-modifiable supplemental prompt)\n\n"
             + "\n".join(f"- {r}" for r in self.learnings))
@@ -126,6 +186,11 @@ class HarnessForge:
         self.memory = memory
         for ls in store.skills.values():            # register any previously-forged skills
             self.registry.register(ls.to_skill(self.registry))
+        for cp in store.code_primitives.values():   # register previously-authored code primitives
+            try:
+                self.registry.register(cp.to_skill())
+            except Exception:
+                pass
 
     def create_skill(self, name: str, when_to_use: str, retrievers, combine: str = "fuse",
                      cost: int = 1, origin: str = "forged") -> str:
@@ -138,6 +203,15 @@ class HarnessForge:
 
     # a forged "primitive" is a composed reusable retrieval recipe — same mechanism as a skill
     create_primitive = create_skill
+
+    def create_code_primitive(self, name: str, when_to_use: str, code: str) -> str:
+        """TRUE primitive creation: register + persist an LLM-AUTHORED retrieval function (arbitrary
+        code, not a composition). Compiles + smoke-instantiates before accepting."""
+        cp = CodePrimitive(name=name, when_to_use=when_to_use, code=code)
+        self.registry.register(cp.to_skill())        # raises if code doesn't compile / lacks run()
+        self.store.code_primitives[name] = cp
+        self.store.save()
+        return name
 
     def create_subagent(self, name: str, when_to_use: str, plan, base_prompt: str = "") -> str:
         self.store.subagents[name] = LearnedSubagent(name=name, when_to_use=when_to_use,
@@ -154,6 +228,46 @@ class HarnessForge:
     def remember(self, fact: str, **meta):
         if self.memory is not None:
             return self.memory.remember(fact, **meta)
+
+
+def author_code_primitive(gen, patterns: str, forge, session, test_query: str, gold,
+                          name: str = "llm_authored", tries: int = 3, log=print) -> tuple:
+    """TRUE primitive creation with validate-and-retry: the LLM AUTHORS a retrieval function, we run
+    it on a held query, and if it errors / returns nothing we feed the failure back and re-author —
+    accepting only a primitive that actually retrieves. Returns (code, accepted)."""
+    goldset = set(map(str, gold)); err = ""; code = ""
+    base = ("Write a reusable Python retrieval primitive. Signature EXACTLY: def run(session, query, top_k):\n"
+            "Available: session.search(q, top_k=k, mode='hybrid'|'dense'|'keyword'); "
+            "session.hyde_search(q, top_k=k) (USE for generically-DESCRIBED entities); "
+            "session.store.query_fielded(q, ['title','text'], top_k=k) (named entities); "
+            "fuse([resultsets]) -> a fused ResultSet (RRF). Decompose the query (split on ' and ' / commas), "
+            "pick the right mode per sub-part, ALWAYS include a hyde pass for coverage, fuse everything, and "
+            "return the fused ids (or the ResultSet). Return ONLY a ```python block```.\n\nWINNING PATTERNS:\n" + patterns)
+    for i in range(tries):
+        prompt = base + (f"\n\nYOUR PREVIOUS CODE FAILED — {err}\nReturn corrected code." if err else "")
+        raw = gen.complete(prompt) if hasattr(gen, "complete") else (gen(prompt)[0] if isinstance(gen(prompt), list) else str(gen(prompt)))
+        m = re.search(r"```(?:python)?\s*(.*?)```", raw, re.DOTALL)
+        code = (m.group(1) if m else raw).strip()
+        try:
+            ns: dict = {}
+            exec(compile(code, f"<primitive:{name}>", "exec"), _safe_globals(), ns)  # noqa: S102
+            fn = ns.get("run")
+            if not callable(fn):
+                raise ValueError("no run(session, query, top_k) defined")
+            out = fn(session, test_query, 10)                # real exceptions surface here (not swallowed)
+            ids = out.ids()[:10] if hasattr(out, "ids") else [str(x) for x in (out or [])][:10]
+            found = len(goldset & set(map(str, ids)))
+            log(f"  attempt {i+1}: {len(ids)} ids, {found}/{len(goldset)} golds")
+            if ids and found > 0:
+                forge.create_code_primitive(name, "LLM-authored, validated multi-hop primitive", code)
+                return code, True
+            err = (f"it returned {len(ids)} ids and found {found}/{len(goldset)} golds. Actually CALL the "
+                   "retrieval functions (session.search / session.hyde_search / session.store.query_fielded), "
+                   "include a hyde pass, fuse the ResultSets, and return the fused ids.")
+        except Exception as e:  # noqa: BLE001
+            err = f"{type(e).__name__}: {e}"
+            log(f"  attempt {i+1}: error — {err[:110]}")
+    return code, False
 
 
 def reflect(ctx, result, forge: HarnessForge, threshold: float = 0.5) -> list:

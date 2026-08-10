@@ -1,0 +1,2439 @@
+Loading weights:   0%|          | 0/199 [00:00<?, ?it/s]Loading weights: 100%|██████████| 199/199 [00:00<00:00, 24754.33it/s]
+################  FIXED (base) PROMPT — same for every query  ################
+You are a retrieval agent solving a MULTI-HOP question that needs SEVERAL different documents. Decompose it into sub-facts and, for EACH, pick the best OpenSearch query: mode 'hybrid' (balanced), 'hyde' (when the entity is only DESCRIBED, not named — hallucinate the answer doc), 'fielded' (a named entity → title+text match), 'keyword', or 'dense'. Return ONLY JSON: {"reason":"...","plan":[{"mode":"hyde","query":"..."}, ...]}.
+
+################  SKILLS available at start  ################
+dense_lookup (cost 0): default semantic search for a single focused question
+definition_lookup (cost 0): a 'what is / define X' question with one clear answer
+hybrid_search (cost 0): broad/open-ended query; balance semantics + terms
+keyword_search (cost 0): rare exact tokens where embeddings blur
+exact_lookup (cost 1): error/status codes, part numbers, IDs — exact match beats semantics
+decompose_fuse (cost 3): MULTI-HOP: needs several docs; split into sub-facts, retrieve each, fuse
+decompose_fielded (cost 3): MULTI-HOP over named entities: split into sub-facts, fielded title+text match + dense per sub, fuse
+arsenal_single (cost 2): hard single lookup: hybrid + HyDE + fielded, fused (HyDE for generic descriptions)
+decompose_arsenal (cost 3): MULTI-HOP (best): decompose, then hybrid+HyDE+fielded per sub-fact, RRF-fused
+hyde_bridge (cost 2): vocabulary gap: the query wording differs from the corpus wording
+prf_expand (cost 1): under-specified query; expand from the corpus's own top hits (no LLM)
+rerank_precise (cost 2): single best answer needed; rerank a wide pool for precision
+diversify (cost 1): broad query needing coverage of distinct facets, not near-duplicates
+entity_attribute_retrieval (cost 1): Use when the query involves retrieving entities with specific attributes or heritage, e.g., 'actor part Fijian heritage', 'Japanese politician Nagoya graduated'.
+entity_relation_connection (cost 1): Use when the query asks for connections or relationships between named entities, e.g., 'connection between a Major League Baseball shortstop named', 'connection between the title of Queen's fourth studio album'.
+event_comparison_retrieval (cost 1): Use when the query involves comparing or relating events, e.g., 'How many years apart were the Seattle Pop Festival and the Aramaic Music Festival'.
+novel_title_author_retrieval (cost 1): Use when the query requests titles and authors of novels containing specific phrases or keywords, e.g., 'titles and authors of novels that include the phrase Crown'.
+fielded_family_species_retrieval (cost 1): When the question asks for species belonging to specific biological families
+fielded_location_entity_retrieval (cost 1): When the question involves entities (e.g., mandal headquarters, villages) located within specific geographic regions or administrative divisions
+hybrid_biographical_filtering (cost 1): When the question involves people filtered by birth year ranges, number of works, or titles held
+fielded_professional_role_retrieval (cost 1): When the question involves people with specific professions, roles, or attributes (e.g., actress born in year, producer born in year)
+
+
+########################  QUERY 1/10  (4-hop)  ########################
+
+STARTING QUERY: Which actor with part Fijian heritage who starred in an award-winning Australian series shares a nationality with the publisher of a broadsheet newspaper edited by Paul Whittaker, and how do the genres and origins of a 2014 Canadian horror comedy-mystery film and a 1922 American silent Western film differ?
+GOLD (oracle, scoring only): ['50988285(Lasarus Ratuere)', '396952(The Australian)', '51315281(The Editor (film))', '35864358(The Cowboy and the Lady (1922 film))']
+
+--- LEARNING FROM PREVIOUS QUERIES (recalled from long-term memory) ---
+  (none yet — first queries)
+
+--- HOP 1 ---
+DYNAMIC PROMPT (fixed base + memory + findings + skills):
+  You are a retrieval agent solving a MULTI-HOP question that needs SEVERAL different documents. Decompose it into sub-facts and, for EACH, pick the best OpenSearch query: mode 'hybrid' (balanced), 'hyde' (when the entity is only DESCRIBED, not named — hallucinate the answer doc), 'fielded' (a named entity → title+text match), 'keyword', or 'dense'. Return ONLY JSON: {"reason":"...","plan":[{"mode":"hyde","query":"..."}, ...]}.
+  
+  MEMORY (wins from earlier queries):
+  (none)
+  
+  IN-SESSION FINDINGS (earlier hops of THIS query):
+  (none)
+  
+  SKILLS:
+  dense_lookup (cost 0): default semantic search for a single focused question
+  definition_lookup (cost 0): a 'what is / define X' question with one clear answer
+  hybrid_search (cost 0): broad/open-ended query; balance semantics + terms
+  keyword_search (cost 0): rare exact tokens where embeddings blur
+  exact_lookup (cost 1): error/status …
+LLM APPROACH: reason=The question requires multiple hops: (1) Identify the actor with part Fijian heritage who starred in an award-winning Au
+   query: (fielded) "actor part Fijian heritage starred in award-winning Australian series"
+   query: (fielded) "Paul Whittaker editor broadsheet newspaper publisher"
+   query: (keyword) "nationality of publisher of broadsheet newspaper edited by Paul Whitta"
+   query: (fielded) "2014 Canadian horror comedy-mystery film"
+   query: (fielded) "1922 American silent Western film"
+   query: (hybrid) "compare genres and origins of 2014 Canadian horror comedy-mystery film"
+EXECUTED → per-gold attribution:
+   gold 50988285 (Lasarus Ratuere): (fielded) "actor part Fijian heritage starred in award-winnin" @rank1
+   gold 396952 (The Australian): (fielded) "Paul Whittaker editor broadsheet newspaper publish" @rank1
+   gold 51315281 (The Editor (film)): (fielded) "2014 Canadian horror comedy-mystery film" @rank1
+   gold 35864358 (The Cowboy and the Lady (1922 film): (fielded) "1922 American silent Western film" @rank3
+IN-HOP MEMORY WRITE: hop1 found ['35864358', '396952', '50988285', '51315281']; fused 3/4 golds in top-10
+
+--- HOP 2 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop1: found ['35864358', '396952', '50988285', '51315281']; fused all-golds=3/4
+LLM APPROACH: reason=The question requires multiple hops: (1) Identify the actor with part Fijian heritage who starred in an award-winning Au
+   query: (entity_attribute_retrieval) "actor part Fijian heritage starred in award-winning Australian series"
+   query: (fielded_professional_role_retrieval) "Paul Whittaker editor broadsheet newspaper publisher nationality"
+   query: (keyword) "nationality shared actor publisher broadsheet Paul Whittaker"
+   query: (fielded) "2014 Canadian horror comedy-mystery film"
+   query: (fielded) "1922 American silent Western film"
+   query: (hybrid) "compare genres origins 2014 Canadian horror comedy-mystery film and 19"
+EXECUTED → per-gold attribution:
+   gold 50988285 (Lasarus Ratuere): (fielded) "actor part Fijian heritage starred in award-winnin" @rank1
+   gold 396952 (The Australian): (fielded) "Paul Whittaker editor broadsheet newspaper publish" @rank1
+   gold 51315281 (The Editor (film)): (fielded) "2014 Canadian horror comedy-mystery film" @rank1
+   gold 35864358 (The Cowboy and the Lady (1922 film): (fielded) "1922 American silent Western film" @rank3
+IN-HOP MEMORY WRITE: hop2 found []; fused 3/4 golds in top-10
+
+--- HOP 3 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop1: found ['35864358', '396952', '50988285', '51315281']; fused all-golds=3/4
+- [finding] hop2: found []; fused all-golds=3/4
+LLM APPROACH: reason=The question requires multiple hops: (1) Identify the actor with part Fijian heritage who starred in an award-winning Au
+   query: (fielded) "actor part Fijian heritage starred in award-winning Australian series"
+   query: (fielded) "Paul Whittaker editor broadsheet newspaper publisher"
+   query: (keyword) "nationality shared by actor with Fijian heritage and newspaper publish"
+   query: (fielded) "2014 Canadian horror comedy-mystery film"
+   query: (fielded) "1922 American silent Western film"
+   query: (hybrid) "compare genres and origins of 2014 Canadian horror comedy-mystery film"
+EXECUTED → per-gold attribution:
+   gold 50988285 (Lasarus Ratuere): (fielded) "actor part Fijian heritage starred in award-winnin" @rank1
+   gold 396952 (The Australian): (fielded) "Paul Whittaker editor broadsheet newspaper publish" @rank1
+   gold 51315281 (The Editor (film)): (fielded) "2014 Canadian horror comedy-mystery film" @rank1
+   gold 35864358 (The Cowboy and the Lady (1922 film): (fielded) "1922 American silent Western film" @rank3
+IN-HOP MEMORY WRITE: hop3 found []; fused 2/4 golds in top-10
+
+--- HOP 4 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop1: found ['35864358', '396952', '50988285', '51315281']; fused all-golds=3/4
+- [finding] hop2: found []; fused all-golds=3/4
+- [finding] hop3: found []; fused all-golds=2/4
+LLM APPROACH: reason=The question requires multiple hops: (1) Identify the actor with part Fijian heritage who starred in an award-winning Au
+   query: (fielded) "actor part Fijian heritage starred in award-winning Australian series"
+   query: (fielded) "Paul Whittaker editor broadsheet newspaper publisher"
+   query: (keyword) "nationality of publisher broadsheet newspaper edited by Paul Whittaker"
+   query: (fielded) "2014 Canadian horror comedy-mystery film"
+   query: (fielded) "1922 American silent Western film"
+   query: (hybrid) "compare genres and origins of 2014 Canadian horror comedy-mystery film"
+EXECUTED → per-gold attribution:
+   gold 50988285 (Lasarus Ratuere): (fielded) "actor part Fijian heritage starred in award-winnin" @rank1
+   gold 396952 (The Australian): (fielded) "Paul Whittaker editor broadsheet newspaper publish" @rank1
+   gold 51315281 (The Editor (film)): (fielded) "2014 Canadian horror comedy-mystery film" @rank1
+   gold 35864358 (The Cowboy and the Lady (1922 film): (fielded) "1922 American silent Western film" @rank3
+IN-HOP MEMORY WRITE: hop4 found []; fused 3/4 golds in top-10
+
+--- HOP 5 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop1: found ['35864358', '396952', '50988285', '51315281']; fused all-golds=3/4
+- [finding] hop2: found []; fused all-golds=3/4
+- [finding] hop3: found []; fused all-golds=2/4
+- [finding] hop4: found []; fused all-golds=3/4
+LLM APPROACH: reason=The question requires multiple hops: (1) Identify the actor with part Fijian heritage who starred in an award-winning Au
+   query: (fielded) "actor part Fijian heritage starred in award-winning Australian series"
+   query: (fielded) "Paul Whittaker editor broadsheet newspaper publisher"
+   query: (keyword) "nationality shared actor publisher"
+   query: (fielded) "2014 Canadian horror comedy-mystery film"
+   query: (fielded) "1922 American silent Western film"
+   query: (hybrid) "compare genres origins 2014 Canadian horror comedy-mystery film and 19"
+EXECUTED → per-gold attribution:
+   gold 50988285 (Lasarus Ratuere): (fielded) "actor part Fijian heritage starred in award-winnin" @rank1
+   gold 396952 (The Australian): (fielded) "Paul Whittaker editor broadsheet newspaper publish" @rank1
+   gold 51315281 (The Editor (film)): (fielded) "2014 Canadian horror comedy-mystery film" @rank1
+   gold 35864358 (The Cowboy and the Lady (1922 film): (fielded) "1922 American silent Western film" @rank3
+IN-HOP MEMORY WRITE: hop5 found []; fused 2/4 golds in top-10
+
+--- HOP 6 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop1: found ['35864358', '396952', '50988285', '51315281']; fused all-golds=3/4
+- [finding] hop2: found []; fused all-golds=3/4
+- [finding] hop3: found []; fused all-golds=2/4
+- [finding] hop4: found []; fused all-golds=3/4
+- [finding] hop5: found []; fused all-golds=2/4
+LLM APPROACH: reason=The question requires multiple hops: (1) Identify the actor with part Fijian heritage who starred in an award-winning Au
+   query: (fielded) "actor part Fijian heritage starred in award-winning Australian series"
+   query: (fielded) "Paul Whittaker editor broadsheet newspaper publisher"
+   query: (keyword) "nationality of publisher of broadsheet newspaper edited by Paul Whitta"
+   query: (fielded) "2014 Canadian horror comedy-mystery film"
+   query: (fielded) "1922 American silent Western film"
+   query: (hybrid) "compare genres and origins of 2014 Canadian horror comedy-mystery film"
+EXECUTED → per-gold attribution:
+   gold 50988285 (Lasarus Ratuere): (fielded) "actor part Fijian heritage starred in award-winnin" @rank1
+   gold 396952 (The Australian): (fielded) "Paul Whittaker editor broadsheet newspaper publish" @rank1
+   gold 51315281 (The Editor (film)): (fielded) "2014 Canadian horror comedy-mystery film" @rank1
+   gold 35864358 (The Cowboy and the Lady (1922 film): (fielded) "1922 American silent Western film" @rank3
+IN-HOP MEMORY WRITE: hop6 found []; fused 2/4 golds in top-10
+
+--- HOP 7 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop1: found ['35864358', '396952', '50988285', '51315281']; fused all-golds=3/4
+- [finding] hop2: found []; fused all-golds=3/4
+- [finding] hop3: found []; fused all-golds=2/4
+- [finding] hop4: found []; fused all-golds=3/4
+- [finding] hop5: found []; fused all-golds=2/4
+- [finding] hop6: found []; fused all-golds=2/4
+LLM APPROACH: reason=The question requires multiple hops: (1) Identify actors with part Fijian heritage who starred in an award-winning Austr
+   query: (fielded) "actor part Fijian heritage starred in award-winning Australian series"
+   query: (fielded) "Paul Whittaker editor broadsheet newspaper publisher nationality"
+   query: (fielded) "nationality of actor with part Fijian heritage starred in Australian s"
+   query: (fielded) "2014 Canadian horror comedy-mystery film genre origin"
+   query: (fielded) "1922 American silent Western film genre origin"
+EXECUTED → per-gold attribution:
+   gold 50988285 (Lasarus Ratuere): (fielded) "actor part Fijian heritage starred in award-winnin" @rank1
+   gold 396952 (The Australian): (fielded) "Paul Whittaker editor broadsheet newspaper publish" @rank1
+   gold 51315281 (The Editor (film)): (fielded) "2014 Canadian horror comedy-mystery film" @rank1
+   gold 35864358 (The Cowboy and the Lady (1922 film): (fielded) "1922 American silent Western film" @rank3
+IN-HOP MEMORY WRITE: hop7 found []; fused 2/4 golds in top-10
+
+--- HOP 8 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop1: found ['35864358', '396952', '50988285', '51315281']; fused all-golds=3/4
+- [finding] hop2: found []; fused all-golds=3/4
+- [finding] hop3: found []; fused all-golds=2/4
+- [finding] hop4: found []; fused all-golds=3/4
+- [finding] hop5: found []; fused all-golds=2/4
+- [finding] hop6: found []; fused all-golds=2/4
+- [finding] hop7: found []; fused all-golds=2/4
+LLM APPROACH: reason=The question requires multiple hops: (1) Identify the actor with part Fijian heritage who starred in an award-winning Au
+   query: (fielded) "actor part Fijian heritage starred in award-winning Australian series"
+   query: (fielded) "Paul Whittaker editor broadsheet newspaper publisher nationality"
+   query: (keyword) "2014 Canadian horror comedy mystery film genre origin"
+   query: (keyword) "1922 American silent Western film genre origin"
+EXECUTED → per-gold attribution:
+   gold 50988285 (Lasarus Ratuere): (fielded) "actor part Fijian heritage starred in award-winnin" @rank1
+   gold 396952 (The Australian): (fielded) "Paul Whittaker editor broadsheet newspaper publish" @rank1
+   gold 51315281 (The Editor (film)): (fielded) "2014 Canadian horror comedy-mystery film" @rank1
+   gold 35864358 (The Cowboy and the Lady (1922 film): (fielded) "1922 American silent Western film" @rank3
+IN-HOP MEMORY WRITE: hop8 found []; fused 2/4 golds in top-10
+
+--- HOP 9 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop1: found ['35864358', '396952', '50988285', '51315281']; fused all-golds=3/4
+- [finding] hop2: found []; fused all-golds=3/4
+- [finding] hop3: found []; fused all-golds=2/4
+- [finding] hop4: found []; fused all-golds=3/4
+- [finding] hop5: found []; fused all-golds=2/4
+- [finding] hop6: found []; fused all-golds=2/4
+- [finding] hop7: found []; fused all-golds=2/4
+- [finding] hop8: found []; fused all-golds=2/4
+LLM APPROACH: reason=The question requires multiple hops: (1) Identify actors with part Fijian heritage who starred in an award-winning Austr
+   query: (fielded) "actor part Fijian heritage starred in award-winning Australian series"
+   query: (fielded) "Paul Whittaker editor broadsheet newspaper publisher"
+   query: (keyword) "nationality of publisher of broadsheet newspaper edited by Paul Whitta"
+   query: (fielded) "2014 Canadian horror comedy-mystery film"
+   query: (fielded) "1922 American silent Western film"
+   query: (hybrid) "compare genres and origins of 2014 Canadian horror comedy-mystery film"
+EXECUTED → per-gold attribution:
+   gold 50988285 (Lasarus Ratuere): (fielded) "actor part Fijian heritage starred in award-winnin" @rank1
+   gold 396952 (The Australian): (fielded) "Paul Whittaker editor broadsheet newspaper publish" @rank1
+   gold 51315281 (The Editor (film)): (fielded) "2014 Canadian horror comedy-mystery film" @rank1
+   gold 35864358 (The Cowboy and the Lady (1922 film): (fielded) "1922 American silent Western film" @rank3
+IN-HOP MEMORY WRITE: hop9 found []; fused 3/4 golds in top-10
+
+--- HOP 10 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop1: found ['35864358', '396952', '50988285', '51315281']; fused all-golds=3/4
+- [finding] hop2: found []; fused all-golds=3/4
+- [finding] hop3: found []; fused all-golds=2/4
+- [finding] hop4: found []; fused all-golds=3/4
+- [finding] hop5: found []; fused all-golds=2/4
+- [finding] hop6: found []; fused all-golds=2/4
+- [finding] hop7: found []; fused all-golds=2/4
+- [finding] hop8: found []; fused all-golds=2/4
+- [finding] hop9: found []; fused all-golds=3/4
+LLM APPROACH: reason=The question requires multiple hops: (1) Identify an actor with part Fijian heritage who starred in an award-winning Aus
+   query: (fielded) "actor part Fijian heritage starred in award-winning Australian series"
+   query: (fielded) "Paul Whittaker editor broadsheet newspaper publisher"
+   query: (keyword) "nationality of publisher of broadsheet newspaper edited by Paul Whitta"
+   query: (fielded) "2014 Canadian horror comedy-mystery film"
+   query: (fielded) "1922 American silent Western film"
+   query: (hybrid) "compare genres and origins of 2014 Canadian horror comedy-mystery film"
+EXECUTED → per-gold attribution:
+   gold 50988285 (Lasarus Ratuere): (fielded) "actor part Fijian heritage starred in award-winnin" @rank1
+   gold 396952 (The Australian): (fielded) "Paul Whittaker editor broadsheet newspaper publish" @rank1
+   gold 51315281 (The Editor (film)): (fielded) "2014 Canadian horror comedy-mystery film" @rank1
+   gold 35864358 (The Cowboy and the Lady (1922 film): (fielded) "1922 American silent Western film" @rank3
+IN-HOP MEMORY WRITE: hop10 found []; fused 3/4 golds in top-10
+RESULT: partial — 3/4 golds after 10 hops.
+
+--- CROSS-QUERY MEMORY WRITE ---
+  remembered winning queries: fielded:'actor part Fijian heritage starred in aw'; fielded:'Paul Whittaker editor broadsheet newspap'; fielded:'2014 Canadian horror comedy-mystery film'; fielded:'1922 American silent Western film'
+
+
+########################  QUERY 2/10  (4-hop)  ########################
+
+STARTING QUERY: Which Texas legislative session occurred closest in time before the live recording of ZZ Top's 'Live from Texas' DVD, and how does the timing of tobyMac's 'Alive and Transported' live album release compare to that session and the ZZ Top recording?
+GOLD (oracle, scoring only): ['3842803(Eightieth Texas Legislature)', '25473504(Fifty-sixth Texas Legislature)', '17359233(Live from Texas)', '17290452(Alive and Transported)']
+
+--- LEARNING FROM PREVIOUS QUERIES (recalled from long-term memory) ---
+  - query "Which actor with part Fijian heritage who starred in an award-winning " (4-hop) solved=False: winning queries = fielded:'actor part Fijian heritage starred in aw'; fielded:'Paul Whittaker editor broadsheet newspap'; fielded:'2014 Canadian horror comedy-mystery film'; fielded:'1922 American silent Western film'
+
+--- HOP 1 ---
+DYNAMIC PROMPT (fixed base + memory + findings + skills):
+  You are a retrieval agent solving a MULTI-HOP question that needs SEVERAL different documents. Decompose it into sub-facts and, for EACH, pick the best OpenSearch query: mode 'hybrid' (balanced), 'hyde' (when the entity is only DESCRIBED, not named — hallucinate the answer doc), 'fielded' (a named entity → title+text match), 'keyword', or 'dense'. Return ONLY JSON: {"reason":"...","plan":[{"mode":"hyde","query":"..."}, ...]}.
+  
+  MEMORY (wins from earlier queries):
+  - query "Which actor with part Fijian heritage who starred in an award-winning " (4-hop) solved=False: winning queries = fielded:'actor part Fijian heritage starred in aw'; fielded:'Paul Whittaker editor broadsheet newspap'; fielded:'2014 Canadian horror comedy-mystery film'; fielded:'1922 American silent Western film'
+  
+  IN-SESSION FINDINGS (earlier hops of THIS query):
+  - [finding] hop2: found []; fused all-golds=3/4
+  …
+LLM APPROACH: reason=The question requires multiple facts: (1) the date of the Texas legislative session immediately before the ZZ Top 'Live 
+   query: (fielded) "ZZ Top Live from Texas DVD recording date"
+   query: (fielded) "Texas legislative sessions dates"
+   query: (fielded) "tobyMac Alive and Transported live album release date"
+EXECUTED → per-gold attribution:
+   gold 3842803 (Eightieth Texas Legislature): NOT found yet
+   gold 25473504 (Fifty-sixth Texas Legislature): (fielded) "Texas legislative sessions dates" @rank1
+   gold 17359233 (Live from Texas): (fielded) "ZZ Top Live from Texas DVD recording date" @rank1
+   gold 17290452 (Alive and Transported): (fielded) "ZZ Top Live from Texas DVD recording date" @rank5
+IN-HOP MEMORY WRITE: hop1 found ['17290452', '17359233', '25473504']; fused 3/4 golds in top-10
+
+--- HOP 2 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop3: found []; fused all-golds=2/4
+- [finding] hop4: found []; fused all-golds=3/4
+- [finding] hop5: found []; fused all-golds=2/4
+- [finding] hop6: found []; fused all-golds=2/4
+- [finding] hop7: found []; fused all-golds=2/4
+- [finding] hop8: found []; fused all-golds=2/4
+- [finding] hop9: found []; fused all-golds=3/4
+- [finding] hop10: found []; fused all-golds=3/4
+- [finding] hop1: found ['17290452', '17359233', '25473504']; fused all-golds=3/4
+LLM APPROACH: reason=The question requires multiple steps: (1) identify the date of the Texas legislative session immediately before the live
+   query: (fielded) "ZZ Top Live from Texas DVD recording date"
+   query: (fielded) "Texas legislative sessions dates"
+   query: (fielded) "tobyMac Alive and Transported live album release date"
+EXECUTED → per-gold attribution:
+   gold 3842803 (Eightieth Texas Legislature): NOT found yet
+   gold 25473504 (Fifty-sixth Texas Legislature): (fielded) "Texas legislative sessions dates" @rank1
+   gold 17359233 (Live from Texas): (fielded) "ZZ Top Live from Texas DVD recording date" @rank1
+   gold 17290452 (Alive and Transported): (fielded) "ZZ Top Live from Texas DVD recording date" @rank5
+IN-HOP MEMORY WRITE: hop2 found []; fused 3/4 golds in top-10
+
+--- HOP 3 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop4: found []; fused all-golds=3/4
+- [finding] hop5: found []; fused all-golds=2/4
+- [finding] hop6: found []; fused all-golds=2/4
+- [finding] hop7: found []; fused all-golds=2/4
+- [finding] hop8: found []; fused all-golds=2/4
+- [finding] hop9: found []; fused all-golds=3/4
+- [finding] hop10: found []; fused all-golds=3/4
+- [finding] hop1: found ['17290452', '17359233', '25473504']; fused all-golds=3/4
+- [finding] hop2: found []; fused all-golds=3/4
+LLM APPROACH: reason=The question requires multiple steps: (1) identify the date of the live recording of ZZ Top's 'Live from Texas' DVD, (2)
+   query: (fielded) "ZZ Top Live from Texas recording date"
+   query: (fielded) "Texas legislative sessions dates"
+   query: (fielded) "tobyMac Alive and Transported live album release date"
+   query: (hybrid) "compare timing Texas legislative session ZZ Top Live from Texas tobyMa"
+EXECUTED → per-gold attribution:
+   gold 3842803 (Eightieth Texas Legislature): (hybrid) "compare timing Texas legislative session ZZ Top Li" @rank3
+   gold 25473504 (Fifty-sixth Texas Legislature): (fielded) "Texas legislative sessions dates" @rank1
+   gold 17359233 (Live from Texas): (fielded) "ZZ Top Live from Texas DVD recording date" @rank1
+   gold 17290452 (Alive and Transported): (fielded) "ZZ Top Live from Texas DVD recording date" @rank5
+IN-HOP MEMORY WRITE: hop3 found ['3842803']; fused 3/4 golds in top-10
+
+--- HOP 4 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop5: found []; fused all-golds=2/4
+- [finding] hop6: found []; fused all-golds=2/4
+- [finding] hop7: found []; fused all-golds=2/4
+- [finding] hop8: found []; fused all-golds=2/4
+- [finding] hop9: found []; fused all-golds=3/4
+- [finding] hop10: found []; fused all-golds=3/4
+- [finding] hop1: found ['17290452', '17359233', '25473504']; fused all-golds=3/4
+- [finding] hop2: found []; fused all-golds=3/4
+- [finding] hop3: found ['3842803']; fused all-golds=3/4
+LLM APPROACH: reason=The question requires multiple facts: (1) the date of the Texas legislative session immediately before the ZZ Top 'Live 
+   query: (fielded) "Texas legislative sessions dates"
+   query: (fielded) "ZZ Top Live from Texas DVD recording date"
+   query: (fielded) "tobyMac Alive and Transported live album release date"
+EXECUTED → per-gold attribution:
+   gold 3842803 (Eightieth Texas Legislature): (hybrid) "compare timing Texas legislative session ZZ Top Li" @rank3
+   gold 25473504 (Fifty-sixth Texas Legislature): (fielded) "Texas legislative sessions dates" @rank1
+   gold 17359233 (Live from Texas): (fielded) "ZZ Top Live from Texas DVD recording date" @rank1
+   gold 17290452 (Alive and Transported): (fielded) "ZZ Top Live from Texas DVD recording date" @rank5
+IN-HOP MEMORY WRITE: hop4 found []; fused 3/4 golds in top-10
+
+--- HOP 5 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop6: found []; fused all-golds=2/4
+- [finding] hop7: found []; fused all-golds=2/4
+- [finding] hop8: found []; fused all-golds=2/4
+- [finding] hop9: found []; fused all-golds=3/4
+- [finding] hop10: found []; fused all-golds=3/4
+- [finding] hop1: found ['17290452', '17359233', '25473504']; fused all-golds=3/4
+- [finding] hop2: found []; fused all-golds=3/4
+- [finding] hop3: found ['3842803']; fused all-golds=3/4
+- [finding] hop4: found []; fused all-golds=3/4
+LLM APPROACH: reason=The question requires multiple steps: (1) identify the date of the live recording of ZZ Top's 'Live from Texas' DVD, (2)
+   query: (fielded) "ZZ Top Live from Texas DVD recording date"
+   query: (fielded) "Texas legislative sessions dates"
+   query: (fielded) "tobyMac Alive and Transported live album release date"
+EXECUTED → per-gold attribution:
+   gold 3842803 (Eightieth Texas Legislature): (hybrid) "compare timing Texas legislative session ZZ Top Li" @rank3
+   gold 25473504 (Fifty-sixth Texas Legislature): (fielded) "Texas legislative sessions dates" @rank1
+   gold 17359233 (Live from Texas): (fielded) "ZZ Top Live from Texas DVD recording date" @rank1
+   gold 17290452 (Alive and Transported): (fielded) "ZZ Top Live from Texas DVD recording date" @rank5
+IN-HOP MEMORY WRITE: hop5 found []; fused 3/4 golds in top-10
+
+--- HOP 6 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop7: found []; fused all-golds=2/4
+- [finding] hop8: found []; fused all-golds=2/4
+- [finding] hop9: found []; fused all-golds=3/4
+- [finding] hop10: found []; fused all-golds=3/4
+- [finding] hop1: found ['17290452', '17359233', '25473504']; fused all-golds=3/4
+- [finding] hop2: found []; fused all-golds=3/4
+- [finding] hop3: found ['3842803']; fused all-golds=3/4
+- [finding] hop4: found []; fused all-golds=3/4
+- [finding] hop5: found []; fused all-golds=3/4
+LLM APPROACH: reason=The question requires multiple facts: (1) the date of the Texas legislative session immediately before the ZZ Top 'Live 
+   query: (fielded) "Texas legislative sessions dates"
+   query: (fielded) "ZZ Top Live from Texas DVD recording date"
+   query: (fielded) "tobyMac Alive and Transported live album release date"
+EXECUTED → per-gold attribution:
+   gold 3842803 (Eightieth Texas Legislature): (hybrid) "compare timing Texas legislative session ZZ Top Li" @rank3
+   gold 25473504 (Fifty-sixth Texas Legislature): (fielded) "Texas legislative sessions dates" @rank1
+   gold 17359233 (Live from Texas): (fielded) "ZZ Top Live from Texas DVD recording date" @rank1
+   gold 17290452 (Alive and Transported): (fielded) "ZZ Top Live from Texas DVD recording date" @rank5
+IN-HOP MEMORY WRITE: hop6 found []; fused 3/4 golds in top-10
+
+--- HOP 7 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop8: found []; fused all-golds=2/4
+- [finding] hop9: found []; fused all-golds=3/4
+- [finding] hop10: found []; fused all-golds=3/4
+- [finding] hop1: found ['17290452', '17359233', '25473504']; fused all-golds=3/4
+- [finding] hop2: found []; fused all-golds=3/4
+- [finding] hop3: found ['3842803']; fused all-golds=3/4
+- [finding] hop4: found []; fused all-golds=3/4
+- [finding] hop5: found []; fused all-golds=3/4
+- [finding] hop6: found []; fused all-golds=3/4
+LLM APPROACH: reason=The question requires multiple facts: (1) the date of the Texas legislative session immediately before the ZZ Top 'Live 
+   query: (fielded) "Texas legislative sessions dates"
+   query: (fielded) "ZZ Top Live from Texas DVD recording date"
+   query: (fielded) "tobyMac Alive and Transported live album release date"
+EXECUTED → per-gold attribution:
+   gold 3842803 (Eightieth Texas Legislature): (hybrid) "compare timing Texas legislative session ZZ Top Li" @rank3
+   gold 25473504 (Fifty-sixth Texas Legislature): (fielded) "Texas legislative sessions dates" @rank1
+   gold 17359233 (Live from Texas): (fielded) "ZZ Top Live from Texas DVD recording date" @rank1
+   gold 17290452 (Alive and Transported): (fielded) "ZZ Top Live from Texas DVD recording date" @rank5
+IN-HOP MEMORY WRITE: hop7 found []; fused 3/4 golds in top-10
+
+--- HOP 8 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop9: found []; fused all-golds=3/4
+- [finding] hop10: found []; fused all-golds=3/4
+- [finding] hop1: found ['17290452', '17359233', '25473504']; fused all-golds=3/4
+- [finding] hop2: found []; fused all-golds=3/4
+- [finding] hop3: found ['3842803']; fused all-golds=3/4
+- [finding] hop4: found []; fused all-golds=3/4
+- [finding] hop5: found []; fused all-golds=3/4
+- [finding] hop6: found []; fused all-golds=3/4
+- [finding] hop7: found []; fused all-golds=3/4
+LLM APPROACH: reason=The question requires multiple steps: (1) identify the date of the live recording of ZZ Top's 'Live from Texas' DVD, (2)
+   query: (fielded) "ZZ Top Live from Texas DVD recording date"
+   query: (fielded) "Texas legislative sessions dates"
+   query: (fielded) "tobyMac Alive and Transported live album release date"
+EXECUTED → per-gold attribution:
+   gold 3842803 (Eightieth Texas Legislature): (hybrid) "compare timing Texas legislative session ZZ Top Li" @rank3
+   gold 25473504 (Fifty-sixth Texas Legislature): (fielded) "Texas legislative sessions dates" @rank1
+   gold 17359233 (Live from Texas): (fielded) "ZZ Top Live from Texas DVD recording date" @rank1
+   gold 17290452 (Alive and Transported): (fielded) "ZZ Top Live from Texas DVD recording date" @rank5
+IN-HOP MEMORY WRITE: hop8 found []; fused 3/4 golds in top-10
+
+--- HOP 9 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop10: found []; fused all-golds=3/4
+- [finding] hop1: found ['17290452', '17359233', '25473504']; fused all-golds=3/4
+- [finding] hop2: found []; fused all-golds=3/4
+- [finding] hop3: found ['3842803']; fused all-golds=3/4
+- [finding] hop4: found []; fused all-golds=3/4
+- [finding] hop5: found []; fused all-golds=3/4
+- [finding] hop6: found []; fused all-golds=3/4
+- [finding] hop7: found []; fused all-golds=3/4
+- [finding] hop8: found []; fused all-golds=3/4
+LLM APPROACH: reason=The question requires multiple steps: (1) identify the date of the live recording of ZZ Top's 'Live from Texas' DVD, (2)
+   query: (fielded) "ZZ Top Live from Texas DVD recording date"
+   query: (fielded) "Texas legislative sessions dates"
+   query: (fielded) "tobyMac Alive and Transported live album release date"
+   query: (hybrid) "compare timing of Texas legislative session before ZZ Top Live from Te"
+EXECUTED → per-gold attribution:
+   gold 3842803 (Eightieth Texas Legislature): (hybrid) "compare timing Texas legislative session ZZ Top Li" @rank3
+   gold 25473504 (Fifty-sixth Texas Legislature): (fielded) "Texas legislative sessions dates" @rank1
+   gold 17359233 (Live from Texas): (fielded) "ZZ Top Live from Texas DVD recording date" @rank1
+   gold 17290452 (Alive and Transported): (fielded) "ZZ Top Live from Texas DVD recording date" @rank5
+IN-HOP MEMORY WRITE: hop9 found []; fused 3/4 golds in top-10
+
+--- HOP 10 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop1: found ['17290452', '17359233', '25473504']; fused all-golds=3/4
+- [finding] hop2: found []; fused all-golds=3/4
+- [finding] hop3: found ['3842803']; fused all-golds=3/4
+- [finding] hop4: found []; fused all-golds=3/4
+- [finding] hop5: found []; fused all-golds=3/4
+- [finding] hop6: found []; fused all-golds=3/4
+- [finding] hop7: found []; fused all-golds=3/4
+- [finding] hop8: found []; fused all-golds=3/4
+- [finding] hop9: found []; fused all-golds=3/4
+LLM APPROACH: reason=The question requires multiple steps: (1) identify the date of the live recording of ZZ Top's 'Live from Texas' DVD, (2)
+   query: (fielded) "ZZ Top Live from Texas DVD recording date"
+   query: (fielded) "Texas legislative sessions dates"
+   query: (fielded) "tobyMac Alive and Transported live album release date"
+   query: (hybrid) "compare dates of Texas legislative session before ZZ Top Live from Tex"
+EXECUTED → per-gold attribution:
+   gold 3842803 (Eightieth Texas Legislature): (hybrid) "compare timing Texas legislative session ZZ Top Li" @rank3
+   gold 25473504 (Fifty-sixth Texas Legislature): (fielded) "Texas legislative sessions dates" @rank1
+   gold 17359233 (Live from Texas): (fielded) "ZZ Top Live from Texas DVD recording date" @rank1
+   gold 17290452 (Alive and Transported): (fielded) "ZZ Top Live from Texas DVD recording date" @rank5
+IN-HOP MEMORY WRITE: hop10 found []; fused 2/4 golds in top-10
+RESULT: partial — 2/4 golds after 10 hops.
+
+--- CROSS-QUERY MEMORY WRITE ---
+  remembered winning queries: fielded:'ZZ Top Live from Texas DVD recording dat'; fielded:'ZZ Top Live from Texas DVD recording dat'; fielded:'Texas legislative sessions dates'; hybrid:'compare timing Texas legislative session'
+
+
+########################  QUERY 3/10  (4-hop)  ########################
+
+STARTING QUERY: Which individual named Galloway was active in politics during the 19th century, and what is the connection between the date September 8 and the number eight in music?
+GOLD (oracle, scoring only): ['3104063(Chick Galloway)', '47535465(Abraham Galloway)', '28488(September 8)', '8817122(The Meaning of 8)']
+
+--- LEARNING FROM PREVIOUS QUERIES (recalled from long-term memory) ---
+  - query "Which actor with part Fijian heritage who starred in an award-winning " (4-hop) solved=False: winning queries = fielded:'actor part Fijian heritage starred in aw'; fielded:'Paul Whittaker editor broadsheet newspap'; fielded:'2014 Canadian horror comedy-mystery film'; fielded:'1922 American silent Western film'
+  - query "Which Texas legislative session occurred closest in time before the li" (4-hop) solved=False: winning queries = fielded:'ZZ Top Live from Texas DVD recording dat'; fielded:'ZZ Top Live from Texas DVD recording dat'; fielded:'Texas legislative sessions dates'; hybrid:'compare timing Texas legislative session'
+
+--- HOP 1 ---
+DYNAMIC PROMPT (fixed base + memory + findings + skills):
+  You are a retrieval agent solving a MULTI-HOP question that needs SEVERAL different documents. Decompose it into sub-facts and, for EACH, pick the best OpenSearch query: mode 'hybrid' (balanced), 'hyde' (when the entity is only DESCRIBED, not named — hallucinate the answer doc), 'fielded' (a named entity → title+text match), 'keyword', or 'dense'. Return ONLY JSON: {"reason":"...","plan":[{"mode":"hyde","query":"..."}, ...]}.
+  
+  MEMORY (wins from earlier queries):
+  - query "Which actor with part Fijian heritage who starred in an award-winning " (4-hop) solved=False: winning queries = fielded:'actor part Fijian heritage starred in aw'; fielded:'Paul Whittaker editor broadsheet newspap'; fielded:'2014 Canadian horror comedy-mystery film'; fielded:'1922 American silent Western film'
+  - query "Which Texas legislative session occurred closest in time before the li" (4-hop) solved=False: w …
+LLM APPROACH: reason=The question is twofold: first, identify a political figure named Galloway active in the 19th century; second, find the 
+   query: (fielded) "Galloway 19th century politics"
+   query: (hybrid) "September 8 number eight music connection"
+EXECUTED → per-gold attribution:
+   gold 3104063 (Chick Galloway): NOT found yet
+   gold 47535465 (Abraham Galloway): NOT found yet
+   gold 28488 (September 8): (hybrid) "September 8 number eight music connection" @rank3
+   gold 8817122 (The Meaning of 8): NOT found yet
+IN-HOP MEMORY WRITE: hop1 found ['28488']; fused 1/4 golds in top-10
+
+--- HOP 2 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop2: found []; fused all-golds=3/4
+- [finding] hop3: found ['3842803']; fused all-golds=3/4
+- [finding] hop4: found []; fused all-golds=3/4
+- [finding] hop5: found []; fused all-golds=3/4
+- [finding] hop6: found []; fused all-golds=3/4
+- [finding] hop7: found []; fused all-golds=3/4
+- [finding] hop8: found []; fused all-golds=3/4
+- [finding] hop9: found []; fused all-golds=3/4
+- [finding] hop10: found []; fused all-golds=2/4
+- [finding] hop1: found ['28488']; fused all-golds=1/4
+LLM APPROACH: reason=The question requires two separate pieces of information: (1) identifying an individual named Galloway active in 19th-ce
+   query: (fielded) "Galloway 19th century politics"
+   query: (hybrid) "September 8 number eight music connection"
+EXECUTED → per-gold attribution:
+   gold 3104063 (Chick Galloway): NOT found yet
+   gold 47535465 (Abraham Galloway): NOT found yet
+   gold 28488 (September 8): (hybrid) "September 8 number eight music connection" @rank3
+   gold 8817122 (The Meaning of 8): NOT found yet
+IN-HOP MEMORY WRITE: hop2 found []; fused 1/4 golds in top-10
+
+--- HOP 3 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop3: found ['3842803']; fused all-golds=3/4
+- [finding] hop4: found []; fused all-golds=3/4
+- [finding] hop5: found []; fused all-golds=3/4
+- [finding] hop6: found []; fused all-golds=3/4
+- [finding] hop7: found []; fused all-golds=3/4
+- [finding] hop8: found []; fused all-golds=3/4
+- [finding] hop9: found []; fused all-golds=3/4
+- [finding] hop10: found []; fused all-golds=2/4
+- [finding] hop1: found ['28488']; fused all-golds=1/4
+- [finding] hop2: found []; fused all-golds=1/4
+LLM APPROACH: reason=The question is twofold: first, identify a political figure named Galloway active in the 19th century; second, find the 
+   query: (fielded) "Galloway politician 19th century"
+   query: (hyde) "connection between September 8 and the number eight in music"
+EXECUTED → per-gold attribution:
+   gold 3104063 (Chick Galloway): NOT found yet
+   gold 47535465 (Abraham Galloway): NOT found yet
+   gold 28488 (September 8): (hybrid) "September 8 number eight music connection" @rank3
+   gold 8817122 (The Meaning of 8): (hyde) "connection between September 8 and the number eigh" @rank5
+IN-HOP MEMORY WRITE: hop3 found ['8817122']; fused 1/4 golds in top-10
+
+--- HOP 4 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop4: found []; fused all-golds=3/4
+- [finding] hop5: found []; fused all-golds=3/4
+- [finding] hop6: found []; fused all-golds=3/4
+- [finding] hop7: found []; fused all-golds=3/4
+- [finding] hop8: found []; fused all-golds=3/4
+- [finding] hop9: found []; fused all-golds=3/4
+- [finding] hop10: found []; fused all-golds=2/4
+- [finding] hop1: found ['28488']; fused all-golds=1/4
+- [finding] hop2: found []; fused all-golds=1/4
+- [finding] hop3: found ['8817122']; fused all-golds=1/4
+LLM APPROACH: reason=The question is twofold and requires multi-hop retrieval: (1) Identify the individual named Galloway active in 19th-cent
+   query: (fielded) "Galloway politician 19th century"
+   query: (hybrid) "connection between September 8 and number eight in music"
+EXECUTED → per-gold attribution:
+   gold 3104063 (Chick Galloway): NOT found yet
+   gold 47535465 (Abraham Galloway): NOT found yet
+   gold 28488 (September 8): (hybrid) "September 8 number eight music connection" @rank3
+   gold 8817122 (The Meaning of 8): (hyde) "connection between September 8 and the number eigh" @rank5
+IN-HOP MEMORY WRITE: hop4 found []; fused 1/4 golds in top-10
+
+--- HOP 5 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop5: found []; fused all-golds=3/4
+- [finding] hop6: found []; fused all-golds=3/4
+- [finding] hop7: found []; fused all-golds=3/4
+- [finding] hop8: found []; fused all-golds=3/4
+- [finding] hop9: found []; fused all-golds=3/4
+- [finding] hop10: found []; fused all-golds=2/4
+- [finding] hop1: found ['28488']; fused all-golds=1/4
+- [finding] hop2: found []; fused all-golds=1/4
+- [finding] hop3: found ['8817122']; fused all-golds=1/4
+- [finding] hop4: found []; fused all-golds=1/4
+LLM APPROACH: reason=The question is twofold: first, identify a political figure named Galloway active in the 19th century; second, find the 
+   query: (fielded) "Galloway politician 19th century"
+   query: (hyde) "connection between September 8 and number eight in music"
+EXECUTED → per-gold attribution:
+   gold 3104063 (Chick Galloway): NOT found yet
+   gold 47535465 (Abraham Galloway): NOT found yet
+   gold 28488 (September 8): (hybrid) "September 8 number eight music connection" @rank3
+   gold 8817122 (The Meaning of 8): (hyde) "connection between September 8 and the number eigh" @rank5
+IN-HOP MEMORY WRITE: hop5 found []; fused 0/4 golds in top-10
+
+--- HOP 6 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop6: found []; fused all-golds=3/4
+- [finding] hop7: found []; fused all-golds=3/4
+- [finding] hop8: found []; fused all-golds=3/4
+- [finding] hop9: found []; fused all-golds=3/4
+- [finding] hop10: found []; fused all-golds=2/4
+- [finding] hop1: found ['28488']; fused all-golds=1/4
+- [finding] hop2: found []; fused all-golds=1/4
+- [finding] hop3: found ['8817122']; fused all-golds=1/4
+- [finding] hop4: found []; fused all-golds=1/4
+- [finding] hop5: found []; fused all-golds=0/4
+LLM APPROACH: reason=The question is twofold: first, identify a political figure named Galloway active in the 19th century; second, find the 
+   query: (fielded) "Galloway politician 19th century"
+   query: (hyde) "connection between September 8 and number eight in music symbolism or "
+EXECUTED → per-gold attribution:
+   gold 3104063 (Chick Galloway): NOT found yet
+   gold 47535465 (Abraham Galloway): NOT found yet
+   gold 28488 (September 8): (hybrid) "September 8 number eight music connection" @rank3
+   gold 8817122 (The Meaning of 8): (hyde) "connection between September 8 and the number eigh" @rank5
+IN-HOP MEMORY WRITE: hop6 found []; fused 0/4 golds in top-10
+
+--- HOP 7 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop7: found []; fused all-golds=3/4
+- [finding] hop8: found []; fused all-golds=3/4
+- [finding] hop9: found []; fused all-golds=3/4
+- [finding] hop10: found []; fused all-golds=2/4
+- [finding] hop1: found ['28488']; fused all-golds=1/4
+- [finding] hop2: found []; fused all-golds=1/4
+- [finding] hop3: found ['8817122']; fused all-golds=1/4
+- [finding] hop4: found []; fused all-golds=1/4
+- [finding] hop5: found []; fused all-golds=0/4
+- [finding] hop6: found []; fused all-golds=0/4
+LLM APPROACH: reason=The question is multi-hop and involves two distinct sub-facts: (1) identifying a political figure named Galloway active 
+   query: (fielded) "Galloway politician 19th century"
+   query: (hybrid) "connection between September 8 and number eight in music"
+EXECUTED → per-gold attribution:
+   gold 3104063 (Chick Galloway): NOT found yet
+   gold 47535465 (Abraham Galloway): NOT found yet
+   gold 28488 (September 8): (hybrid) "September 8 number eight music connection" @rank3
+   gold 8817122 (The Meaning of 8): (hyde) "connection between September 8 and the number eigh" @rank5
+IN-HOP MEMORY WRITE: hop7 found []; fused 0/4 golds in top-10
+
+--- HOP 8 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop8: found []; fused all-golds=3/4
+- [finding] hop9: found []; fused all-golds=3/4
+- [finding] hop10: found []; fused all-golds=2/4
+- [finding] hop1: found ['28488']; fused all-golds=1/4
+- [finding] hop2: found []; fused all-golds=1/4
+- [finding] hop3: found ['8817122']; fused all-golds=1/4
+- [finding] hop4: found []; fused all-golds=1/4
+- [finding] hop5: found []; fused all-golds=0/4
+- [finding] hop6: found []; fused all-golds=0/4
+- [finding] hop7: found []; fused all-golds=0/4
+LLM APPROACH: reason=The question is twofold and requires multi-hop retrieval: (1) Identify an individual named Galloway active in 19th-centu
+   query: (fielded) "Galloway politician 19th century"
+   query: (hybrid) "connection between September 8 and number eight in music"
+EXECUTED → per-gold attribution:
+   gold 3104063 (Chick Galloway): NOT found yet
+   gold 47535465 (Abraham Galloway): NOT found yet
+   gold 28488 (September 8): (hybrid) "September 8 number eight music connection" @rank3
+   gold 8817122 (The Meaning of 8): (hyde) "connection between September 8 and the number eigh" @rank5
+IN-HOP MEMORY WRITE: hop8 found []; fused 0/4 golds in top-10
+
+--- HOP 9 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop9: found []; fused all-golds=3/4
+- [finding] hop10: found []; fused all-golds=2/4
+- [finding] hop1: found ['28488']; fused all-golds=1/4
+- [finding] hop2: found []; fused all-golds=1/4
+- [finding] hop3: found ['8817122']; fused all-golds=1/4
+- [finding] hop4: found []; fused all-golds=1/4
+- [finding] hop5: found []; fused all-golds=0/4
+- [finding] hop6: found []; fused all-golds=0/4
+- [finding] hop7: found []; fused all-golds=0/4
+- [finding] hop8: found []; fused all-golds=0/4
+LLM APPROACH: reason=The question is twofold: first, identify a political figure named Galloway active in the 19th century; second, find the 
+   query: (fielded) "Galloway 19th century politics"
+   query: (hybrid) "September 8 number eight music connection"
+EXECUTED → per-gold attribution:
+   gold 3104063 (Chick Galloway): NOT found yet
+   gold 47535465 (Abraham Galloway): NOT found yet
+   gold 28488 (September 8): (hybrid) "September 8 number eight music connection" @rank3
+   gold 8817122 (The Meaning of 8): (hyde) "connection between September 8 and the number eigh" @rank5
+IN-HOP MEMORY WRITE: hop9 found []; fused 0/4 golds in top-10
+
+--- HOP 10 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop10: found []; fused all-golds=2/4
+- [finding] hop1: found ['28488']; fused all-golds=1/4
+- [finding] hop2: found []; fused all-golds=1/4
+- [finding] hop3: found ['8817122']; fused all-golds=1/4
+- [finding] hop4: found []; fused all-golds=1/4
+- [finding] hop5: found []; fused all-golds=0/4
+- [finding] hop6: found []; fused all-golds=0/4
+- [finding] hop7: found []; fused all-golds=0/4
+- [finding] hop8: found []; fused all-golds=0/4
+- [finding] hop9: found []; fused all-golds=0/4
+LLM APPROACH: reason=The question requires two separate sub-facts: (1) identifying a political figure named Galloway active in the 19th centu
+   query: (fielded) "Galloway politician 19th century"
+   query: (hybrid) "connection between September 8 and number eight in music"
+EXECUTED → per-gold attribution:
+   gold 3104063 (Chick Galloway): NOT found yet
+   gold 47535465 (Abraham Galloway): NOT found yet
+   gold 28488 (September 8): (hybrid) "September 8 number eight music connection" @rank3
+   gold 8817122 (The Meaning of 8): (hyde) "connection between September 8 and the number eigh" @rank5
+IN-HOP MEMORY WRITE: hop10 found []; fused 0/4 golds in top-10
+RESULT: partial — 0/4 golds after 10 hops.
+
+--- CROSS-QUERY MEMORY WRITE ---
+  remembered winning queries: hybrid:'September 8 number eight music connectio'; hyde:'connection between September 8 and the n'
+
+
+########################  QUERY 4/10  (4-hop)  ########################
+
+STARTING QUERY: Which British TV series and film related to magic or magicians were released between 1994 and 2011, and what is the name and founding year of the largest global society that supports magicians?
+GOLD (oracle, scoring only): ['6453945(The Net (UK TV series))', '30682648(The Magicians (UK TV series))', '7287091(Magicians (2007 film))', '3725622(International Magicians Society)']
+
+--- LEARNING FROM PREVIOUS QUERIES (recalled from long-term memory) ---
+  - query "Which actor with part Fijian heritage who starred in an award-winning " (4-hop) solved=False: winning queries = fielded:'actor part Fijian heritage starred in aw'; fielded:'Paul Whittaker editor broadsheet newspap'; fielded:'2014 Canadian horror comedy-mystery film'; fielded:'1922 American silent Western film'
+  - query "Which individual named Galloway was active in politics during the 19th" (4-hop) solved=False: winning queries = hybrid:'September 8 number eight music connectio'; hyde:'connection between September 8 and the n'
+  - query "Which Texas legislative session occurred closest in time before the li" (4-hop) solved=False: winning queries = fielded:'ZZ Top Live from Texas DVD recording dat'; fielded:'ZZ Top Live from Texas DVD recording dat'; fielded:'Texas legislative sessions dates'; hybrid:'compare timing Texas legislative session'
+
+--- HOP 1 ---
+DYNAMIC PROMPT (fixed base + memory + findings + skills):
+  You are a retrieval agent solving a MULTI-HOP question that needs SEVERAL different documents. Decompose it into sub-facts and, for EACH, pick the best OpenSearch query: mode 'hybrid' (balanced), 'hyde' (when the entity is only DESCRIBED, not named — hallucinate the answer doc), 'fielded' (a named entity → title+text match), 'keyword', or 'dense'. Return ONLY JSON: {"reason":"...","plan":[{"mode":"hyde","query":"..."}, ...]}.
+  
+  MEMORY (wins from earlier queries):
+  - query "Which actor with part Fijian heritage who starred in an award-winning " (4-hop) solved=False: winning queries = fielded:'actor part Fijian heritage starred in aw'; fielded:'Paul Whittaker editor broadsheet newspap'; fielded:'2014 Canadian horror comedy-mystery film'; fielded:'1922 American silent Western film'
+  - query "Which individual named Galloway was active in politics during the 19th" (4-hop) solved=False: w …
+LLM APPROACH: reason=The question requires multiple hops: (1) identify British TV series related to magic/magicians released between 1994-201
+   query: (hybrid) "British TV series about magic or magicians released between 1994 and 2"
+   query: (hybrid) "films related to magic or magicians released between 1994 and 2011"
+   query: (fielded) "largest global society supporting magicians founding year"
+EXECUTED → per-gold attribution:
+   gold 6453945 (The Net (UK TV series)): (hybrid) "British TV series about magic or magicians release" @rank9
+   gold 30682648 (The Magicians (UK TV series)): (hybrid) "British TV series about magic or magicians release" @rank1
+   gold 7287091 (Magicians (2007 film)): (hybrid) "British TV series about magic or magicians release" @rank2
+   gold 3725622 (International Magicians Society): (hybrid) "British TV series about magic or magicians release" @rank3
+IN-HOP MEMORY WRITE: hop1 found ['30682648', '3725622', '6453945', '7287091']; fused 3/4 golds in top-10
+
+--- HOP 2 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop3: found ['8817122']; fused all-golds=1/4
+- [finding] hop4: found []; fused all-golds=1/4
+- [finding] hop5: found []; fused all-golds=0/4
+- [finding] hop6: found []; fused all-golds=0/4
+- [finding] hop7: found []; fused all-golds=0/4
+- [finding] hop8: found []; fused all-golds=0/4
+- [finding] hop9: found []; fused all-golds=0/4
+- [finding] hop10: found []; fused all-golds=0/4
+- [finding] hop1: found ['30682648', '3725622', '6453945', '7287091']; fused all-golds=3/4
+LLM APPROACH: reason=The question requires multiple pieces of information: (1) British TV series related to magic or magicians released betwe
+   query: (hybrid) "British TV series about magic or magicians released between 1994 and 2"
+   query: (hybrid) "films related to magic or magicians released between 1994 and 2011"
+   query: (fielded) "largest global society supporting magicians"
+   query: (fielded) "founding year of the largest global society supporting magicians"
+EXECUTED → per-gold attribution:
+   gold 6453945 (The Net (UK TV series)): (hybrid) "British TV series about magic or magicians release" @rank9
+   gold 30682648 (The Magicians (UK TV series)): (hybrid) "British TV series about magic or magicians release" @rank1
+   gold 7287091 (Magicians (2007 film)): (hybrid) "British TV series about magic or magicians release" @rank2
+   gold 3725622 (International Magicians Society): (hybrid) "British TV series about magic or magicians release" @rank3
+IN-HOP MEMORY WRITE: hop2 found []; fused 3/4 golds in top-10
+
+--- HOP 3 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop4: found []; fused all-golds=1/4
+- [finding] hop5: found []; fused all-golds=0/4
+- [finding] hop6: found []; fused all-golds=0/4
+- [finding] hop7: found []; fused all-golds=0/4
+- [finding] hop8: found []; fused all-golds=0/4
+- [finding] hop9: found []; fused all-golds=0/4
+- [finding] hop10: found []; fused all-golds=0/4
+- [finding] hop1: found ['30682648', '3725622', '6453945', '7287091']; fused all-golds=3/4
+- [finding] hop2: found []; fused all-golds=3/4
+LLM APPROACH: reason=The question requires multiple pieces of information: (1) British TV series related to magic or magicians released betwe
+   query: (hybrid) "British TV series about magic or magicians released between 1994 and 2"
+   query: (hybrid) "films about magic or magicians released between 1994 and 2011"
+   query: (fielded) "largest global society supporting magicians"
+EXECUTED → per-gold attribution:
+   gold 6453945 (The Net (UK TV series)): (hybrid) "British TV series about magic or magicians release" @rank9
+   gold 30682648 (The Magicians (UK TV series)): (hybrid) "British TV series about magic or magicians release" @rank1
+   gold 7287091 (Magicians (2007 film)): (hybrid) "British TV series about magic or magicians release" @rank2
+   gold 3725622 (International Magicians Society): (hybrid) "British TV series about magic or magicians release" @rank3
+IN-HOP MEMORY WRITE: hop3 found []; fused 3/4 golds in top-10
+
+--- HOP 4 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop5: found []; fused all-golds=0/4
+- [finding] hop6: found []; fused all-golds=0/4
+- [finding] hop7: found []; fused all-golds=0/4
+- [finding] hop8: found []; fused all-golds=0/4
+- [finding] hop9: found []; fused all-golds=0/4
+- [finding] hop10: found []; fused all-golds=0/4
+- [finding] hop1: found ['30682648', '3725622', '6453945', '7287091']; fused all-golds=3/4
+- [finding] hop2: found []; fused all-golds=3/4
+- [finding] hop3: found []; fused all-golds=3/4
+LLM APPROACH: reason=The question requires multiple pieces of information: (1) British TV series related to magic or magicians released betwe
+   query: (hybrid) "British TV series about magic or magicians released between 1994 and 2"
+   query: (hybrid) "films about magic or magicians released between 1994 and 2011"
+   query: (fielded) "largest global society supporting magicians name and founding year"
+EXECUTED → per-gold attribution:
+   gold 6453945 (The Net (UK TV series)): (hybrid) "British TV series about magic or magicians release" @rank9
+   gold 30682648 (The Magicians (UK TV series)): (hybrid) "British TV series about magic or magicians release" @rank1
+   gold 7287091 (Magicians (2007 film)): (hybrid) "British TV series about magic or magicians release" @rank2
+   gold 3725622 (International Magicians Society): (hybrid) "British TV series about magic or magicians release" @rank3
+IN-HOP MEMORY WRITE: hop4 found []; fused 3/4 golds in top-10
+
+--- HOP 5 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop6: found []; fused all-golds=0/4
+- [finding] hop7: found []; fused all-golds=0/4
+- [finding] hop8: found []; fused all-golds=0/4
+- [finding] hop9: found []; fused all-golds=0/4
+- [finding] hop10: found []; fused all-golds=0/4
+- [finding] hop1: found ['30682648', '3725622', '6453945', '7287091']; fused all-golds=3/4
+- [finding] hop2: found []; fused all-golds=3/4
+- [finding] hop3: found []; fused all-golds=3/4
+- [finding] hop4: found []; fused all-golds=3/4
+LLM APPROACH: reason=The question requires multiple pieces of information: (1) British TV series related to magic or magicians released betwe
+   query: (hybrid) "British TV series about magic or magicians released between 1994 and 2"
+   query: (hybrid) "films about magic or magicians released between 1994 and 2011"
+   query: (fielded) "largest global society supporting magicians founding year"
+EXECUTED → per-gold attribution:
+   gold 6453945 (The Net (UK TV series)): (hybrid) "British TV series about magic or magicians release" @rank9
+   gold 30682648 (The Magicians (UK TV series)): (hybrid) "British TV series about magic or magicians release" @rank1
+   gold 7287091 (Magicians (2007 film)): (hybrid) "British TV series about magic or magicians release" @rank2
+   gold 3725622 (International Magicians Society): (hybrid) "British TV series about magic or magicians release" @rank3
+IN-HOP MEMORY WRITE: hop5 found []; fused 3/4 golds in top-10
+
+--- HOP 6 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop7: found []; fused all-golds=0/4
+- [finding] hop8: found []; fused all-golds=0/4
+- [finding] hop9: found []; fused all-golds=0/4
+- [finding] hop10: found []; fused all-golds=0/4
+- [finding] hop1: found ['30682648', '3725622', '6453945', '7287091']; fused all-golds=3/4
+- [finding] hop2: found []; fused all-golds=3/4
+- [finding] hop3: found []; fused all-golds=3/4
+- [finding] hop4: found []; fused all-golds=3/4
+- [finding] hop5: found []; fused all-golds=3/4
+LLM APPROACH: reason=The question requires multiple sub-facts: (1) identify British TV series related to magic/magicians released between 199
+   query: (hybrid) "British TV series about magic or magicians released between 1994 and 2"
+   query: (hybrid) "films related to magic or magicians released between 1994 and 2011"
+   query: (fielded) "largest global society supporting magicians"
+   query: (fielded) "founding year of the largest global society supporting magicians"
+EXECUTED → per-gold attribution:
+   gold 6453945 (The Net (UK TV series)): (hybrid) "British TV series about magic or magicians release" @rank9
+   gold 30682648 (The Magicians (UK TV series)): (hybrid) "British TV series about magic or magicians release" @rank1
+   gold 7287091 (Magicians (2007 film)): (hybrid) "British TV series about magic or magicians release" @rank2
+   gold 3725622 (International Magicians Society): (hybrid) "British TV series about magic or magicians release" @rank3
+IN-HOP MEMORY WRITE: hop6 found []; fused 3/4 golds in top-10
+
+--- HOP 7 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop8: found []; fused all-golds=0/4
+- [finding] hop9: found []; fused all-golds=0/4
+- [finding] hop10: found []; fused all-golds=0/4
+- [finding] hop1: found ['30682648', '3725622', '6453945', '7287091']; fused all-golds=3/4
+- [finding] hop2: found []; fused all-golds=3/4
+- [finding] hop3: found []; fused all-golds=3/4
+- [finding] hop4: found []; fused all-golds=3/4
+- [finding] hop5: found []; fused all-golds=3/4
+- [finding] hop6: found []; fused all-golds=3/4
+LLM APPROACH: reason=The question requires multiple sub-facts: (1) identify British TV series related to magic/magicians released between 199
+   query: (hybrid) "British TV series about magic or magicians released between 1994 and 2"
+   query: (hybrid) "films about magic or magicians released between 1994 and 2011"
+   query: (fielded) "largest global society supporting magicians"
+EXECUTED → per-gold attribution:
+   gold 6453945 (The Net (UK TV series)): (hybrid) "British TV series about magic or magicians release" @rank9
+   gold 30682648 (The Magicians (UK TV series)): (hybrid) "British TV series about magic or magicians release" @rank1
+   gold 7287091 (Magicians (2007 film)): (hybrid) "British TV series about magic or magicians release" @rank2
+   gold 3725622 (International Magicians Society): (hybrid) "British TV series about magic or magicians release" @rank3
+IN-HOP MEMORY WRITE: hop7 found []; fused 3/4 golds in top-10
+
+--- HOP 8 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop9: found []; fused all-golds=0/4
+- [finding] hop10: found []; fused all-golds=0/4
+- [finding] hop1: found ['30682648', '3725622', '6453945', '7287091']; fused all-golds=3/4
+- [finding] hop2: found []; fused all-golds=3/4
+- [finding] hop3: found []; fused all-golds=3/4
+- [finding] hop4: found []; fused all-golds=3/4
+- [finding] hop5: found []; fused all-golds=3/4
+- [finding] hop6: found []; fused all-golds=3/4
+- [finding] hop7: found []; fused all-golds=3/4
+LLM APPROACH: reason=The question requires multiple sub-facts: (1) identify British TV series related to magic or magicians released between 
+   query: (hybrid) "British TV series about magic or magicians released between 1994 and 2"
+   query: (hybrid) "films related to magic or magicians released between 1994 and 2011"
+   query: (fielded) "largest global society supporting magicians"
+   query: (fielded) "founding year of largest global society supporting magicians"
+EXECUTED → per-gold attribution:
+   gold 6453945 (The Net (UK TV series)): (hybrid) "British TV series about magic or magicians release" @rank9
+   gold 30682648 (The Magicians (UK TV series)): (hybrid) "British TV series about magic or magicians release" @rank1
+   gold 7287091 (Magicians (2007 film)): (hybrid) "British TV series about magic or magicians release" @rank2
+   gold 3725622 (International Magicians Society): (hybrid) "British TV series about magic or magicians release" @rank3
+IN-HOP MEMORY WRITE: hop8 found []; fused 3/4 golds in top-10
+
+--- HOP 9 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop10: found []; fused all-golds=0/4
+- [finding] hop1: found ['30682648', '3725622', '6453945', '7287091']; fused all-golds=3/4
+- [finding] hop2: found []; fused all-golds=3/4
+- [finding] hop3: found []; fused all-golds=3/4
+- [finding] hop4: found []; fused all-golds=3/4
+- [finding] hop5: found []; fused all-golds=3/4
+- [finding] hop6: found []; fused all-golds=3/4
+- [finding] hop7: found []; fused all-golds=3/4
+- [finding] hop8: found []; fused all-golds=3/4
+LLM APPROACH: reason=The question requires multiple sub-facts: (1) identify British TV series related to magic/magicians released between 199
+   query: (hybrid) "British TV series about magic or magicians released between 1994 and 2"
+   query: (hybrid) "films related to magic or magicians released between 1994 and 2011"
+   query: (fielded) "largest global society supporting magicians"
+   query: (fielded) "founding year of the largest global society supporting magicians"
+EXECUTED → per-gold attribution:
+   gold 6453945 (The Net (UK TV series)): (hybrid) "British TV series about magic or magicians release" @rank9
+   gold 30682648 (The Magicians (UK TV series)): (hybrid) "British TV series about magic or magicians release" @rank1
+   gold 7287091 (Magicians (2007 film)): (hybrid) "British TV series about magic or magicians release" @rank2
+   gold 3725622 (International Magicians Society): (hybrid) "British TV series about magic or magicians release" @rank3
+IN-HOP MEMORY WRITE: hop9 found []; fused 3/4 golds in top-10
+
+--- HOP 10 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop1: found ['30682648', '3725622', '6453945', '7287091']; fused all-golds=3/4
+- [finding] hop2: found []; fused all-golds=3/4
+- [finding] hop3: found []; fused all-golds=3/4
+- [finding] hop4: found []; fused all-golds=3/4
+- [finding] hop5: found []; fused all-golds=3/4
+- [finding] hop6: found []; fused all-golds=3/4
+- [finding] hop7: found []; fused all-golds=3/4
+- [finding] hop8: found []; fused all-golds=3/4
+- [finding] hop9: found []; fused all-golds=3/4
+LLM APPROACH: reason=The question requires multiple pieces of information: (1) British TV series related to magic or magicians released betwe
+   query: (hybrid) "British TV series about magic or magicians released between 1994 and 2"
+   query: (hybrid) "films about magic or magicians released between 1994 and 2011"
+   query: (fielded) "largest global society supporting magicians name and founding year"
+EXECUTED → per-gold attribution:
+   gold 6453945 (The Net (UK TV series)): (hybrid) "British TV series about magic or magicians release" @rank9
+   gold 30682648 (The Magicians (UK TV series)): (hybrid) "British TV series about magic or magicians release" @rank1
+   gold 7287091 (Magicians (2007 film)): (hybrid) "British TV series about magic or magicians release" @rank2
+   gold 3725622 (International Magicians Society): (hybrid) "British TV series about magic or magicians release" @rank3
+IN-HOP MEMORY WRITE: hop10 found []; fused 3/4 golds in top-10
+RESULT: partial — 3/4 golds after 10 hops.
+
+--- CROSS-QUERY MEMORY WRITE ---
+  remembered winning queries: hybrid:'British TV series about magic or magicia'; hybrid:'British TV series about magic or magicia'; hybrid:'British TV series about magic or magicia'; hybrid:'British TV series about magic or magicia'
+
+
+########################  QUERY 5/10  (4-hop)  ########################
+
+STARTING QUERY: Which National Lacrosse League teams had their inaugural seasons in 1998, 2013, and 2014, and in which cities are these teams based, including a city with a noted Jewish history since the mid-19th century?
+GOLD (oracle, scoring only): ['36715905(2013 Edmonton Rush season)', '20627941(1998 Ontario Raiders season)', '40534419(2014 Vancouver Stealth season)', '19948956(History of the Jews in Vancouver)']
+
+--- LEARNING FROM PREVIOUS QUERIES (recalled from long-term memory) ---
+  - query "Which Texas legislative session occurred closest in time before the li" (4-hop) solved=False: winning queries = fielded:'ZZ Top Live from Texas DVD recording dat'; fielded:'ZZ Top Live from Texas DVD recording dat'; fielded:'Texas legislative sessions dates'; hybrid:'compare timing Texas legislative session'
+  - query "Which British TV series and film related to magic or magicians were re" (4-hop) solved=False: winning queries = hybrid:'British TV series about magic or magicia'; hybrid:'British TV series about magic or magicia'; hybrid:'British TV series about magic or magicia'; hybrid:'British TV series about magic or magicia'
+  - query "Which actor with part Fijian heritage who starred in an award-winning " (4-hop) solved=False: winning queries = fielded:'actor part Fijian heritage starred in aw'; fielded:'Paul Whittaker editor broadsheet newspap'; fielded:'2014 Canadian horror comedy-mystery film'; fielded:'1922 American silent Western film'
+  - query "Which individual named Galloway was active in politics during the 19th" (4-hop) solved=False: winning queries = hybrid:'September 8 number eight music connectio'; hyde:'connection between September 8 and the n'
+
+--- HOP 1 ---
+DYNAMIC PROMPT (fixed base + memory + findings + skills):
+  You are a retrieval agent solving a MULTI-HOP question that needs SEVERAL different documents. Decompose it into sub-facts and, for EACH, pick the best OpenSearch query: mode 'hybrid' (balanced), 'hyde' (when the entity is only DESCRIBED, not named — hallucinate the answer doc), 'fielded' (a named entity → title+text match), 'keyword', or 'dense'. Return ONLY JSON: {"reason":"...","plan":[{"mode":"hyde","query":"..."}, ...]}.
+  
+  MEMORY (wins from earlier queries):
+  - query "Which Texas legislative session occurred closest in time before the li" (4-hop) solved=False: winning queries = fielded:'ZZ Top Live from Texas DVD recording dat'; fielded:'ZZ Top Live from Texas DVD recording dat'; fielded:'Texas legislative sessions dates'; hybrid:'compare timing Texas legislative session'
+  - query "Which British TV series and film related to magic or magicians were re" (4-hop) solved=False: win …
+LLM APPROACH: reason=The question requires identifying NLL teams with inaugural seasons in three specific years (1998, 2013, 2014), then find
+   query: (fielded) "National Lacrosse League teams inaugural season 1998"
+   query: (fielded) "National Lacrosse League teams inaugural season 2013"
+   query: (fielded) "National Lacrosse League teams inaugural season 2014"
+   query: (fielded) "National Lacrosse League team city base"
+   query: (hybrid) "cities with noted Jewish history since mid-19th century"
+EXECUTED → per-gold attribution:
+   gold 36715905 (2013 Edmonton Rush season): (fielded) "National Lacrosse League teams inaugural season 19" @rank4
+   gold 20627941 (1998 Ontario Raiders season): (fielded) "National Lacrosse League teams inaugural season 19" @rank1
+   gold 40534419 (2014 Vancouver Stealth season): (fielded) "National Lacrosse League teams inaugural season 19" @rank2
+   gold 19948956 (History of the Jews in Vancouver): (hybrid) "cities with noted Jewish history since mid-19th ce" @rank1
+IN-HOP MEMORY WRITE: hop1 found ['19948956', '20627941', '36715905', '40534419']; fused 3/4 golds in top-10
+
+--- HOP 2 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop3: found []; fused all-golds=3/4
+- [finding] hop4: found []; fused all-golds=3/4
+- [finding] hop5: found []; fused all-golds=3/4
+- [finding] hop6: found []; fused all-golds=3/4
+- [finding] hop7: found []; fused all-golds=3/4
+- [finding] hop8: found []; fused all-golds=3/4
+- [finding] hop9: found []; fused all-golds=3/4
+- [finding] hop10: found []; fused all-golds=3/4
+- [finding] hop1: found ['19948956', '20627941', '36715905', '40534419']; fused all-golds=3/4
+LLM APPROACH: reason=The question requires identifying NLL teams with inaugural seasons in three specific years (1998, 2013, 2014), then find
+   query: (fielded) "National Lacrosse League teams inaugural season 1998"
+   query: (fielded) "National Lacrosse League teams inaugural season 2013"
+   query: (fielded) "National Lacrosse League teams inaugural season 2014"
+   query: (hybrid) "cities where National Lacrosse League teams with inaugural seasons 199"
+   query: (hyde) "city with noted Jewish history since mid-19th century"
+EXECUTED → per-gold attribution:
+   gold 36715905 (2013 Edmonton Rush season): (fielded) "National Lacrosse League teams inaugural season 19" @rank4
+   gold 20627941 (1998 Ontario Raiders season): (fielded) "National Lacrosse League teams inaugural season 19" @rank1
+   gold 40534419 (2014 Vancouver Stealth season): (fielded) "National Lacrosse League teams inaugural season 19" @rank2
+   gold 19948956 (History of the Jews in Vancouver): (hybrid) "cities with noted Jewish history since mid-19th ce" @rank1
+IN-HOP MEMORY WRITE: hop2 found []; fused 3/4 golds in top-10
+
+--- HOP 3 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop4: found []; fused all-golds=3/4
+- [finding] hop5: found []; fused all-golds=3/4
+- [finding] hop6: found []; fused all-golds=3/4
+- [finding] hop7: found []; fused all-golds=3/4
+- [finding] hop8: found []; fused all-golds=3/4
+- [finding] hop9: found []; fused all-golds=3/4
+- [finding] hop10: found []; fused all-golds=3/4
+- [finding] hop1: found ['19948956', '20627941', '36715905', '40534419']; fused all-golds=3/4
+- [finding] hop2: found []; fused all-golds=3/4
+LLM APPROACH: reason=The question requires identifying NLL teams with inaugural seasons in 1998, 2013, and 2014, then finding the cities they
+   query: (hybrid) "National Lacrosse League teams inaugural seasons 1998 2013 2014"
+   query: (hybrid) "National Lacrosse League teams home cities"
+   query: (hyde) "city with notable Jewish history since mid-19th century"
+EXECUTED → per-gold attribution:
+   gold 36715905 (2013 Edmonton Rush season): (fielded) "National Lacrosse League teams inaugural season 19" @rank4
+   gold 20627941 (1998 Ontario Raiders season): (fielded) "National Lacrosse League teams inaugural season 19" @rank1
+   gold 40534419 (2014 Vancouver Stealth season): (fielded) "National Lacrosse League teams inaugural season 19" @rank2
+   gold 19948956 (History of the Jews in Vancouver): (hybrid) "cities with noted Jewish history since mid-19th ce" @rank1
+IN-HOP MEMORY WRITE: hop3 found []; fused 3/4 golds in top-10
+
+--- HOP 4 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop5: found []; fused all-golds=3/4
+- [finding] hop6: found []; fused all-golds=3/4
+- [finding] hop7: found []; fused all-golds=3/4
+- [finding] hop8: found []; fused all-golds=3/4
+- [finding] hop9: found []; fused all-golds=3/4
+- [finding] hop10: found []; fused all-golds=3/4
+- [finding] hop1: found ['19948956', '20627941', '36715905', '40534419']; fused all-golds=3/4
+- [finding] hop2: found []; fused all-golds=3/4
+- [finding] hop3: found []; fused all-golds=3/4
+LLM APPROACH: reason=The question requires identifying NLL teams with inaugural seasons in three specific years (1998, 2013, 2014), then find
+   query: (fielded) "National Lacrosse League teams inaugural season 1998"
+   query: (fielded) "National Lacrosse League teams inaugural season 2013"
+   query: (fielded) "National Lacrosse League teams inaugural season 2014"
+   query: (fielded) "National Lacrosse League team city base"
+   query: (hybrid) "cities with noted Jewish history since mid-19th century"
+EXECUTED → per-gold attribution:
+   gold 36715905 (2013 Edmonton Rush season): (fielded) "National Lacrosse League teams inaugural season 19" @rank4
+   gold 20627941 (1998 Ontario Raiders season): (fielded) "National Lacrosse League teams inaugural season 19" @rank1
+   gold 40534419 (2014 Vancouver Stealth season): (fielded) "National Lacrosse League teams inaugural season 19" @rank2
+   gold 19948956 (History of the Jews in Vancouver): (hybrid) "cities with noted Jewish history since mid-19th ce" @rank1
+IN-HOP MEMORY WRITE: hop4 found []; fused 3/4 golds in top-10
+
+--- HOP 5 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop6: found []; fused all-golds=3/4
+- [finding] hop7: found []; fused all-golds=3/4
+- [finding] hop8: found []; fused all-golds=3/4
+- [finding] hop9: found []; fused all-golds=3/4
+- [finding] hop10: found []; fused all-golds=3/4
+- [finding] hop1: found ['19948956', '20627941', '36715905', '40534419']; fused all-golds=3/4
+- [finding] hop2: found []; fused all-golds=3/4
+- [finding] hop3: found []; fused all-golds=3/4
+- [finding] hop4: found []; fused all-golds=3/4
+LLM APPROACH: reason=The question requires identifying NLL teams with inaugural seasons in three specific years (1998, 2013, 2014), then find
+   query: (fielded) "National Lacrosse League teams inaugural season 1998"
+   query: (fielded) "National Lacrosse League teams inaugural season 2013"
+   query: (fielded) "National Lacrosse League teams inaugural season 2014"
+   query: (fielded) "National Lacrosse League team city base"
+   query: (hybrid) "cities with notable Jewish history since mid-19th century"
+EXECUTED → per-gold attribution:
+   gold 36715905 (2013 Edmonton Rush season): (fielded) "National Lacrosse League teams inaugural season 19" @rank4
+   gold 20627941 (1998 Ontario Raiders season): (fielded) "National Lacrosse League teams inaugural season 19" @rank1
+   gold 40534419 (2014 Vancouver Stealth season): (fielded) "National Lacrosse League teams inaugural season 19" @rank2
+   gold 19948956 (History of the Jews in Vancouver): (hybrid) "cities with noted Jewish history since mid-19th ce" @rank1
+IN-HOP MEMORY WRITE: hop5 found []; fused 3/4 golds in top-10
+
+--- HOP 6 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop7: found []; fused all-golds=3/4
+- [finding] hop8: found []; fused all-golds=3/4
+- [finding] hop9: found []; fused all-golds=3/4
+- [finding] hop10: found []; fused all-golds=3/4
+- [finding] hop1: found ['19948956', '20627941', '36715905', '40534419']; fused all-golds=3/4
+- [finding] hop2: found []; fused all-golds=3/4
+- [finding] hop3: found []; fused all-golds=3/4
+- [finding] hop4: found []; fused all-golds=3/4
+- [finding] hop5: found []; fused all-golds=3/4
+LLM APPROACH: reason=The question requires identifying NLL teams with inaugural seasons in three specific years (1998, 2013, 2014), then find
+   query: (fielded) "National Lacrosse League teams inaugural season 1998"
+   query: (fielded) "National Lacrosse League teams inaugural season 2013"
+   query: (fielded) "National Lacrosse League teams inaugural season 2014"
+   query: (fielded) "National Lacrosse League team city location"
+   query: (hybrid) "city with noted Jewish history since mid-19th century"
+EXECUTED → per-gold attribution:
+   gold 36715905 (2013 Edmonton Rush season): (fielded) "National Lacrosse League teams inaugural season 19" @rank4
+   gold 20627941 (1998 Ontario Raiders season): (fielded) "National Lacrosse League teams inaugural season 19" @rank1
+   gold 40534419 (2014 Vancouver Stealth season): (fielded) "National Lacrosse League teams inaugural season 19" @rank2
+   gold 19948956 (History of the Jews in Vancouver): (hybrid) "cities with noted Jewish history since mid-19th ce" @rank1
+IN-HOP MEMORY WRITE: hop6 found []; fused 3/4 golds in top-10
+
+--- HOP 7 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop8: found []; fused all-golds=3/4
+- [finding] hop9: found []; fused all-golds=3/4
+- [finding] hop10: found []; fused all-golds=3/4
+- [finding] hop1: found ['19948956', '20627941', '36715905', '40534419']; fused all-golds=3/4
+- [finding] hop2: found []; fused all-golds=3/4
+- [finding] hop3: found []; fused all-golds=3/4
+- [finding] hop4: found []; fused all-golds=3/4
+- [finding] hop5: found []; fused all-golds=3/4
+- [finding] hop6: found []; fused all-golds=3/4
+LLM APPROACH: reason=The question requires identifying NLL teams with inaugural seasons in three specific years (1998, 2013, 2014), then find
+   query: (fielded) "National Lacrosse League teams inaugural season 1998"
+   query: (fielded) "National Lacrosse League teams inaugural season 2013"
+   query: (fielded) "National Lacrosse League teams inaugural season 2014"
+   query: (fielded) "National Lacrosse League team city base"
+   query: (hybrid) "cities with noted Jewish history since mid-19th century"
+EXECUTED → per-gold attribution:
+   gold 36715905 (2013 Edmonton Rush season): (fielded) "National Lacrosse League teams inaugural season 19" @rank4
+   gold 20627941 (1998 Ontario Raiders season): (fielded) "National Lacrosse League teams inaugural season 19" @rank1
+   gold 40534419 (2014 Vancouver Stealth season): (fielded) "National Lacrosse League teams inaugural season 19" @rank2
+   gold 19948956 (History of the Jews in Vancouver): (hybrid) "cities with noted Jewish history since mid-19th ce" @rank1
+IN-HOP MEMORY WRITE: hop7 found []; fused 3/4 golds in top-10
+
+--- HOP 8 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop9: found []; fused all-golds=3/4
+- [finding] hop10: found []; fused all-golds=3/4
+- [finding] hop1: found ['19948956', '20627941', '36715905', '40534419']; fused all-golds=3/4
+- [finding] hop2: found []; fused all-golds=3/4
+- [finding] hop3: found []; fused all-golds=3/4
+- [finding] hop4: found []; fused all-golds=3/4
+- [finding] hop5: found []; fused all-golds=3/4
+- [finding] hop6: found []; fused all-golds=3/4
+- [finding] hop7: found []; fused all-golds=3/4
+LLM APPROACH: reason=The question requires identifying NLL teams with inaugural seasons in three specific years (1998, 2013, 2014), then find
+   query: (fielded) "National Lacrosse League teams inaugural season 1998"
+   query: (fielded) "National Lacrosse League teams inaugural season 2013"
+   query: (fielded) "National Lacrosse League teams inaugural season 2014"
+   query: (fielded) "city base of National Lacrosse League team"
+   query: (hybrid) "cities with notable Jewish history since mid-19th century"
+EXECUTED → per-gold attribution:
+   gold 36715905 (2013 Edmonton Rush season): (fielded) "National Lacrosse League teams inaugural season 19" @rank4
+   gold 20627941 (1998 Ontario Raiders season): (fielded) "National Lacrosse League teams inaugural season 19" @rank1
+   gold 40534419 (2014 Vancouver Stealth season): (fielded) "National Lacrosse League teams inaugural season 19" @rank2
+   gold 19948956 (History of the Jews in Vancouver): (hybrid) "cities with noted Jewish history since mid-19th ce" @rank1
+IN-HOP MEMORY WRITE: hop8 found []; fused 3/4 golds in top-10
+
+--- HOP 9 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop10: found []; fused all-golds=3/4
+- [finding] hop1: found ['19948956', '20627941', '36715905', '40534419']; fused all-golds=3/4
+- [finding] hop2: found []; fused all-golds=3/4
+- [finding] hop3: found []; fused all-golds=3/4
+- [finding] hop4: found []; fused all-golds=3/4
+- [finding] hop5: found []; fused all-golds=3/4
+- [finding] hop6: found []; fused all-golds=3/4
+- [finding] hop7: found []; fused all-golds=3/4
+- [finding] hop8: found []; fused all-golds=3/4
+LLM APPROACH: reason=The question requires identifying NLL teams with inaugural seasons in three specific years (1998, 2013, 2014), then find
+   query: (fielded) "National Lacrosse League teams inaugural season 1998"
+   query: (fielded) "National Lacrosse League teams inaugural season 2013"
+   query: (fielded) "National Lacrosse League teams inaugural season 2014"
+   query: (fielded) "city base of National Lacrosse League team"
+   query: (hybrid) "cities with notable Jewish history since mid-19th century"
+EXECUTED → per-gold attribution:
+   gold 36715905 (2013 Edmonton Rush season): (fielded) "National Lacrosse League teams inaugural season 19" @rank4
+   gold 20627941 (1998 Ontario Raiders season): (fielded) "National Lacrosse League teams inaugural season 19" @rank1
+   gold 40534419 (2014 Vancouver Stealth season): (fielded) "National Lacrosse League teams inaugural season 19" @rank2
+   gold 19948956 (History of the Jews in Vancouver): (hybrid) "cities with noted Jewish history since mid-19th ce" @rank1
+IN-HOP MEMORY WRITE: hop9 found []; fused 3/4 golds in top-10
+
+--- HOP 10 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop1: found ['19948956', '20627941', '36715905', '40534419']; fused all-golds=3/4
+- [finding] hop2: found []; fused all-golds=3/4
+- [finding] hop3: found []; fused all-golds=3/4
+- [finding] hop4: found []; fused all-golds=3/4
+- [finding] hop5: found []; fused all-golds=3/4
+- [finding] hop6: found []; fused all-golds=3/4
+- [finding] hop7: found []; fused all-golds=3/4
+- [finding] hop8: found []; fused all-golds=3/4
+- [finding] hop9: found []; fused all-golds=3/4
+LLM APPROACH: reason=The question requires identifying NLL teams with inaugural seasons in three specific years (1998, 2013, 2014), then find
+   query: (fielded) "National Lacrosse League teams inaugural season 1998"
+   query: (fielded) "National Lacrosse League teams inaugural season 2013"
+   query: (fielded) "National Lacrosse League teams inaugural season 2014"
+   query: (hybrid) "cities where National Lacrosse League teams with inaugural seasons 199"
+   query: (hyde) "city with a noted Jewish history since the mid-19th century"
+EXECUTED → per-gold attribution:
+   gold 36715905 (2013 Edmonton Rush season): (fielded) "National Lacrosse League teams inaugural season 19" @rank4
+   gold 20627941 (1998 Ontario Raiders season): (fielded) "National Lacrosse League teams inaugural season 19" @rank1
+   gold 40534419 (2014 Vancouver Stealth season): (fielded) "National Lacrosse League teams inaugural season 19" @rank2
+   gold 19948956 (History of the Jews in Vancouver): (hybrid) "cities with noted Jewish history since mid-19th ce" @rank1
+IN-HOP MEMORY WRITE: hop10 found []; fused 3/4 golds in top-10
+RESULT: partial — 3/4 golds after 10 hops.
+
+--- CROSS-QUERY MEMORY WRITE ---
+  remembered winning queries: fielded:'National Lacrosse League teams inaugural'; fielded:'National Lacrosse League teams inaugural'; fielded:'National Lacrosse League teams inaugural'; hybrid:'cities with noted Jewish history since m'
+
+
+########################  QUERY 6/10  (4-hop)  ########################
+
+STARTING QUERY: Which Japanese politician from Nagoya, who graduated from Nagoya Institute of Technology and left JR Central in 1994, shares a first name with a video game company that joined the Bandai Group in 1990, and how does this relate to the Czech-developed adventure game released in 2008?
+GOLD (oracle, scoring only): ['39464889(Memento Mori (video game))', '5109583(Yutaka (video game company))', '13676614(Yutaka Banno)', '13721840(Ichiro Miyashita)']
+
+--- LEARNING FROM PREVIOUS QUERIES (recalled from long-term memory) ---
+  - query "Which individual named Galloway was active in politics during the 19th" (4-hop) solved=False: winning queries = hybrid:'September 8 number eight music connectio'; hyde:'connection between September 8 and the n'
+  - query "Which actor with part Fijian heritage who starred in an award-winning " (4-hop) solved=False: winning queries = fielded:'actor part Fijian heritage starred in aw'; fielded:'Paul Whittaker editor broadsheet newspap'; fielded:'2014 Canadian horror comedy-mystery film'; fielded:'1922 American silent Western film'
+  - query "Which National Lacrosse League teams had their inaugural seasons in 19" (4-hop) solved=False: winning queries = fielded:'National Lacrosse League teams inaugural'; fielded:'National Lacrosse League teams inaugural'; fielded:'National Lacrosse League teams inaugural'; hybrid:'cities with noted Jewish history since m'
+  - query "Which Texas legislative session occurred closest in time before the li" (4-hop) solved=False: winning queries = fielded:'ZZ Top Live from Texas DVD recording dat'; fielded:'ZZ Top Live from Texas DVD recording dat'; fielded:'Texas legislative sessions dates'; hybrid:'compare timing Texas legislative session'
+
+--- HOP 1 ---
+DYNAMIC PROMPT (fixed base + memory + findings + skills):
+  You are a retrieval agent solving a MULTI-HOP question that needs SEVERAL different documents. Decompose it into sub-facts and, for EACH, pick the best OpenSearch query: mode 'hybrid' (balanced), 'hyde' (when the entity is only DESCRIBED, not named — hallucinate the answer doc), 'fielded' (a named entity → title+text match), 'keyword', or 'dense'. Return ONLY JSON: {"reason":"...","plan":[{"mode":"hyde","query":"..."}, ...]}.
+  
+  MEMORY (wins from earlier queries):
+  - query "Which individual named Galloway was active in politics during the 19th" (4-hop) solved=False: winning queries = hybrid:'September 8 number eight music connectio'; hyde:'connection between September 8 and the n'
+  - query "Which actor with part Fijian heritage who starred in an award-winning " (4-hop) solved=False: winning queries = fielded:'actor part Fijian heritage starred in aw'; fielded:'Paul Whittaker editor b …
+LLM APPROACH: reason=The question requires multiple hops: (1) Identify the Japanese politician from Nagoya who graduated from Nagoya Institut
+   query: (fielded) "Japanese politician Nagoya graduated Nagoya Institute of Technology le"
+   query: (fielded) "video game company joined Bandai Group 1990"
+   query: (hybrid) "Czech-developed adventure game released 2008"
+   query: (hybrid) "relation between Japanese politician first name and Czech adventure ga"
+EXECUTED → per-gold attribution:
+   gold 39464889 (Memento Mori (video game)): (fielded) "video game company joined Bandai Group 1990" @rank6
+   gold 5109583 (Yutaka (video game company)): (fielded) "video game company joined Bandai Group 1990" @rank1
+   gold 13676614 (Yutaka Banno): (fielded) "Japanese politician Nagoya graduated Nagoya Instit" @rank1
+   gold 13721840 (Ichiro Miyashita): NOT found yet
+IN-HOP MEMORY WRITE: hop1 found ['13676614', '39464889', '5109583']; fused 3/4 golds in top-10
+
+--- HOP 2 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop3: found []; fused all-golds=3/4
+- [finding] hop4: found []; fused all-golds=3/4
+- [finding] hop5: found []; fused all-golds=3/4
+- [finding] hop6: found []; fused all-golds=3/4
+- [finding] hop7: found []; fused all-golds=3/4
+- [finding] hop8: found []; fused all-golds=3/4
+- [finding] hop9: found []; fused all-golds=3/4
+- [finding] hop10: found []; fused all-golds=3/4
+- [finding] hop1: found ['13676614', '39464889', '5109583']; fused all-golds=3/4
+LLM APPROACH: reason=The question requires multiple hops: (1) Identify the Japanese politician from Nagoya who graduated from Nagoya Institut
+   query: (fielded) "Japanese politician Nagoya graduated Nagoya Institute of Technology le"
+   query: (fielded) "video game company joined Bandai Group 1990"
+   query: (hybrid) "Czech-developed adventure game released 2008 relation to Bandai Group "
+EXECUTED → per-gold attribution:
+   gold 39464889 (Memento Mori (video game)): (fielded) "video game company joined Bandai Group 1990" @rank6
+   gold 5109583 (Yutaka (video game company)): (fielded) "video game company joined Bandai Group 1990" @rank1
+   gold 13676614 (Yutaka Banno): (fielded) "Japanese politician Nagoya graduated Nagoya Instit" @rank1
+   gold 13721840 (Ichiro Miyashita): NOT found yet
+IN-HOP MEMORY WRITE: hop2 found []; fused 3/4 golds in top-10
+
+--- HOP 3 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop4: found []; fused all-golds=3/4
+- [finding] hop5: found []; fused all-golds=3/4
+- [finding] hop6: found []; fused all-golds=3/4
+- [finding] hop7: found []; fused all-golds=3/4
+- [finding] hop8: found []; fused all-golds=3/4
+- [finding] hop9: found []; fused all-golds=3/4
+- [finding] hop10: found []; fused all-golds=3/4
+- [finding] hop1: found ['13676614', '39464889', '5109583']; fused all-golds=3/4
+- [finding] hop2: found []; fused all-golds=3/4
+LLM APPROACH: reason=The question requires multiple hops: (1) Identify the Japanese politician from Nagoya who graduated from Nagoya Institut
+   query: (fielded) "Japanese politician Nagoya graduated Nagoya Institute of Technology le"
+   query: (fielded) "video game company joined Bandai Group 1990"
+   query: (hybrid) "Czech-developed adventure game released 2008 relation to video game co"
+EXECUTED → per-gold attribution:
+   gold 39464889 (Memento Mori (video game)): (fielded) "video game company joined Bandai Group 1990" @rank6
+   gold 5109583 (Yutaka (video game company)): (fielded) "video game company joined Bandai Group 1990" @rank1
+   gold 13676614 (Yutaka Banno): (fielded) "Japanese politician Nagoya graduated Nagoya Instit" @rank1
+   gold 13721840 (Ichiro Miyashita): NOT found yet
+IN-HOP MEMORY WRITE: hop3 found []; fused 3/4 golds in top-10
+
+--- HOP 4 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop5: found []; fused all-golds=3/4
+- [finding] hop6: found []; fused all-golds=3/4
+- [finding] hop7: found []; fused all-golds=3/4
+- [finding] hop8: found []; fused all-golds=3/4
+- [finding] hop9: found []; fused all-golds=3/4
+- [finding] hop10: found []; fused all-golds=3/4
+- [finding] hop1: found ['13676614', '39464889', '5109583']; fused all-golds=3/4
+- [finding] hop2: found []; fused all-golds=3/4
+- [finding] hop3: found []; fused all-golds=3/4
+LLM APPROACH: reason=The question requires multiple hops: (1) Identify the Japanese politician from Nagoya who graduated from Nagoya Institut
+   query: (fielded) "Japanese politician Nagoya graduated Nagoya Institute of Technology le"
+   query: (fielded) "video game company joined Bandai Group 1990"
+   query: (hybrid) "Czech-developed adventure game released 2008 relation to video game co"
+EXECUTED → per-gold attribution:
+   gold 39464889 (Memento Mori (video game)): (fielded) "video game company joined Bandai Group 1990" @rank6
+   gold 5109583 (Yutaka (video game company)): (fielded) "video game company joined Bandai Group 1990" @rank1
+   gold 13676614 (Yutaka Banno): (fielded) "Japanese politician Nagoya graduated Nagoya Instit" @rank1
+   gold 13721840 (Ichiro Miyashita): NOT found yet
+IN-HOP MEMORY WRITE: hop4 found []; fused 3/4 golds in top-10
+
+--- HOP 5 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop6: found []; fused all-golds=3/4
+- [finding] hop7: found []; fused all-golds=3/4
+- [finding] hop8: found []; fused all-golds=3/4
+- [finding] hop9: found []; fused all-golds=3/4
+- [finding] hop10: found []; fused all-golds=3/4
+- [finding] hop1: found ['13676614', '39464889', '5109583']; fused all-golds=3/4
+- [finding] hop2: found []; fused all-golds=3/4
+- [finding] hop3: found []; fused all-golds=3/4
+- [finding] hop4: found []; fused all-golds=3/4
+LLM APPROACH: reason=The question requires multiple hops: (1) Identify the Japanese politician from Nagoya who graduated from Nagoya Institut
+   query: (fielded) "Japanese politician Nagoya graduated Nagoya Institute of Technology le"
+   query: (fielded) "video game company joined Bandai Group 1990"
+   query: (hybrid) "Czech-developed adventure game released 2008 relation to video game co"
+EXECUTED → per-gold attribution:
+   gold 39464889 (Memento Mori (video game)): (fielded) "video game company joined Bandai Group 1990" @rank6
+   gold 5109583 (Yutaka (video game company)): (fielded) "video game company joined Bandai Group 1990" @rank1
+   gold 13676614 (Yutaka Banno): (fielded) "Japanese politician Nagoya graduated Nagoya Instit" @rank1
+   gold 13721840 (Ichiro Miyashita): NOT found yet
+IN-HOP MEMORY WRITE: hop5 found []; fused 3/4 golds in top-10
+
+--- HOP 6 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop7: found []; fused all-golds=3/4
+- [finding] hop8: found []; fused all-golds=3/4
+- [finding] hop9: found []; fused all-golds=3/4
+- [finding] hop10: found []; fused all-golds=3/4
+- [finding] hop1: found ['13676614', '39464889', '5109583']; fused all-golds=3/4
+- [finding] hop2: found []; fused all-golds=3/4
+- [finding] hop3: found []; fused all-golds=3/4
+- [finding] hop4: found []; fused all-golds=3/4
+- [finding] hop5: found []; fused all-golds=3/4
+LLM APPROACH: reason=The question requires multiple hops: (1) Identify the Japanese politician from Nagoya who graduated from Nagoya Institut
+   query: (fielded) "Japanese politician Nagoya graduated Nagoya Institute of Technology le"
+   query: (fielded) "video game company joined Bandai Group 1990"
+   query: (hybrid) "Czech-developed adventure game released 2008 relation to video game co"
+EXECUTED → per-gold attribution:
+   gold 39464889 (Memento Mori (video game)): (fielded) "video game company joined Bandai Group 1990" @rank6
+   gold 5109583 (Yutaka (video game company)): (fielded) "video game company joined Bandai Group 1990" @rank1
+   gold 13676614 (Yutaka Banno): (fielded) "Japanese politician Nagoya graduated Nagoya Instit" @rank1
+   gold 13721840 (Ichiro Miyashita): NOT found yet
+IN-HOP MEMORY WRITE: hop6 found []; fused 3/4 golds in top-10
+
+--- HOP 7 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop8: found []; fused all-golds=3/4
+- [finding] hop9: found []; fused all-golds=3/4
+- [finding] hop10: found []; fused all-golds=3/4
+- [finding] hop1: found ['13676614', '39464889', '5109583']; fused all-golds=3/4
+- [finding] hop2: found []; fused all-golds=3/4
+- [finding] hop3: found []; fused all-golds=3/4
+- [finding] hop4: found []; fused all-golds=3/4
+- [finding] hop5: found []; fused all-golds=3/4
+- [finding] hop6: found []; fused all-golds=3/4
+LLM APPROACH: reason=The question requires multiple hops: (1) Identify the Japanese politician from Nagoya who graduated from Nagoya Institut
+   query: (fielded) "Japanese politician Nagoya graduated Nagoya Institute of Technology le"
+   query: (fielded) "video game company joined Bandai Group 1990"
+   query: (hybrid) "Czech-developed adventure game released 2008"
+   query: (hybrid) "relation between Japanese politician first name and video game company"
+EXECUTED → per-gold attribution:
+   gold 39464889 (Memento Mori (video game)): (fielded) "video game company joined Bandai Group 1990" @rank6
+   gold 5109583 (Yutaka (video game company)): (fielded) "video game company joined Bandai Group 1990" @rank1
+   gold 13676614 (Yutaka Banno): (fielded) "Japanese politician Nagoya graduated Nagoya Instit" @rank1
+   gold 13721840 (Ichiro Miyashita): NOT found yet
+IN-HOP MEMORY WRITE: hop7 found []; fused 3/4 golds in top-10
+
+--- HOP 8 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop9: found []; fused all-golds=3/4
+- [finding] hop10: found []; fused all-golds=3/4
+- [finding] hop1: found ['13676614', '39464889', '5109583']; fused all-golds=3/4
+- [finding] hop2: found []; fused all-golds=3/4
+- [finding] hop3: found []; fused all-golds=3/4
+- [finding] hop4: found []; fused all-golds=3/4
+- [finding] hop5: found []; fused all-golds=3/4
+- [finding] hop6: found []; fused all-golds=3/4
+- [finding] hop7: found []; fused all-golds=3/4
+LLM APPROACH: reason=The question requires multiple hops: (1) Identify the Japanese politician from Nagoya who graduated from Nagoya Institut
+   query: (fielded) "Japanese politician Nagoya graduated Nagoya Institute of Technology le"
+   query: (fielded) "video game company joined Bandai Group 1990"
+   query: (hybrid) "Czech-developed adventure game released 2008"
+   query: (hybrid) "relation between Japanese politician first name and video game company"
+EXECUTED → per-gold attribution:
+   gold 39464889 (Memento Mori (video game)): (fielded) "video game company joined Bandai Group 1990" @rank6
+   gold 5109583 (Yutaka (video game company)): (fielded) "video game company joined Bandai Group 1990" @rank1
+   gold 13676614 (Yutaka Banno): (fielded) "Japanese politician Nagoya graduated Nagoya Instit" @rank1
+   gold 13721840 (Ichiro Miyashita): NOT found yet
+IN-HOP MEMORY WRITE: hop8 found []; fused 3/4 golds in top-10
+
+--- HOP 9 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop10: found []; fused all-golds=3/4
+- [finding] hop1: found ['13676614', '39464889', '5109583']; fused all-golds=3/4
+- [finding] hop2: found []; fused all-golds=3/4
+- [finding] hop3: found []; fused all-golds=3/4
+- [finding] hop4: found []; fused all-golds=3/4
+- [finding] hop5: found []; fused all-golds=3/4
+- [finding] hop6: found []; fused all-golds=3/4
+- [finding] hop7: found []; fused all-golds=3/4
+- [finding] hop8: found []; fused all-golds=3/4
+LLM APPROACH: reason=The question requires multiple hops: (1) Identify the Japanese politician from Nagoya who graduated from Nagoya Institut
+   query: (fielded) "Japanese politician Nagoya graduated Nagoya Institute of Technology le"
+   query: (fielded) "video game company joined Bandai Group 1990"
+   query: (hybrid) "Czech-developed adventure game released 2008"
+   query: (hybrid) "relation between Japanese politician first name and Czech adventure ga"
+EXECUTED → per-gold attribution:
+   gold 39464889 (Memento Mori (video game)): (fielded) "video game company joined Bandai Group 1990" @rank6
+   gold 5109583 (Yutaka (video game company)): (fielded) "video game company joined Bandai Group 1990" @rank1
+   gold 13676614 (Yutaka Banno): (fielded) "Japanese politician Nagoya graduated Nagoya Instit" @rank1
+   gold 13721840 (Ichiro Miyashita): NOT found yet
+IN-HOP MEMORY WRITE: hop9 found []; fused 3/4 golds in top-10
+
+--- HOP 10 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop1: found ['13676614', '39464889', '5109583']; fused all-golds=3/4
+- [finding] hop2: found []; fused all-golds=3/4
+- [finding] hop3: found []; fused all-golds=3/4
+- [finding] hop4: found []; fused all-golds=3/4
+- [finding] hop5: found []; fused all-golds=3/4
+- [finding] hop6: found []; fused all-golds=3/4
+- [finding] hop7: found []; fused all-golds=3/4
+- [finding] hop8: found []; fused all-golds=3/4
+- [finding] hop9: found []; fused all-golds=3/4
+LLM APPROACH: reason=The question requires multiple hops: (1) Identify the Japanese politician from Nagoya who graduated from Nagoya Institut
+   query: (fielded) "Japanese politician Nagoya graduated Nagoya Institute of Technology le"
+   query: (fielded) "video game company joined Bandai Group 1990"
+   query: (hybrid) "Czech-developed adventure game released 2008"
+   query: (hybrid) "relation between Japanese politician first name and Czech adventure ga"
+EXECUTED → per-gold attribution:
+   gold 39464889 (Memento Mori (video game)): (fielded) "video game company joined Bandai Group 1990" @rank6
+   gold 5109583 (Yutaka (video game company)): (fielded) "video game company joined Bandai Group 1990" @rank1
+   gold 13676614 (Yutaka Banno): (fielded) "Japanese politician Nagoya graduated Nagoya Instit" @rank1
+   gold 13721840 (Ichiro Miyashita): NOT found yet
+IN-HOP MEMORY WRITE: hop10 found []; fused 3/4 golds in top-10
+RESULT: partial — 3/4 golds after 10 hops.
+
+--- CROSS-QUERY MEMORY WRITE ---
+  remembered winning queries: fielded:'Japanese politician Nagoya graduated Nag'; fielded:'video game company joined Bandai Group 1'; fielded:'video game company joined Bandai Group 1'
+
+
+########################  QUERY 7/10  (4-hop)  ########################
+
+STARTING QUERY: Which high school among Middleton High School, Spring Hill High School, Magnet Cove High School, and Clarendon High School is closed, which one has a magnet program with five academies, and which two are sole high schools administered by their respective school districts in Arkansas?
+GOLD (oracle, scoring only): ['15143655(Middleton High School (South Carolina))', '52452897(Spring Hill High School (South Carolina))', '38799206(Magnet Cove High School)', '39001515(Clarendon High School (Arkansas))']
+
+--- LEARNING FROM PREVIOUS QUERIES (recalled from long-term memory) ---
+  - query "Which National Lacrosse League teams had their inaugural seasons in 19" (4-hop) solved=False: winning queries = fielded:'National Lacrosse League teams inaugural'; fielded:'National Lacrosse League teams inaugural'; fielded:'National Lacrosse League teams inaugural'; hybrid:'cities with noted Jewish history since m'
+  - query "Which Texas legislative session occurred closest in time before the li" (4-hop) solved=False: winning queries = fielded:'ZZ Top Live from Texas DVD recording dat'; fielded:'ZZ Top Live from Texas DVD recording dat'; fielded:'Texas legislative sessions dates'; hybrid:'compare timing Texas legislative session'
+  - query "Which Japanese politician from Nagoya, who graduated from Nagoya Insti" (4-hop) solved=False: winning queries = fielded:'Japanese politician Nagoya graduated Nag'; fielded:'video game company joined Bandai Group 1'; fielded:'video game company joined Bandai Group 1'
+  - query "Which British TV series and film related to magic or magicians were re" (4-hop) solved=False: winning queries = hybrid:'British TV series about magic or magicia'; hybrid:'British TV series about magic or magicia'; hybrid:'British TV series about magic or magicia'; hybrid:'British TV series about magic or magicia'
+
+--- HOP 1 ---
+DYNAMIC PROMPT (fixed base + memory + findings + skills):
+  You are a retrieval agent solving a MULTI-HOP question that needs SEVERAL different documents. Decompose it into sub-facts and, for EACH, pick the best OpenSearch query: mode 'hybrid' (balanced), 'hyde' (when the entity is only DESCRIBED, not named — hallucinate the answer doc), 'fielded' (a named entity → title+text match), 'keyword', or 'dense'. Return ONLY JSON: {"reason":"...","plan":[{"mode":"hyde","query":"..."}, ...]}.
+  
+  MEMORY (wins from earlier queries):
+  - query "Which National Lacrosse League teams had their inaugural seasons in 19" (4-hop) solved=False: winning queries = fielded:'National Lacrosse League teams inaugural'; fielded:'National Lacrosse League teams inaugural'; fielded:'National Lacrosse League teams inaugural'; hybrid:'cities with noted Jewish history since m'
+  - query "Which Texas legislative session occurred closest in time before the li" (4-hop) solved=Fa …
+LLM APPROACH: reason=The question requires multiple facts about four specific high schools in Arkansas: their operational status (closed or o
+   query: (fielded) "Middleton High School Arkansas"
+   query: (fielded) "Spring Hill High School Arkansas"
+   query: (fielded) "Magnet Cove High School Arkansas"
+   query: (fielded) "Clarendon High School Arkansas"
+   query: (hybrid) "high school magnet program five academies Arkansas"
+   query: (hybrid) "sole high school administered by school district Arkansas"
+EXECUTED → per-gold attribution:
+   gold 15143655 (Middleton High School (South Carol): (fielded) "Middleton High School Arkansas" @rank1
+   gold 52452897 (Spring Hill High School (South Car): (fielded) "Spring Hill High School Arkansas" @rank1
+   gold 38799206 (Magnet Cove High School): (fielded) "Middleton High School Arkansas" @rank5
+   gold 39001515 (Clarendon High School (Arkansas)): (fielded) "Middleton High School Arkansas" @rank4
+IN-HOP MEMORY WRITE: hop1 found ['15143655', '38799206', '39001515', '52452897']; fused 2/4 golds in top-10
+
+--- HOP 2 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop3: found []; fused all-golds=3/4
+- [finding] hop4: found []; fused all-golds=3/4
+- [finding] hop5: found []; fused all-golds=3/4
+- [finding] hop6: found []; fused all-golds=3/4
+- [finding] hop7: found []; fused all-golds=3/4
+- [finding] hop8: found []; fused all-golds=3/4
+- [finding] hop9: found []; fused all-golds=3/4
+- [finding] hop10: found []; fused all-golds=3/4
+- [finding] hop1: found ['15143655', '38799206', '39001515', '52452897']; fused all-golds=2/4
+LLM APPROACH: reason=The question requires identifying the status and special programs of four specific high schools in Arkansas, plus their 
+   query: (fielded) "Middleton High School Arkansas closed status"
+   query: (fielded) "Spring Hill High School Arkansas magnet program five academies"
+   query: (fielded) "Magnet Cove High School Arkansas sole high school district"
+   query: (fielded) "Clarendon High School Arkansas sole high school district"
+EXECUTED → per-gold attribution:
+   gold 15143655 (Middleton High School (South Carol): (fielded) "Middleton High School Arkansas" @rank1
+   gold 52452897 (Spring Hill High School (South Car): (fielded) "Spring Hill High School Arkansas" @rank1
+   gold 38799206 (Magnet Cove High School): (fielded) "Middleton High School Arkansas" @rank5
+   gold 39001515 (Clarendon High School (Arkansas)): (fielded) "Middleton High School Arkansas" @rank4
+IN-HOP MEMORY WRITE: hop2 found []; fused 2/4 golds in top-10
+
+--- HOP 3 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop4: found []; fused all-golds=3/4
+- [finding] hop5: found []; fused all-golds=3/4
+- [finding] hop6: found []; fused all-golds=3/4
+- [finding] hop7: found []; fused all-golds=3/4
+- [finding] hop8: found []; fused all-golds=3/4
+- [finding] hop9: found []; fused all-golds=3/4
+- [finding] hop10: found []; fused all-golds=3/4
+- [finding] hop1: found ['15143655', '38799206', '39001515', '52452897']; fused all-golds=2/4
+- [finding] hop2: found []; fused all-golds=2/4
+LLM APPROACH: reason=The question requires identifying for each of the four named high schools (Middleton, Spring Hill, Magnet Cove, Clarendo
+   query: (fielded) "Middleton High School closed"
+   query: (fielded) "Spring Hill High School magnet program five academies"
+   query: (fielded) "Magnet Cove High School magnet program five academies"
+   query: (fielded) "Clarendon High School closed"
+   query: (fielded) "Middleton High School sole high school district Arkansas"
+   query: (fielded) "Spring Hill High School sole high school district Arkansas"
+   query: (fielded) "Magnet Cove High School sole high school district Arkansas"
+   query: (fielded) "Clarendon High School sole high school district Arkansas"
+EXECUTED → per-gold attribution:
+   gold 15143655 (Middleton High School (South Carol): (fielded) "Middleton High School Arkansas" @rank1
+   gold 52452897 (Spring Hill High School (South Car): (fielded) "Spring Hill High School Arkansas" @rank1
+   gold 38799206 (Magnet Cove High School): (fielded) "Middleton High School Arkansas" @rank5
+   gold 39001515 (Clarendon High School (Arkansas)): (fielded) "Middleton High School Arkansas" @rank4
+IN-HOP MEMORY WRITE: hop3 found []; fused 3/4 golds in top-10
+
+--- HOP 4 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop5: found []; fused all-golds=3/4
+- [finding] hop6: found []; fused all-golds=3/4
+- [finding] hop7: found []; fused all-golds=3/4
+- [finding] hop8: found []; fused all-golds=3/4
+- [finding] hop9: found []; fused all-golds=3/4
+- [finding] hop10: found []; fused all-golds=3/4
+- [finding] hop1: found ['15143655', '38799206', '39001515', '52452897']; fused all-golds=2/4
+- [finding] hop2: found []; fused all-golds=2/4
+- [finding] hop3: found []; fused all-golds=3/4
+LLM APPROACH: reason=The question requires identifying for each of the four named high schools (Middleton, Spring Hill, Magnet Cove, Clarendo
+   query: (fielded) "Middleton High School closed Arkansas"
+   query: (fielded) "Spring Hill High School magnet program five academies Arkansas"
+   query: (fielded) "Magnet Cove High School sole high school administered Arkansas"
+   query: (fielded) "Clarendon High School sole high school administered Arkansas"
+EXECUTED → per-gold attribution:
+   gold 15143655 (Middleton High School (South Carol): (fielded) "Middleton High School Arkansas" @rank1
+   gold 52452897 (Spring Hill High School (South Car): (fielded) "Spring Hill High School Arkansas" @rank1
+   gold 38799206 (Magnet Cove High School): (fielded) "Middleton High School Arkansas" @rank5
+   gold 39001515 (Clarendon High School (Arkansas)): (fielded) "Middleton High School Arkansas" @rank4
+IN-HOP MEMORY WRITE: hop4 found []; fused 3/4 golds in top-10
+
+--- HOP 5 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop6: found []; fused all-golds=3/4
+- [finding] hop7: found []; fused all-golds=3/4
+- [finding] hop8: found []; fused all-golds=3/4
+- [finding] hop9: found []; fused all-golds=3/4
+- [finding] hop10: found []; fused all-golds=3/4
+- [finding] hop1: found ['15143655', '38799206', '39001515', '52452897']; fused all-golds=2/4
+- [finding] hop2: found []; fused all-golds=2/4
+- [finding] hop3: found []; fused all-golds=3/4
+- [finding] hop4: found []; fused all-golds=3/4
+LLM APPROACH: reason=The question requires identifying for each of the four named high schools (Middleton, Spring Hill, Magnet Cove, Clarendo
+   query: (fielded) "Middleton High School Arkansas closed status"
+   query: (fielded) "Spring Hill High School Arkansas magnet program five academies"
+   query: (fielded) "Magnet Cove High School Arkansas magnet program five academies"
+   query: (fielded) "Clarendon High School Arkansas magnet program five academies"
+   query: (fielded) "Middleton High School Arkansas sole high school administered by school"
+   query: (fielded) "Spring Hill High School Arkansas sole high school administered by scho"
+   query: (fielded) "Magnet Cove High School Arkansas sole high school administered by scho"
+   query: (fielded) "Clarendon High School Arkansas sole high school administered by school"
+EXECUTED → per-gold attribution:
+   gold 15143655 (Middleton High School (South Carol): (fielded) "Middleton High School Arkansas" @rank1
+   gold 52452897 (Spring Hill High School (South Car): (fielded) "Spring Hill High School Arkansas" @rank1
+   gold 38799206 (Magnet Cove High School): (fielded) "Middleton High School Arkansas" @rank5
+   gold 39001515 (Clarendon High School (Arkansas)): (fielded) "Middleton High School Arkansas" @rank4
+IN-HOP MEMORY WRITE: hop5 found []; fused 3/4 golds in top-10
+
+--- HOP 6 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop7: found []; fused all-golds=3/4
+- [finding] hop8: found []; fused all-golds=3/4
+- [finding] hop9: found []; fused all-golds=3/4
+- [finding] hop10: found []; fused all-golds=3/4
+- [finding] hop1: found ['15143655', '38799206', '39001515', '52452897']; fused all-golds=2/4
+- [finding] hop2: found []; fused all-golds=2/4
+- [finding] hop3: found []; fused all-golds=3/4
+- [finding] hop4: found []; fused all-golds=3/4
+- [finding] hop5: found []; fused all-golds=3/4
+LLM APPROACH: reason=The question requires identifying for each of the four named high schools (Middleton, Spring Hill, Magnet Cove, Clarendo
+   query: (fielded) "Middleton High School Arkansas closed"
+   query: (fielded) "Spring Hill High School Arkansas magnet program five academies"
+   query: (fielded) "Magnet Cove High School Arkansas magnet program five academies"
+   query: (fielded) "Clarendon High School Arkansas closed"
+   query: (fielded) "Middleton High School Arkansas sole high school district"
+   query: (fielded) "Spring Hill High School Arkansas sole high school district"
+   query: (fielded) "Magnet Cove High School Arkansas sole high school district"
+   query: (fielded) "Clarendon High School Arkansas sole high school district"
+EXECUTED → per-gold attribution:
+   gold 15143655 (Middleton High School (South Carol): (fielded) "Middleton High School Arkansas" @rank1
+   gold 52452897 (Spring Hill High School (South Car): (fielded) "Spring Hill High School Arkansas" @rank1
+   gold 38799206 (Magnet Cove High School): (fielded) "Middleton High School Arkansas" @rank5
+   gold 39001515 (Clarendon High School (Arkansas)): (fielded) "Middleton High School Arkansas" @rank4
+IN-HOP MEMORY WRITE: hop6 found []; fused 3/4 golds in top-10
+
+--- HOP 7 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop8: found []; fused all-golds=3/4
+- [finding] hop9: found []; fused all-golds=3/4
+- [finding] hop10: found []; fused all-golds=3/4
+- [finding] hop1: found ['15143655', '38799206', '39001515', '52452897']; fused all-golds=2/4
+- [finding] hop2: found []; fused all-golds=2/4
+- [finding] hop3: found []; fused all-golds=3/4
+- [finding] hop4: found []; fused all-golds=3/4
+- [finding] hop5: found []; fused all-golds=3/4
+- [finding] hop6: found []; fused all-golds=3/4
+LLM APPROACH: reason=The question requires identifying for each of the four named high schools (Middleton, Spring Hill, Magnet Cove, Clarendo
+   query: (fielded) "Middleton High School Arkansas closed status"
+   query: (fielded) "Spring Hill High School Arkansas magnet program five academies"
+   query: (fielded) "Magnet Cove High School Arkansas magnet program five academies"
+   query: (fielded) "Clarendon High School Arkansas magnet program five academies"
+   query: (fielded) "Middleton High School Arkansas sole high school administered by distri"
+   query: (fielded) "Spring Hill High School Arkansas sole high school administered by dist"
+   query: (fielded) "Magnet Cove High School Arkansas sole high school administered by dist"
+   query: (fielded) "Clarendon High School Arkansas sole high school administered by distri"
+EXECUTED → per-gold attribution:
+   gold 15143655 (Middleton High School (South Carol): (fielded) "Middleton High School Arkansas" @rank1
+   gold 52452897 (Spring Hill High School (South Car): (fielded) "Spring Hill High School Arkansas" @rank1
+   gold 38799206 (Magnet Cove High School): (fielded) "Middleton High School Arkansas" @rank5
+   gold 39001515 (Clarendon High School (Arkansas)): (fielded) "Middleton High School Arkansas" @rank4
+IN-HOP MEMORY WRITE: hop7 found []; fused 3/4 golds in top-10
+
+--- HOP 8 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop9: found []; fused all-golds=3/4
+- [finding] hop10: found []; fused all-golds=3/4
+- [finding] hop1: found ['15143655', '38799206', '39001515', '52452897']; fused all-golds=2/4
+- [finding] hop2: found []; fused all-golds=2/4
+- [finding] hop3: found []; fused all-golds=3/4
+- [finding] hop4: found []; fused all-golds=3/4
+- [finding] hop5: found []; fused all-golds=3/4
+- [finding] hop6: found []; fused all-golds=3/4
+- [finding] hop7: found []; fused all-golds=3/4
+LLM APPROACH: reason=The question requires identifying for each of the four named high schools (Middleton, Spring Hill, Magnet Cove, Clarendo
+   query: (fielded) "Middleton High School closed Arkansas"
+   query: (fielded) "Spring Hill High School magnet program five academies Arkansas"
+   query: (fielded) "Magnet Cove High School magnet program five academies Arkansas"
+   query: (fielded) "Clarendon High School closed Arkansas"
+   query: (fielded) "Middleton High School sole high school administered Arkansas"
+   query: (fielded) "Spring Hill High School sole high school administered Arkansas"
+   query: (fielded) "Magnet Cove High School sole high school administered Arkansas"
+   query: (fielded) "Clarendon High School sole high school administered Arkansas"
+EXECUTED → per-gold attribution:
+   gold 15143655 (Middleton High School (South Carol): (fielded) "Middleton High School Arkansas" @rank1
+   gold 52452897 (Spring Hill High School (South Car): (fielded) "Spring Hill High School Arkansas" @rank1
+   gold 38799206 (Magnet Cove High School): (fielded) "Middleton High School Arkansas" @rank5
+   gold 39001515 (Clarendon High School (Arkansas)): (fielded) "Middleton High School Arkansas" @rank4
+IN-HOP MEMORY WRITE: hop8 found []; fused 3/4 golds in top-10
+
+--- HOP 9 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop10: found []; fused all-golds=3/4
+- [finding] hop1: found ['15143655', '38799206', '39001515', '52452897']; fused all-golds=2/4
+- [finding] hop2: found []; fused all-golds=2/4
+- [finding] hop3: found []; fused all-golds=3/4
+- [finding] hop4: found []; fused all-golds=3/4
+- [finding] hop5: found []; fused all-golds=3/4
+- [finding] hop6: found []; fused all-golds=3/4
+- [finding] hop7: found []; fused all-golds=3/4
+- [finding] hop8: found []; fused all-golds=3/4
+LLM APPROACH: reason=The question requires identifying for each of the four named high schools (Middleton, Spring Hill, Magnet Cove, Clarendo
+   query: (fielded) "Middleton High School Arkansas closed"
+   query: (fielded) "Spring Hill High School Arkansas magnet program five academies"
+   query: (fielded) "Magnet Cove High School Arkansas magnet program five academies"
+   query: (fielded) "Clarendon High School Arkansas magnet program five academies"
+   query: (fielded) "Middleton High School Arkansas sole high school district"
+   query: (fielded) "Spring Hill High School Arkansas sole high school district"
+   query: (fielded) "Magnet Cove High School Arkansas sole high school district"
+   query: (fielded) "Clarendon High School Arkansas sole high school district"
+EXECUTED → per-gold attribution:
+   gold 15143655 (Middleton High School (South Carol): (fielded) "Middleton High School Arkansas" @rank1
+   gold 52452897 (Spring Hill High School (South Car): (fielded) "Spring Hill High School Arkansas" @rank1
+   gold 38799206 (Magnet Cove High School): (fielded) "Middleton High School Arkansas" @rank5
+   gold 39001515 (Clarendon High School (Arkansas)): (fielded) "Middleton High School Arkansas" @rank4
+IN-HOP MEMORY WRITE: hop9 found []; fused 3/4 golds in top-10
+
+--- HOP 10 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop1: found ['15143655', '38799206', '39001515', '52452897']; fused all-golds=2/4
+- [finding] hop2: found []; fused all-golds=2/4
+- [finding] hop3: found []; fused all-golds=3/4
+- [finding] hop4: found []; fused all-golds=3/4
+- [finding] hop5: found []; fused all-golds=3/4
+- [finding] hop6: found []; fused all-golds=3/4
+- [finding] hop7: found []; fused all-golds=3/4
+- [finding] hop8: found []; fused all-golds=3/4
+- [finding] hop9: found []; fused all-golds=3/4
+LLM APPROACH: reason=The question requires identifying for each of the four named high schools (Middleton, Spring Hill, Magnet Cove, Clarendo
+   query: (fielded) "Middleton High School closed Arkansas"
+   query: (fielded) "Spring Hill High School magnet program five academies Arkansas"
+   query: (fielded) "Magnet Cove High School sole high school administered Arkansas"
+   query: (fielded) "Clarendon High School sole high school administered Arkansas"
+EXECUTED → per-gold attribution:
+   gold 15143655 (Middleton High School (South Carol): (fielded) "Middleton High School Arkansas" @rank1
+   gold 52452897 (Spring Hill High School (South Car): (fielded) "Spring Hill High School Arkansas" @rank1
+   gold 38799206 (Magnet Cove High School): (fielded) "Middleton High School Arkansas" @rank5
+   gold 39001515 (Clarendon High School (Arkansas)): (fielded) "Middleton High School Arkansas" @rank4
+IN-HOP MEMORY WRITE: hop10 found []; fused 3/4 golds in top-10
+RESULT: partial — 3/4 golds after 10 hops.
+
+--- CROSS-QUERY MEMORY WRITE ---
+  remembered winning queries: fielded:'Middleton High School Arkansas'; fielded:'Middleton High School Arkansas'; fielded:'Middleton High School Arkansas'; fielded:'Spring Hill High School Arkansas'
+
+
+########################  QUERY 8/10  (4-hop)  ########################
+
+STARTING QUERY: Which music festival held near Sioux Falls, South Dakota, occurs on a holiday weekend, and how does the location and organizer of the 1969 Seattle Pop Festival compare to it, while also connecting to a classical composition celebrating a Japanese imperial anniversary and the official state song of South Dakota?
+GOLD (oracle, scoring only): ['14242616(Seattle Pop Festival)', '9117570(Japanese Festival Music)', '12279072(LifeLight Music Festival)', '1287277(Music of South Dakota)']
+
+--- LEARNING FROM PREVIOUS QUERIES (recalled from long-term memory) ---
+  - query "Which individual named Galloway was active in politics during the 19th" (4-hop) solved=False: winning queries = hybrid:'September 8 number eight music connectio'; hyde:'connection between September 8 and the n'
+  - query "Which Texas legislative session occurred closest in time before the li" (4-hop) solved=False: winning queries = fielded:'ZZ Top Live from Texas DVD recording dat'; fielded:'ZZ Top Live from Texas DVD recording dat'; fielded:'Texas legislative sessions dates'; hybrid:'compare timing Texas legislative session'
+  - query "Which Japanese politician from Nagoya, who graduated from Nagoya Insti" (4-hop) solved=False: winning queries = fielded:'Japanese politician Nagoya graduated Nag'; fielded:'video game company joined Bandai Group 1'; fielded:'video game company joined Bandai Group 1'
+  - query "Which actor with part Fijian heritage who starred in an award-winning " (4-hop) solved=False: winning queries = fielded:'actor part Fijian heritage starred in aw'; fielded:'Paul Whittaker editor broadsheet newspap'; fielded:'2014 Canadian horror comedy-mystery film'; fielded:'1922 American silent Western film'
+
+--- HOP 1 ---
+DYNAMIC PROMPT (fixed base + memory + findings + skills):
+  You are a retrieval agent solving a MULTI-HOP question that needs SEVERAL different documents. Decompose it into sub-facts and, for EACH, pick the best OpenSearch query: mode 'hybrid' (balanced), 'hyde' (when the entity is only DESCRIBED, not named — hallucinate the answer doc), 'fielded' (a named entity → title+text match), 'keyword', or 'dense'. Return ONLY JSON: {"reason":"...","plan":[{"mode":"hyde","query":"..."}, ...]}.
+  
+  MEMORY (wins from earlier queries):
+  - query "Which individual named Galloway was active in politics during the 19th" (4-hop) solved=False: winning queries = hybrid:'September 8 number eight music connectio'; hyde:'connection between September 8 and the n'
+  - query "Which Texas legislative session occurred closest in time before the li" (4-hop) solved=False: winning queries = fielded:'ZZ Top Live from Texas DVD recording dat'; fielded:'ZZ Top Live from Texas  …
+LLM APPROACH: reason=The question requires multiple hops: (1) Identify a music festival near Sioux Falls, SD, that occurs on a holiday weeken
+   query: (fielded) "music festival near Sioux Falls South Dakota holiday weekend"
+   query: (fielded) "1969 Seattle Pop Festival location organizer"
+   query: (hyde) "classical composition celebrating Japanese imperial anniversary"
+   query: (fielded) "official state song of South Dakota"
+EXECUTED → per-gold attribution:
+   gold 14242616 (Seattle Pop Festival): (fielded) "1969 Seattle Pop Festival location organizer" @rank1
+   gold 9117570 (Japanese Festival Music): (hyde) "classical composition celebrating Japanese imperia" @rank2
+   gold 12279072 (LifeLight Music Festival): (fielded) "music festival near Sioux Falls South Dakota holid" @rank1
+   gold 1287277 (Music of South Dakota): (fielded) "music festival near Sioux Falls South Dakota holid" @rank2
+IN-HOP MEMORY WRITE: hop1 found ['12279072', '1287277', '14242616', '9117570']; fused 3/4 golds in top-10
+
+--- HOP 2 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop3: found []; fused all-golds=3/4
+- [finding] hop4: found []; fused all-golds=3/4
+- [finding] hop5: found []; fused all-golds=3/4
+- [finding] hop6: found []; fused all-golds=3/4
+- [finding] hop7: found []; fused all-golds=3/4
+- [finding] hop8: found []; fused all-golds=3/4
+- [finding] hop9: found []; fused all-golds=3/4
+- [finding] hop10: found []; fused all-golds=3/4
+- [finding] hop1: found ['12279072', '1287277', '14242616', '9117570']; fused all-golds=3/4
+LLM APPROACH: reason=The question requires multiple hops: (1) Identify the music festival near Sioux Falls, SD, that occurs on a holiday week
+   query: (fielded) "music festival near Sioux Falls South Dakota holiday weekend"
+   query: (fielded) "1969 Seattle Pop Festival location organizer"
+   query: (hyde) "classical composition celebrating Japanese imperial anniversary"
+   query: (fielded) "official state song of South Dakota"
+EXECUTED → per-gold attribution:
+   gold 14242616 (Seattle Pop Festival): (fielded) "1969 Seattle Pop Festival location organizer" @rank1
+   gold 9117570 (Japanese Festival Music): (hyde) "classical composition celebrating Japanese imperia" @rank2
+   gold 12279072 (LifeLight Music Festival): (fielded) "music festival near Sioux Falls South Dakota holid" @rank1
+   gold 1287277 (Music of South Dakota): (fielded) "music festival near Sioux Falls South Dakota holid" @rank2
+IN-HOP MEMORY WRITE: hop2 found []; fused 3/4 golds in top-10
+
+--- HOP 3 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop4: found []; fused all-golds=3/4
+- [finding] hop5: found []; fused all-golds=3/4
+- [finding] hop6: found []; fused all-golds=3/4
+- [finding] hop7: found []; fused all-golds=3/4
+- [finding] hop8: found []; fused all-golds=3/4
+- [finding] hop9: found []; fused all-golds=3/4
+- [finding] hop10: found []; fused all-golds=3/4
+- [finding] hop1: found ['12279072', '1287277', '14242616', '9117570']; fused all-golds=3/4
+- [finding] hop2: found []; fused all-golds=3/4
+LLM APPROACH: reason=The question requires multiple hops: (1) Identify a music festival near Sioux Falls, SD, that occurs on a holiday weeken
+   query: (fielded) "music festival near Sioux Falls South Dakota holiday weekend"
+   query: (fielded) "1969 Seattle Pop Festival location organizer"
+   query: (fielded) "classical composition Japanese imperial anniversary"
+   query: (fielded) "official state song South Dakota"
+EXECUTED → per-gold attribution:
+   gold 14242616 (Seattle Pop Festival): (fielded) "1969 Seattle Pop Festival location organizer" @rank1
+   gold 9117570 (Japanese Festival Music): (hyde) "classical composition celebrating Japanese imperia" @rank2
+   gold 12279072 (LifeLight Music Festival): (fielded) "music festival near Sioux Falls South Dakota holid" @rank1
+   gold 1287277 (Music of South Dakota): (fielded) "music festival near Sioux Falls South Dakota holid" @rank2
+IN-HOP MEMORY WRITE: hop3 found []; fused 3/4 golds in top-10
+
+--- HOP 4 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop5: found []; fused all-golds=3/4
+- [finding] hop6: found []; fused all-golds=3/4
+- [finding] hop7: found []; fused all-golds=3/4
+- [finding] hop8: found []; fused all-golds=3/4
+- [finding] hop9: found []; fused all-golds=3/4
+- [finding] hop10: found []; fused all-golds=3/4
+- [finding] hop1: found ['12279072', '1287277', '14242616', '9117570']; fused all-golds=3/4
+- [finding] hop2: found []; fused all-golds=3/4
+- [finding] hop3: found []; fused all-golds=3/4
+LLM APPROACH: reason=The question requires multiple hops: (1) identify a music festival near Sioux Falls, SD, that occurs on a holiday weeken
+   query: (hybrid) "music festival near Sioux Falls South Dakota holiday weekend"
+   query: (fielded) "1969 Seattle Pop Festival location organizer"
+   query: (hyde) "classical composition celebrating Japanese imperial anniversary"
+   query: (fielded) "official state song of South Dakota"
+EXECUTED → per-gold attribution:
+   gold 14242616 (Seattle Pop Festival): (fielded) "1969 Seattle Pop Festival location organizer" @rank1
+   gold 9117570 (Japanese Festival Music): (hyde) "classical composition celebrating Japanese imperia" @rank2
+   gold 12279072 (LifeLight Music Festival): (fielded) "music festival near Sioux Falls South Dakota holid" @rank1
+   gold 1287277 (Music of South Dakota): (fielded) "music festival near Sioux Falls South Dakota holid" @rank2
+IN-HOP MEMORY WRITE: hop4 found []; fused 3/4 golds in top-10
+
+--- HOP 5 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop6: found []; fused all-golds=3/4
+- [finding] hop7: found []; fused all-golds=3/4
+- [finding] hop8: found []; fused all-golds=3/4
+- [finding] hop9: found []; fused all-golds=3/4
+- [finding] hop10: found []; fused all-golds=3/4
+- [finding] hop1: found ['12279072', '1287277', '14242616', '9117570']; fused all-golds=3/4
+- [finding] hop2: found []; fused all-golds=3/4
+- [finding] hop3: found []; fused all-golds=3/4
+- [finding] hop4: found []; fused all-golds=3/4
+LLM APPROACH: reason=The question requires multiple hops: (1) Identify a music festival near Sioux Falls, SD, that occurs on a holiday weeken
+   query: (hybrid) "music festival near Sioux Falls South Dakota holiday weekend"
+   query: (fielded) "1969 Seattle Pop Festival location organizer"
+   query: (hyde) "classical composition celebrating Japanese imperial anniversary"
+   query: (fielded) "official state song of South Dakota"
+EXECUTED → per-gold attribution:
+   gold 14242616 (Seattle Pop Festival): (fielded) "1969 Seattle Pop Festival location organizer" @rank1
+   gold 9117570 (Japanese Festival Music): (hyde) "classical composition celebrating Japanese imperia" @rank2
+   gold 12279072 (LifeLight Music Festival): (fielded) "music festival near Sioux Falls South Dakota holid" @rank1
+   gold 1287277 (Music of South Dakota): (fielded) "music festival near Sioux Falls South Dakota holid" @rank2
+IN-HOP MEMORY WRITE: hop5 found []; fused 3/4 golds in top-10
+
+--- HOP 6 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop7: found []; fused all-golds=3/4
+- [finding] hop8: found []; fused all-golds=3/4
+- [finding] hop9: found []; fused all-golds=3/4
+- [finding] hop10: found []; fused all-golds=3/4
+- [finding] hop1: found ['12279072', '1287277', '14242616', '9117570']; fused all-golds=3/4
+- [finding] hop2: found []; fused all-golds=3/4
+- [finding] hop3: found []; fused all-golds=3/4
+- [finding] hop4: found []; fused all-golds=3/4
+- [finding] hop5: found []; fused all-golds=3/4
+LLM APPROACH: reason=The question requires multiple hops: (1) Identify a music festival near Sioux Falls, SD, that occurs on a holiday weeken
+   query: (fielded) "music festival near Sioux Falls South Dakota holiday weekend"
+   query: (fielded) "1969 Seattle Pop Festival location organizer"
+   query: (hyde) "classical composition celebrating Japanese imperial anniversary"
+   query: (fielded) "official state song of South Dakota"
+   query: (hybrid) "connection between Sioux Falls music festival Seattle Pop Festival Jap"
+EXECUTED → per-gold attribution:
+   gold 14242616 (Seattle Pop Festival): (fielded) "1969 Seattle Pop Festival location organizer" @rank1
+   gold 9117570 (Japanese Festival Music): (hyde) "classical composition celebrating Japanese imperia" @rank2
+   gold 12279072 (LifeLight Music Festival): (fielded) "music festival near Sioux Falls South Dakota holid" @rank1
+   gold 1287277 (Music of South Dakota): (fielded) "music festival near Sioux Falls South Dakota holid" @rank2
+IN-HOP MEMORY WRITE: hop6 found []; fused 4/4 golds in top-10
+RESULT: SOLVED in 6 hop(s).
+
+--- CROSS-QUERY MEMORY WRITE ---
+  remembered winning queries: fielded:'music festival near Sioux Falls South Da'; fielded:'music festival near Sioux Falls South Da'; fielded:'1969 Seattle Pop Festival location organ'; hyde:'classical composition celebrating Japane'
+
+
+########################  QUERY 9/10  (4-hop)  ########################
+
+STARTING QUERY: Which works titled with royal or noble references include an Australian novel series, a British rock band's album named after a Marx Brothers film, a Queen box set marking their 25th anniversary, and a George R. R. Martin novella about a Targaryen civil war?
+GOLD (oracle, scoring only): ['51109910(The Cardboard Crown)', '4841483(The Crown Jewels)', '670555(A Night at the Opera (Queen album))', '41268599(The Princess and the Queen)']
+
+--- LEARNING FROM PREVIOUS QUERIES (recalled from long-term memory) ---
+  - query "Which British TV series and film related to magic or magicians were re" (4-hop) solved=False: winning queries = hybrid:'British TV series about magic or magicia'; hybrid:'British TV series about magic or magicia'; hybrid:'British TV series about magic or magicia'; hybrid:'British TV series about magic or magicia'
+  - query "Which individual named Galloway was active in politics during the 19th" (4-hop) solved=False: winning queries = hybrid:'September 8 number eight music connectio'; hyde:'connection between September 8 and the n'
+  - query "Which actor with part Fijian heritage who starred in an award-winning " (4-hop) solved=False: winning queries = fielded:'actor part Fijian heritage starred in aw'; fielded:'Paul Whittaker editor broadsheet newspap'; fielded:'2014 Canadian horror comedy-mystery film'; fielded:'1922 American silent Western film'
+  - query "Which music festival held near Sioux Falls, South Dakota, occurs on a " (4-hop) solved=True: winning queries = fielded:'music festival near Sioux Falls South Da'; fielded:'music festival near Sioux Falls South Da'; fielded:'1969 Seattle Pop Festival location organ'; hyde:'classical composition celebrating Japane'
+
+--- HOP 1 ---
+DYNAMIC PROMPT (fixed base + memory + findings + skills):
+  You are a retrieval agent solving a MULTI-HOP question that needs SEVERAL different documents. Decompose it into sub-facts and, for EACH, pick the best OpenSearch query: mode 'hybrid' (balanced), 'hyde' (when the entity is only DESCRIBED, not named — hallucinate the answer doc), 'fielded' (a named entity → title+text match), 'keyword', or 'dense'. Return ONLY JSON: {"reason":"...","plan":[{"mode":"hyde","query":"..."}, ...]}.
+  
+  MEMORY (wins from earlier queries):
+  - query "Which British TV series and film related to magic or magicians were re" (4-hop) solved=False: winning queries = hybrid:'British TV series about magic or magicia'; hybrid:'British TV series about magic or magicia'; hybrid:'British TV series about magic or magicia'; hybrid:'British TV series about magic or magicia'
+  - query "Which individual named Galloway was active in politics during the 19th" (4-hop) solved=False …
+LLM APPROACH: reason=The question asks for works titled with royal or noble references, specifically four distinct works: (1) an Australian n
+   query: (hybrid) "Australian novel series titled with royal or noble references"
+   query: (hybrid) "British rock band album named after a Marx Brothers film with royal or"
+   query: (hybrid) "Queen box set marking 25th anniversary with royal or noble title"
+   query: (hybrid) "George R. R. Martin novella about Targaryen civil war with royal or no"
+EXECUTED → per-gold attribution:
+   gold 51109910 (The Cardboard Crown): (hybrid) "Australian novel series titled with royal or noble" @rank9
+   gold 4841483 (The Crown Jewels): (hybrid) "Queen box set marking 25th anniversary with royal " @rank1
+   gold 670555 (A Night at the Opera (Queen album)): (hybrid) "British rock band album named after a Marx Brother" @rank1
+   gold 41268599 (The Princess and the Queen): (hybrid) "Australian novel series titled with royal or noble" @rank10
+IN-HOP MEMORY WRITE: hop1 found ['41268599', '4841483', '51109910', '670555']; fused 3/4 golds in top-10
+
+--- HOP 2 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop10: found []; fused all-golds=3/4
+- [finding] hop1: found ['12279072', '1287277', '14242616', '9117570']; fused all-golds=3/4
+- [finding] hop2: found []; fused all-golds=3/4
+- [finding] hop3: found []; fused all-golds=3/4
+- [finding] hop4: found []; fused all-golds=3/4
+- [finding] hop5: found []; fused all-golds=3/4
+- [finding] hop6: found []; fused all-golds=4/4
+- [finding] hop1: found ['41268599', '4841483', '51109910', '670555']; fused all-golds=3/4
+LLM APPROACH: reason=The question asks for works titled with royal or noble references, specifically four distinct works: (1) an Australian n
+   query: (hyde) "Australian novel series titled with royal or noble references"
+   query: (fielded) "British rock band album named after a Marx Brothers film"
+   query: (fielded) "Queen box set marking 25th anniversary"
+   query: (hyde) "George R. R. Martin novella about Targaryen civil war with royal or no"
+EXECUTED → per-gold attribution:
+   gold 51109910 (The Cardboard Crown): (hybrid) "Australian novel series titled with royal or noble" @rank9
+   gold 4841483 (The Crown Jewels): (hybrid) "Queen box set marking 25th anniversary with royal " @rank1
+   gold 670555 (A Night at the Opera (Queen album)): (hybrid) "British rock band album named after a Marx Brother" @rank1
+   gold 41268599 (The Princess and the Queen): (hybrid) "Australian novel series titled with royal or noble" @rank10
+IN-HOP MEMORY WRITE: hop2 found []; fused 3/4 golds in top-10
+
+--- HOP 3 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop1: found ['12279072', '1287277', '14242616', '9117570']; fused all-golds=3/4
+- [finding] hop2: found []; fused all-golds=3/4
+- [finding] hop3: found []; fused all-golds=3/4
+- [finding] hop4: found []; fused all-golds=3/4
+- [finding] hop5: found []; fused all-golds=3/4
+- [finding] hop6: found []; fused all-golds=4/4
+- [finding] hop1: found ['41268599', '4841483', '51109910', '670555']; fused all-golds=3/4
+- [finding] hop2: found []; fused all-golds=3/4
+LLM APPROACH: reason=The question asks for works titled with royal or noble references, specifically four distinct works: (1) an Australian n
+   query: (fielded) "Australian novel series titled with royal or noble references"
+   query: (fielded) "British rock band album named after a Marx Brothers film with royal or"
+   query: (fielded) "Queen box set marking 25th anniversary with royal or noble title"
+   query: (fielded) "George R. R. Martin novella about Targaryen civil war with royal or no"
+EXECUTED → per-gold attribution:
+   gold 51109910 (The Cardboard Crown): (hybrid) "Australian novel series titled with royal or noble" @rank9
+   gold 4841483 (The Crown Jewels): (hybrid) "Queen box set marking 25th anniversary with royal " @rank1
+   gold 670555 (A Night at the Opera (Queen album)): (hybrid) "British rock band album named after a Marx Brother" @rank1
+   gold 41268599 (The Princess and the Queen): (hybrid) "Australian novel series titled with royal or noble" @rank10
+IN-HOP MEMORY WRITE: hop3 found []; fused 3/4 golds in top-10
+
+--- HOP 4 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop2: found []; fused all-golds=3/4
+- [finding] hop3: found []; fused all-golds=3/4
+- [finding] hop4: found []; fused all-golds=3/4
+- [finding] hop5: found []; fused all-golds=3/4
+- [finding] hop6: found []; fused all-golds=4/4
+- [finding] hop1: found ['41268599', '4841483', '51109910', '670555']; fused all-golds=3/4
+- [finding] hop2: found []; fused all-golds=3/4
+- [finding] hop3: found []; fused all-golds=3/4
+LLM APPROACH: reason=The question asks for works titled with royal or noble references, specifically four distinct works: (1) an Australian n
+   query: (hybrid) "Australian novel series titled with royal or noble references"
+   query: (hybrid) "British rock band album named after a Marx Brothers film with royal or"
+   query: (hybrid) "Queen box set marking 25th anniversary with royal or noble title"
+   query: (hybrid) "George R. R. Martin novella about Targaryen civil war with royal or no"
+EXECUTED → per-gold attribution:
+   gold 51109910 (The Cardboard Crown): (hybrid) "Australian novel series titled with royal or noble" @rank9
+   gold 4841483 (The Crown Jewels): (hybrid) "Queen box set marking 25th anniversary with royal " @rank1
+   gold 670555 (A Night at the Opera (Queen album)): (hybrid) "British rock band album named after a Marx Brother" @rank1
+   gold 41268599 (The Princess and the Queen): (hybrid) "Australian novel series titled with royal or noble" @rank10
+IN-HOP MEMORY WRITE: hop4 found []; fused 3/4 golds in top-10
+
+--- HOP 5 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop2: found []; fused all-golds=3/4
+- [finding] hop3: found []; fused all-golds=3/4
+- [finding] hop4: found []; fused all-golds=3/4
+- [finding] hop5: found []; fused all-golds=3/4
+- [finding] hop6: found []; fused all-golds=4/4
+- [finding] hop1: found ['41268599', '4841483', '51109910', '670555']; fused all-golds=3/4
+- [finding] hop2: found []; fused all-golds=3/4
+- [finding] hop3: found []; fused all-golds=3/4
+- [finding] hop4: found []; fused all-golds=3/4
+LLM APPROACH: reason=The question asks for works titled with royal or noble references, specifically four distinct works: (1) an Australian n
+   query: (fielded) "Australian novel series titled with royal or noble references"
+   query: (fielded) "British rock band album named after a Marx Brothers film"
+   query: (fielded) "Queen box set marking 25th anniversary"
+   query: (fielded) "George R. R. Martin novella about Targaryen civil war"
+EXECUTED → per-gold attribution:
+   gold 51109910 (The Cardboard Crown): (hybrid) "Australian novel series titled with royal or noble" @rank9
+   gold 4841483 (The Crown Jewels): (hybrid) "Queen box set marking 25th anniversary with royal " @rank1
+   gold 670555 (A Night at the Opera (Queen album)): (hybrid) "British rock band album named after a Marx Brother" @rank1
+   gold 41268599 (The Princess and the Queen): (hybrid) "Australian novel series titled with royal or noble" @rank10
+IN-HOP MEMORY WRITE: hop5 found []; fused 3/4 golds in top-10
+
+--- HOP 6 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop3: found []; fused all-golds=3/4
+- [finding] hop4: found []; fused all-golds=3/4
+- [finding] hop5: found []; fused all-golds=3/4
+- [finding] hop6: found []; fused all-golds=4/4
+- [finding] hop1: found ['41268599', '4841483', '51109910', '670555']; fused all-golds=3/4
+- [finding] hop2: found []; fused all-golds=3/4
+- [finding] hop3: found []; fused all-golds=3/4
+- [finding] hop4: found []; fused all-golds=3/4
+- [finding] hop5: found []; fused all-golds=3/4
+LLM APPROACH: reason=The question asks for works titled with royal or noble references, specifically including four distinct works: an Austra
+   query: (fielded) "Australian novel series titled with royal or noble reference"
+   query: (fielded) "British rock band album named after Marx Brothers film with royal or n"
+   query: (fielded) "Queen box set marking 25th anniversary with royal or noble title"
+   query: (fielded) "George R. R. Martin novella about Targaryen civil war with royal or no"
+EXECUTED → per-gold attribution:
+   gold 51109910 (The Cardboard Crown): (hybrid) "Australian novel series titled with royal or noble" @rank9
+   gold 4841483 (The Crown Jewels): (hybrid) "Queen box set marking 25th anniversary with royal " @rank1
+   gold 670555 (A Night at the Opera (Queen album)): (hybrid) "British rock band album named after a Marx Brother" @rank1
+   gold 41268599 (The Princess and the Queen): (hybrid) "Australian novel series titled with royal or noble" @rank10
+IN-HOP MEMORY WRITE: hop6 found []; fused 3/4 golds in top-10
+
+--- HOP 7 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop4: found []; fused all-golds=3/4
+- [finding] hop5: found []; fused all-golds=3/4
+- [finding] hop6: found []; fused all-golds=4/4
+- [finding] hop1: found ['41268599', '4841483', '51109910', '670555']; fused all-golds=3/4
+- [finding] hop2: found []; fused all-golds=3/4
+- [finding] hop3: found []; fused all-golds=3/4
+- [finding] hop4: found []; fused all-golds=3/4
+- [finding] hop5: found []; fused all-golds=3/4
+- [finding] hop6: found []; fused all-golds=3/4
+LLM APPROACH: reason=The question asks for works titled with royal or noble references, specifically four distinct works: (1) an Australian n
+   query: (fielded) "Australian novel series titled with royal or noble references"
+   query: (fielded) "British rock band album named after Marx Brothers film with royal or n"
+   query: (fielded) "Queen box set marking 25th anniversary with royal or noble title"
+   query: (fielded) "George R. R. Martin novella about Targaryen civil war with royal or no"
+EXECUTED → per-gold attribution:
+   gold 51109910 (The Cardboard Crown): (hybrid) "Australian novel series titled with royal or noble" @rank9
+   gold 4841483 (The Crown Jewels): (hybrid) "Queen box set marking 25th anniversary with royal " @rank1
+   gold 670555 (A Night at the Opera (Queen album)): (hybrid) "British rock band album named after a Marx Brother" @rank1
+   gold 41268599 (The Princess and the Queen): (hybrid) "Australian novel series titled with royal or noble" @rank10
+IN-HOP MEMORY WRITE: hop7 found []; fused 3/4 golds in top-10
+
+--- HOP 8 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop5: found []; fused all-golds=3/4
+- [finding] hop6: found []; fused all-golds=4/4
+- [finding] hop1: found ['41268599', '4841483', '51109910', '670555']; fused all-golds=3/4
+- [finding] hop2: found []; fused all-golds=3/4
+- [finding] hop3: found []; fused all-golds=3/4
+- [finding] hop4: found []; fused all-golds=3/4
+- [finding] hop5: found []; fused all-golds=3/4
+- [finding] hop6: found []; fused all-golds=3/4
+- [finding] hop7: found []; fused all-golds=3/4
+LLM APPROACH: reason=The question asks for works titled with royal or noble references, specifically four distinct works: (1) an Australian n
+   query: (fielded) "Australian novel series titled with royal or noble references"
+   query: (fielded) "British rock band album named after a Marx Brothers film with royal or"
+   query: (fielded) "Queen box set marking 25th anniversary with royal or noble title"
+   query: (fielded) "George R. R. Martin novella about Targaryen civil war with royal or no"
+EXECUTED → per-gold attribution:
+   gold 51109910 (The Cardboard Crown): (hybrid) "Australian novel series titled with royal or noble" @rank9
+   gold 4841483 (The Crown Jewels): (hybrid) "Queen box set marking 25th anniversary with royal " @rank1
+   gold 670555 (A Night at the Opera (Queen album)): (hybrid) "British rock band album named after a Marx Brother" @rank1
+   gold 41268599 (The Princess and the Queen): (hybrid) "Australian novel series titled with royal or noble" @rank10
+IN-HOP MEMORY WRITE: hop8 found []; fused 3/4 golds in top-10
+
+--- HOP 9 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop6: found []; fused all-golds=4/4
+- [finding] hop1: found ['41268599', '4841483', '51109910', '670555']; fused all-golds=3/4
+- [finding] hop2: found []; fused all-golds=3/4
+- [finding] hop3: found []; fused all-golds=3/4
+- [finding] hop4: found []; fused all-golds=3/4
+- [finding] hop5: found []; fused all-golds=3/4
+- [finding] hop6: found []; fused all-golds=3/4
+- [finding] hop7: found []; fused all-golds=3/4
+- [finding] hop8: found []; fused all-golds=3/4
+LLM APPROACH: reason=The question asks for works titled with royal or noble references, specifically four distinct works: (1) an Australian n
+   query: (fielded) "Australian novel series titled with royal or noble references"
+   query: (fielded) "British rock band album named after Marx Brothers film"
+   query: (fielded) "Queen box set marking 25th anniversary"
+   query: (fielded) "George R. R. Martin novella about Targaryen civil war"
+EXECUTED → per-gold attribution:
+   gold 51109910 (The Cardboard Crown): (hybrid) "Australian novel series titled with royal or noble" @rank9
+   gold 4841483 (The Crown Jewels): (hybrid) "Queen box set marking 25th anniversary with royal " @rank1
+   gold 670555 (A Night at the Opera (Queen album)): (hybrid) "British rock band album named after a Marx Brother" @rank1
+   gold 41268599 (The Princess and the Queen): (hybrid) "Australian novel series titled with royal or noble" @rank10
+IN-HOP MEMORY WRITE: hop9 found []; fused 3/4 golds in top-10
+
+--- HOP 10 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop1: found ['41268599', '4841483', '51109910', '670555']; fused all-golds=3/4
+- [finding] hop2: found []; fused all-golds=3/4
+- [finding] hop3: found []; fused all-golds=3/4
+- [finding] hop4: found []; fused all-golds=3/4
+- [finding] hop5: found []; fused all-golds=3/4
+- [finding] hop6: found []; fused all-golds=3/4
+- [finding] hop7: found []; fused all-golds=3/4
+- [finding] hop8: found []; fused all-golds=3/4
+- [finding] hop9: found []; fused all-golds=3/4
+LLM APPROACH: reason=The question asks for works titled with royal or noble references, specifically including four distinct works: an Austra
+   query: (fielded) "Australian novel series titled with royal or noble references"
+   query: (fielded) "British rock band album named after a Marx Brothers film with royal or"
+   query: (fielded) "Queen box set marking 25th anniversary with royal or noble title"
+   query: (fielded) "George R. R. Martin novella about Targaryen civil war with royal or no"
+EXECUTED → per-gold attribution:
+   gold 51109910 (The Cardboard Crown): (hybrid) "Australian novel series titled with royal or noble" @rank9
+   gold 4841483 (The Crown Jewels): (hybrid) "Queen box set marking 25th anniversary with royal " @rank1
+   gold 670555 (A Night at the Opera (Queen album)): (hybrid) "British rock band album named after a Marx Brother" @rank1
+   gold 41268599 (The Princess and the Queen): (hybrid) "Australian novel series titled with royal or noble" @rank10
+IN-HOP MEMORY WRITE: hop10 found []; fused 3/4 golds in top-10
+RESULT: partial — 3/4 golds after 10 hops.
+
+--- CROSS-QUERY MEMORY WRITE ---
+  remembered winning queries: hybrid:'Australian novel series titled with roya'; hybrid:'Australian novel series titled with roya'; hybrid:'British rock band album named after a Ma'; hybrid:'Queen box set marking 25th anniversary w'
+
+
+########################  QUERY 10/10  (4-hop)  ########################
+
+STARTING QUERY: What are the details and impacts of significant car bombings in Shiite areas of Iraq in 2004 and 2017, and how does the phrase 'through and through' differ in meaning from the title of a 2003 single by Mark Joseph?
+GOLD (oracle, scoring only): ['52754818(January 2017 Baghdad bombings)', '14570572(2004 Karbala and Najaf bombings)', '2639406(Through and through)', '19250912(Get Through)']
+
+--- LEARNING FROM PREVIOUS QUERIES (recalled from long-term memory) ---
+  - query "Which music festival held near Sioux Falls, South Dakota, occurs on a " (4-hop) solved=True: winning queries = fielded:'music festival near Sioux Falls South Da'; fielded:'music festival near Sioux Falls South Da'; fielded:'1969 Seattle Pop Festival location organ'; hyde:'classical composition celebrating Japane'
+  - query "Which individual named Galloway was active in politics during the 19th" (4-hop) solved=False: winning queries = hybrid:'September 8 number eight music connectio'; hyde:'connection between September 8 and the n'
+  - query "Which Japanese politician from Nagoya, who graduated from Nagoya Insti" (4-hop) solved=False: winning queries = fielded:'Japanese politician Nagoya graduated Nag'; fielded:'video game company joined Bandai Group 1'; fielded:'video game company joined Bandai Group 1'
+  - query "Which National Lacrosse League teams had their inaugural seasons in 19" (4-hop) solved=False: winning queries = fielded:'National Lacrosse League teams inaugural'; fielded:'National Lacrosse League teams inaugural'; fielded:'National Lacrosse League teams inaugural'; hybrid:'cities with noted Jewish history since m'
+
+--- HOP 1 ---
+DYNAMIC PROMPT (fixed base + memory + findings + skills):
+  You are a retrieval agent solving a MULTI-HOP question that needs SEVERAL different documents. Decompose it into sub-facts and, for EACH, pick the best OpenSearch query: mode 'hybrid' (balanced), 'hyde' (when the entity is only DESCRIBED, not named — hallucinate the answer doc), 'fielded' (a named entity → title+text match), 'keyword', or 'dense'. Return ONLY JSON: {"reason":"...","plan":[{"mode":"hyde","query":"..."}, ...]}.
+  
+  MEMORY (wins from earlier queries):
+  - query "Which music festival held near Sioux Falls, South Dakota, occurs on a " (4-hop) solved=True: winning queries = fielded:'music festival near Sioux Falls South Da'; fielded:'music festival near Sioux Falls South Da'; fielded:'1969 Seattle Pop Festival location organ'; hyde:'classical composition celebrating Japane'
+  - query "Which individual named Galloway was active in politics during the 19th" (4-hop) solved=False …
+LLM APPROACH: reason=The question requires multiple hops: (1) details and impacts of significant car bombings in Shiite areas of Iraq in 2004
+   query: (fielded) "car bombings Shiite areas Iraq 2004"
+   query: (fielded) "car bombings Shiite areas Iraq 2017"
+   query: (hybrid) "meaning of phrase 'through and through' difference from 2003 Mark Jose"
+EXECUTED → per-gold attribution:
+   gold 52754818 (January 2017 Baghdad bombings): (fielded) "car bombings Shiite areas Iraq 2017" @rank7
+   gold 14570572 (2004 Karbala and Najaf bombings): (fielded) "car bombings Shiite areas Iraq 2004" @rank1
+   gold 2639406 (Through and through): (hybrid) "meaning of phrase 'through and through' difference" @rank2
+   gold 19250912 (Get Through): (hybrid) "meaning of phrase 'through and through' difference" @rank1
+IN-HOP MEMORY WRITE: hop1 found ['14570572', '19250912', '2639406', '52754818']; fused 1/4 golds in top-10
+
+--- HOP 2 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop3: found []; fused all-golds=3/4
+- [finding] hop4: found []; fused all-golds=3/4
+- [finding] hop5: found []; fused all-golds=3/4
+- [finding] hop6: found []; fused all-golds=3/4
+- [finding] hop7: found []; fused all-golds=3/4
+- [finding] hop8: found []; fused all-golds=3/4
+- [finding] hop9: found []; fused all-golds=3/4
+- [finding] hop10: found []; fused all-golds=3/4
+- [finding] hop1: found ['14570572', '19250912', '2639406', '52754818']; fused all-golds=1/4
+LLM APPROACH: reason=The question requires multiple hops: (1) details and impacts of significant car bombings in Shiite areas of Iraq in 2004
+   query: (fielded) "car bombings Shiite areas Iraq 2004"
+   query: (fielded) "car bombings Shiite areas Iraq 2017"
+   query: (hybrid) "meaning of phrase 'through and through' difference from 2003 single by"
+EXECUTED → per-gold attribution:
+   gold 52754818 (January 2017 Baghdad bombings): (fielded) "car bombings Shiite areas Iraq 2017" @rank7
+   gold 14570572 (2004 Karbala and Najaf bombings): (fielded) "car bombings Shiite areas Iraq 2004" @rank1
+   gold 2639406 (Through and through): (hybrid) "meaning of phrase 'through and through' difference" @rank2
+   gold 19250912 (Get Through): (hybrid) "meaning of phrase 'through and through' difference" @rank1
+IN-HOP MEMORY WRITE: hop2 found []; fused 1/4 golds in top-10
+
+--- HOP 3 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop4: found []; fused all-golds=3/4
+- [finding] hop5: found []; fused all-golds=3/4
+- [finding] hop6: found []; fused all-golds=3/4
+- [finding] hop7: found []; fused all-golds=3/4
+- [finding] hop8: found []; fused all-golds=3/4
+- [finding] hop9: found []; fused all-golds=3/4
+- [finding] hop10: found []; fused all-golds=3/4
+- [finding] hop1: found ['14570572', '19250912', '2639406', '52754818']; fused all-golds=1/4
+- [finding] hop2: found []; fused all-golds=1/4
+LLM APPROACH: reason=The question requires multiple hops: (1) details and impacts of significant car bombings in Shiite areas of Iraq in 2004
+   query: (fielded) "car bombings Shiite areas Iraq 2004"
+   query: (fielded) "car bombings Shiite areas Iraq 2017"
+   query: (hybrid) "meaning of phrase 'through and through' compared to 2003 single by Mar"
+EXECUTED → per-gold attribution:
+   gold 52754818 (January 2017 Baghdad bombings): (fielded) "car bombings Shiite areas Iraq 2017" @rank7
+   gold 14570572 (2004 Karbala and Najaf bombings): (fielded) "car bombings Shiite areas Iraq 2004" @rank1
+   gold 2639406 (Through and through): (hybrid) "meaning of phrase 'through and through' difference" @rank2
+   gold 19250912 (Get Through): (hybrid) "meaning of phrase 'through and through' difference" @rank1
+IN-HOP MEMORY WRITE: hop3 found []; fused 1/4 golds in top-10
+
+--- HOP 4 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop5: found []; fused all-golds=3/4
+- [finding] hop6: found []; fused all-golds=3/4
+- [finding] hop7: found []; fused all-golds=3/4
+- [finding] hop8: found []; fused all-golds=3/4
+- [finding] hop9: found []; fused all-golds=3/4
+- [finding] hop10: found []; fused all-golds=3/4
+- [finding] hop1: found ['14570572', '19250912', '2639406', '52754818']; fused all-golds=1/4
+- [finding] hop2: found []; fused all-golds=1/4
+- [finding] hop3: found []; fused all-golds=1/4
+LLM APPROACH: reason=The question requires multiple hops: first, to find details and impacts of significant car bombings in Shiite areas of I
+   query: (fielded) "car bombings Shiite areas Iraq 2004"
+   query: (fielded) "car bombings Shiite areas Iraq 2017"
+   query: (hybrid) "impacts of car bombings in Shiite areas Iraq 2004 and 2017"
+   query: (hyde) "meaning of the phrase 'through and through'"
+   query: (fielded) "Mark Joseph 2003 single"
+   query: (hybrid) "difference in meaning between phrase 'through and through' and Mark Jo"
+EXECUTED → per-gold attribution:
+   gold 52754818 (January 2017 Baghdad bombings): (fielded) "car bombings Shiite areas Iraq 2017" @rank7
+   gold 14570572 (2004 Karbala and Najaf bombings): (fielded) "car bombings Shiite areas Iraq 2004" @rank1
+   gold 2639406 (Through and through): (hybrid) "meaning of phrase 'through and through' difference" @rank2
+   gold 19250912 (Get Through): (hybrid) "meaning of phrase 'through and through' difference" @rank1
+IN-HOP MEMORY WRITE: hop4 found []; fused 1/4 golds in top-10
+
+--- HOP 5 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop6: found []; fused all-golds=3/4
+- [finding] hop7: found []; fused all-golds=3/4
+- [finding] hop8: found []; fused all-golds=3/4
+- [finding] hop9: found []; fused all-golds=3/4
+- [finding] hop10: found []; fused all-golds=3/4
+- [finding] hop1: found ['14570572', '19250912', '2639406', '52754818']; fused all-golds=1/4
+- [finding] hop2: found []; fused all-golds=1/4
+- [finding] hop3: found []; fused all-golds=1/4
+- [finding] hop4: found []; fused all-golds=1/4
+LLM APPROACH: reason=The question requires multiple hops: first, to find details and impacts of significant car bombings in Shiite areas of I
+   query: (hybrid) "significant car bombings Shiite areas Iraq 2004 impact casualties"
+   query: (hybrid) "significant car bombings Shiite areas Iraq 2017 impact casualties"
+   query: (hyde) "meaning and usage of the phrase 'through and through'"
+   query: (fielded) "Mark Joseph 2003 single title"
+EXECUTED → per-gold attribution:
+   gold 52754818 (January 2017 Baghdad bombings): (fielded) "car bombings Shiite areas Iraq 2017" @rank7
+   gold 14570572 (2004 Karbala and Najaf bombings): (fielded) "car bombings Shiite areas Iraq 2004" @rank1
+   gold 2639406 (Through and through): (hybrid) "meaning of phrase 'through and through' difference" @rank2
+   gold 19250912 (Get Through): (hybrid) "meaning of phrase 'through and through' difference" @rank1
+IN-HOP MEMORY WRITE: hop5 found []; fused 1/4 golds in top-10
+
+--- HOP 6 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop7: found []; fused all-golds=3/4
+- [finding] hop8: found []; fused all-golds=3/4
+- [finding] hop9: found []; fused all-golds=3/4
+- [finding] hop10: found []; fused all-golds=3/4
+- [finding] hop1: found ['14570572', '19250912', '2639406', '52754818']; fused all-golds=1/4
+- [finding] hop2: found []; fused all-golds=1/4
+- [finding] hop3: found []; fused all-golds=1/4
+- [finding] hop4: found []; fused all-golds=1/4
+- [finding] hop5: found []; fused all-golds=1/4
+LLM APPROACH: reason=The question requires multiple hops: first, retrieving details and impacts of significant car bombings in Shiite areas o
+   query: (hybrid) "significant car bombings Shiite areas Iraq 2004 details impacts"
+   query: (hybrid) "significant car bombings Shiite areas Iraq 2017 details impacts"
+   query: (hyde) "meaning and usage of the phrase 'through and through'"
+   query: (fielded) "Mark Joseph 2003 single title meaning"
+EXECUTED → per-gold attribution:
+   gold 52754818 (January 2017 Baghdad bombings): (fielded) "car bombings Shiite areas Iraq 2017" @rank7
+   gold 14570572 (2004 Karbala and Najaf bombings): (fielded) "car bombings Shiite areas Iraq 2004" @rank1
+   gold 2639406 (Through and through): (hybrid) "meaning of phrase 'through and through' difference" @rank2
+   gold 19250912 (Get Through): (hybrid) "meaning of phrase 'through and through' difference" @rank1
+IN-HOP MEMORY WRITE: hop6 found []; fused 1/4 golds in top-10
+
+--- HOP 7 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop8: found []; fused all-golds=3/4
+- [finding] hop9: found []; fused all-golds=3/4
+- [finding] hop10: found []; fused all-golds=3/4
+- [finding] hop1: found ['14570572', '19250912', '2639406', '52754818']; fused all-golds=1/4
+- [finding] hop2: found []; fused all-golds=1/4
+- [finding] hop3: found []; fused all-golds=1/4
+- [finding] hop4: found []; fused all-golds=1/4
+- [finding] hop5: found []; fused all-golds=1/4
+- [finding] hop6: found []; fused all-golds=1/4
+LLM APPROACH: reason=The question requires multiple hops: (1) details and impacts of significant car bombings in Shiite areas of Iraq in 2004
+   query: (fielded) "car bombings Shiite areas Iraq 2004"
+   query: (fielded) "car bombings Shiite areas Iraq 2017"
+   query: (hybrid) "meaning of phrase 'through and through' difference from 2003 Mark Jose"
+EXECUTED → per-gold attribution:
+   gold 52754818 (January 2017 Baghdad bombings): (fielded) "car bombings Shiite areas Iraq 2017" @rank7
+   gold 14570572 (2004 Karbala and Najaf bombings): (fielded) "car bombings Shiite areas Iraq 2004" @rank1
+   gold 2639406 (Through and through): (hybrid) "meaning of phrase 'through and through' difference" @rank2
+   gold 19250912 (Get Through): (hybrid) "meaning of phrase 'through and through' difference" @rank1
+IN-HOP MEMORY WRITE: hop7 found []; fused 1/4 golds in top-10
+
+--- HOP 8 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop9: found []; fused all-golds=3/4
+- [finding] hop10: found []; fused all-golds=3/4
+- [finding] hop1: found ['14570572', '19250912', '2639406', '52754818']; fused all-golds=1/4
+- [finding] hop2: found []; fused all-golds=1/4
+- [finding] hop3: found []; fused all-golds=1/4
+- [finding] hop4: found []; fused all-golds=1/4
+- [finding] hop5: found []; fused all-golds=1/4
+- [finding] hop6: found []; fused all-golds=1/4
+- [finding] hop7: found []; fused all-golds=1/4
+LLM APPROACH: reason=The question requires multiple hops: (1) details and impacts of significant car bombings in Shiite areas of Iraq in 2004
+   query: (fielded) "car bombings Shiite areas Iraq 2004"
+   query: (fielded) "car bombings Shiite areas Iraq 2017"
+   query: (hybrid) "meaning of phrase 'through and through' difference from 2003 Mark Jose"
+EXECUTED → per-gold attribution:
+   gold 52754818 (January 2017 Baghdad bombings): (fielded) "car bombings Shiite areas Iraq 2017" @rank7
+   gold 14570572 (2004 Karbala and Najaf bombings): (fielded) "car bombings Shiite areas Iraq 2004" @rank1
+   gold 2639406 (Through and through): (hybrid) "meaning of phrase 'through and through' difference" @rank2
+   gold 19250912 (Get Through): (hybrid) "meaning of phrase 'through and through' difference" @rank1
+IN-HOP MEMORY WRITE: hop8 found []; fused 1/4 golds in top-10
+
+--- HOP 9 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop10: found []; fused all-golds=3/4
+- [finding] hop1: found ['14570572', '19250912', '2639406', '52754818']; fused all-golds=1/4
+- [finding] hop2: found []; fused all-golds=1/4
+- [finding] hop3: found []; fused all-golds=1/4
+- [finding] hop4: found []; fused all-golds=1/4
+- [finding] hop5: found []; fused all-golds=1/4
+- [finding] hop6: found []; fused all-golds=1/4
+- [finding] hop7: found []; fused all-golds=1/4
+- [finding] hop8: found []; fused all-golds=1/4
+LLM APPROACH: reason=The question requires multiple hops: (1) details and impacts of significant car bombings in Shiite areas of Iraq in 2004
+   query: (fielded) "car bombings Shiite areas Iraq 2004"
+   query: (fielded) "car bombings Shiite areas Iraq 2017"
+   query: (hybrid) "meaning of phrase 'through and through' difference from 2003 Mark Jose"
+EXECUTED → per-gold attribution:
+   gold 52754818 (January 2017 Baghdad bombings): (fielded) "car bombings Shiite areas Iraq 2017" @rank7
+   gold 14570572 (2004 Karbala and Najaf bombings): (fielded) "car bombings Shiite areas Iraq 2004" @rank1
+   gold 2639406 (Through and through): (hybrid) "meaning of phrase 'through and through' difference" @rank2
+   gold 19250912 (Get Through): (hybrid) "meaning of phrase 'through and through' difference" @rank1
+IN-HOP MEMORY WRITE: hop9 found []; fused 1/4 golds in top-10
+
+--- HOP 10 ---
+DYNAMIC PROMPT now also carries IN-SESSION FINDINGS:
+  - [finding] hop1: found ['14570572', '19250912', '2639406', '52754818']; fused all-golds=1/4
+- [finding] hop2: found []; fused all-golds=1/4
+- [finding] hop3: found []; fused all-golds=1/4
+- [finding] hop4: found []; fused all-golds=1/4
+- [finding] hop5: found []; fused all-golds=1/4
+- [finding] hop6: found []; fused all-golds=1/4
+- [finding] hop7: found []; fused all-golds=1/4
+- [finding] hop8: found []; fused all-golds=1/4
+- [finding] hop9: found []; fused all-golds=1/4
+LLM APPROACH: reason=The question requires multiple hops: (1) details and impacts of significant car bombings in Shiite areas of Iraq in 2004
+   query: (fielded) "car bombings Shiite areas Iraq 2004"
+   query: (fielded) "car bombings Shiite areas Iraq 2017"
+   query: (hybrid) "meaning of phrase 'through and through'"
+   query: (fielded) "Mark Joseph 2003 single title"
+EXECUTED → per-gold attribution:
+   gold 52754818 (January 2017 Baghdad bombings): (fielded) "car bombings Shiite areas Iraq 2017" @rank7
+   gold 14570572 (2004 Karbala and Najaf bombings): (fielded) "car bombings Shiite areas Iraq 2004" @rank1
+   gold 2639406 (Through and through): (hybrid) "meaning of phrase 'through and through' difference" @rank2
+   gold 19250912 (Get Through): (hybrid) "meaning of phrase 'through and through' difference" @rank1
+IN-HOP MEMORY WRITE: hop10 found []; fused 1/4 golds in top-10
+RESULT: partial — 1/4 golds after 10 hops.
+
+--- CROSS-QUERY MEMORY WRITE ---
+  remembered winning queries: fielded:'car bombings Shiite areas Iraq 2004'; fielded:'car bombings Shiite areas Iraq 2017'; hybrid:'meaning of phrase 'through and through' '; hybrid:'meaning of phrase 'through and through' '
+
+
+################  EXPLORATION SUMMARY  ################
+solved 1/10 ; memory: {'working': 50, 'longterm': 10, 'embedded': 10}
+
+
+################  DISTILL — LLM creates new primitives / subagents  ################
+Fed the LLM 10 captured winning patterns, e.g.:
+  - query "Which actor with part Fijian heritage who starred in an award-winning " (4-hop) solved=False: winning queries = fielded:'ac
+  - query "Which Texas legislative session occurred closest in time before the li" (4-hop) solved=False: winning queries = fielded:'ZZ
+  - query "Which individual named Galloway was active in politics during the 19th" (4-hop) solved=False: winning queries = hybrid:'Sep
+  - query "Which British TV series and film related to magic or magicians were re" (4-hop) solved=False: winning queries = hybrid:'Bri
+
+LLM PROPOSED:
+  {
+    "skills": [
+      {
+        "name": "entity_attribute_retrieval",
+        "when_to_use": "Use when the query involves retrieving specific attributes or facts about an entity (e.g., heritage, graduation, inaugural season).",
+        "retrievers": [
+          "fielded",
+          "hyde",
+          "hybrid"
+        ],
+        "combine": "fuse"
+      },
+      {
+        "name": "temporal_comparison",
+        "when_to_use": "Use when the query requires comparing or ordering events by time (e.g., legislative sessions closest in time, active periods).",
+        "retrievers": [
+          "hybrid",
+          "fielded"
+        ],
+        "combine": "fuse"
+      },
+      {
+        "name": "thematic_entity_retrieval",
+        "when_to_use": "Use when the query involves entities related by a theme or category (e.g., TV series about magic, music festivals, works with royal references).",
+        "retrievers": [
+          "hybrid",
+          "fielded"
+        ],
+        "combine": "fuse"
+      },
+      {
+        "name": "location_based_retrieval",
+        "when_to_use": "Use when the query involves entities or events tied to specific locations (e.g., politicians from a city, festivals near a
+
+FORGED + PERSISTED: [('skill', 'entity_attribute_retrieval'), ('skill', 'temporal_comparison'), ('skill', 'thematic_entity_retrieval'), ('skill', 'location_based_retrieval'), ('subagent', 'temporal_reasoning_agent'), ('subagent', 'entity_attribute_agent'), ('subagent', 'thematic_entity_agent')] + 5 rule(s)
+
+################  MEMORY (what it retained)  ################
+  cross-query long-term (10): e.g.
+   - query "Which actor with part Fijian heritage who starred in an award-winning " (4-hop) solved=False: winning queries = f
+   - query "Which Texas legislative session occurred closest in time before the li" (4-hop) solved=False: winning queries = f
+   - query "Which individual named Galloway was active in politics during the 19th" (4-hop) solved=False: winning queries = h
+  in-session working (50): e.g.
+   - [finding] hop8: found []; fused all-golds=1/4
+   - [finding] hop9: found []; fused all-golds=1/4
+   - [finding] hop10: found []; fused all-golds=1/4
+
+################  FINAL SKILLS (incl. LLM-forged)  ################
+dense_lookup (cost 0): default semantic search for a single focused question
+definition_lookup (cost 0): a 'what is / define X' question with one clear answer
+hybrid_search (cost 0): broad/open-ended query; balance semantics + terms
+keyword_search (cost 0): rare exact tokens where embeddings blur
+exact_lookup (cost 1): error/status codes, part numbers, IDs — exact match beats semantics
+decompose_fuse (cost 3): MULTI-HOP: needs several docs; split into sub-facts, retrieve each, fuse
+decompose_fielded (cost 3): MULTI-HOP over named entities: split into sub-facts, fielded title+text match + dense per sub, fuse
+arsenal_single (cost 2): hard single lookup: hybrid + HyDE + fielded, fused (HyDE for generic descriptions)
+decompose_arsenal (cost 3): MULTI-HOP (best): decompose, then hybrid+HyDE+fielded per sub-fact, RRF-fused
+hyde_bridge (cost 2): vocabulary gap: the query wording differs from the corpus wording
+prf_expand (cost 1): under-specified query; expand from the corpus's own top hits (no LLM)
+rerank_precise (cost 2): single best answer needed; rerank a wide pool for precision
+diversify (cost 1): broad query needing coverage of distinct facets, not near-duplicates
+entity_attribute_retrieval (cost 1): Use when the query involves retrieving specific attributes or facts about an entity (e.g., heritage, graduation, inaugural season).
+entity_relation_connection (cost 1): Use when the query asks for connections or relationships between named entities, e.g., 'connection between a Major League Baseball shortstop named', 'connection between the title of Queen's fourth studio album'.
+event_comparison_retrieval (cost 1): Use when the query involves comparing or relating events, e.g., 'How many years apart were the Seattle Pop Festival and the Aramaic Music Festival'.
+novel_title_author_retrieval (cost 1): Use when the query requests titles and authors of novels containing specific phrases or keywords, e.g., 'titles and authors of novels that include the phrase Crown'.
+fielded_family_species_retrieval (cost 1): When the question asks for species belonging to specific biological families
+fielded_location_entity_retrieval (cost 1): When the question involves entities (e.g., mandal headquarters, villages) located within specific geographic regions or administrative divisions
+hybrid_biographical_filtering (cost 1): When the question involves people filtered by birth year ranges, number of works, or titles held
+fielded_professional_role_retrieval (cost 1): When the question involves people with specific professions, roles, or attributes (e.g., actress born in year, producer born in year)
+temporal_comparison (cost 1): Use when the query requires comparing or ordering events by time (e.g., legislative sessions closest in time, active periods).
+thematic_entity_retrieval (cost 1): Use when the query involves entities related by a theme or category (e.g., TV series about magic, music festivals, works with royal references).
+location_based_retrieval (cost 1): Use when the query involves entities or events tied to specific locations (e.g., politicians from a city, festivals near a city).
+
+################  LEARNED RULES (self-modifiable prompt)  ################
+LEARNED RULES (refined from past runs):
+- If query involves institutional status or programs, use institution_status_retrieval skill with fielded retriever.
+- If question involves biological taxonomy and families, use skill 'fielded_family_species_retrieval'.
+- If question involves geographic locations or administrative divisions, use skill 'fielded_location_entity_retrieval'.
+- If question involves people filtered by birth years, number of works, or titles, use skill 'hybrid_biographical_filtering'.
+- If question involves professional roles or attributes tied to birth years or other qualifiers, use skill 'fielded_professional_role_retrieval'.
+- If question involves sports clubs by country or league and their achievements, use skill 'hybrid_sports_club_retrieval'.
+- If question involves awards or nominations for named entities, use skill 'fielded_awards_nominations_retrieval'.
+- If query contains temporal keywords (e.g., closest, before, during, active), use temporal_reasoning_agent.
+- If query focuses on specific entity attributes or heritage, use entity_attribute_agent.
+- If query involves categories or themes (e.g., magic, music festival, royal references), use thematic_entity_agent.
+- For multi-hop queries involving multiple entity attributes or relations, combine entity_attribute_retrieval and multi_hop_retrieval skills.
+- When location is mentioned explicitly, prioritize location_based_retrieval skill.
+
+[saved transcript.md + transparent_store/ + transparent_memory.jsonl]
