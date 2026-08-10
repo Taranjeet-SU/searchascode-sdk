@@ -71,11 +71,15 @@ class Harness:
             hook(ctx)
         dynamic_prompt = ctx.scratch.get("dynamic_prompt", "")
 
+        # if memory recalled a FORGED skill to the top of the plan, use it (replicate the learned
+        # module) instead of re-deriving via generic subagents.
+        top = ctx.plan[0] if ctx.plan else None
+        prefer_forged = top is not None and top in getattr(self.store, "skills", {})
         if (self.use_subagents and ctx.intent is not None and ctx.intent.depth == "multi"
-                and self._depth < self.max_depth):
+                and self._depth < self.max_depth and not prefer_forged):
             result = self._run_subagents(ctx, top_k)          # multi-hop → subagents
         else:
-            result = self._run_loop(ctx, top_k)               # single → Plan-Execute-Verify
+            result = self._run_loop(ctx, top_k)               # single / forged-skill → Plan-Execute-Verify
 
         result.dynamic_prompt = dynamic_prompt
         result.intent = ctx.intent.kind if ctx.intent is not None else ""
