@@ -1,0 +1,1 @@
+{"name": "multi_hop_planner", "when_to_use": "Use for multi-hop questions requiring sequential retrieval steps to gather and connect information from multiple documents.", "plan": ["arsenal_single"], "base_prompt": "", "tags": ["learned"]}
