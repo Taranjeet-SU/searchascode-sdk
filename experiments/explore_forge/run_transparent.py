@@ -186,10 +186,14 @@ def distill(gen, wins, forge, t):
 def main():
     n = int(sys.argv[1]) if len(sys.argv) > 1 else 10
     max_hops = int(sys.argv[2]) if len(sys.argv) > 2 else 3
+    hops = [int(x) for x in sys.argv[3].split(",")] if len(sys.argv) > 3 else [2, 3, 4]
     t = T()
     rows = []
-    for hop in (2, 3, 4):
-        rs = [json.loads(l) for l in (DATA / f"multihop_{hop}docs_queries.jsonl").open()][:n]
+    for hop in hops:
+        f = DATA / f"multihop_{hop}docs_queries.jsonl"
+        if not f.exists():
+            continue
+        rs = [json.loads(l) for l in f.open()][:n]
         for r in rs:
             r["n_docs"] = hop
         rows += rs
