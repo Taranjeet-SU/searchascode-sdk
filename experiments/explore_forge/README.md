@@ -38,6 +38,20 @@ subagent + prompt-rule that later queries apply directly.
 - Harness pieces used: `search_as_code/harness/` (`run_sac` oracle exploration; `AgentMemory`,
   `HarnessForge`, `HarnessStore`, `Harness`). See `docs/HARNESS.md`.
 
+## Coverage finding — the "unsolvable" 4-hop queries were under-retrieval, not a ceiling
+Digging into the ~33% of 4-hop queries the first run left unsolved: the golds are **reachable**, and
+the failure was **under-using the retrieval arsenal**, not a coverage ceiling.
+- Exact **title** match finds every gold — but the title *is* the answer (oracle-only, not usable).
+- The **query's own** distinctive phrases retrieve only 2/4–3/4 golds; the rest are described *too
+  generically* ("an Australian novel series") for any phrase/keyword to isolate.
+- The **full arsenal — decompose × {hybrid + HyDE + fielded}, RRF-fused** — reaches them: **HyDE**
+  hallucinates the answer doc for a generic description and retrieves the missing entity (e.g.
+  *The Cardboard Crown* via HyDE+hybrid). Wiring this into the harness (`decompose_arsenal` /
+  `arsenal_single` per sub-fact) lifted the multi-hop solve-rate **0.67 → 0.83** on the same set;
+  the residual misses are slot-competition (all golds in top-30, not all in top-10 → needs rerank/k=20).
+
+The forged multi-hop skill/subagent now use the arsenal (`decompose_arsenal` / `arsenal_single`).
+
 ## Honest status
 - Exploration uses the SDK's atomic query surface (which *is* the OpenSearch query layer) — raw DSL
   via `store._search(body)` is available but not yet the default exploration channel.

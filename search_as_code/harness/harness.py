@@ -116,17 +116,23 @@ class Harness:
 
     def _run_subagents(self, ctx, top_k) -> HarnessResult:
         subs = decompose_query(ctx.query, self.generator)
+        arsenal = self.skills.get("arsenal_single")           # each subagent uses the full arsenal on its sub-fact
+        wide = max(top_k * 3, 30)                              # keep sub-pools WIDE so the fuse preserves coverage
         sub_traces, pools = [], []
         for sub in subs:
-            r = self.spawn(sub, top_k=top_k)
-            pools.append(r.ids)
-            sub_traces.append({"query": sub, "ids": r.ids, "skill": r.skill})
-            # cross-hop memory: write each sub-question's FINDING into the shared memory so the NEXT
-            # subagent (and later hops) recall it — not just the query text.
+            if arsenal is not None:
+                ids = arsenal.run(self.session, sub, top_k=wide)
+                skill = "arsenal_single"
+            else:
+                r = self.spawn(sub, top_k=top_k); ids, skill = r.ids, r.skill
+            pools.append(ids)
+            sub_traces.append({"query": sub, "ids": ids[:top_k], "skill": skill})
+            # cross-hop memory: write each sub-fact's FINDING so later hops recall it (not just the query)
             if self.memory is not None:
-                self.memory.observe(f"sub-question \"{sub[:70]}\" -> found {r.ids[:3]} via {r.skill}",
+                self.memory.observe(f"sub-question \"{sub[:70]}\" -> found {ids[:3]} via {skill}",
                                     kind="finding")
-        pools.append(self._run_loop(ctx, top_k).ids)          # also the full question
+        if arsenal is not None:
+            pools.append(arsenal.run(self.session, ctx.query, top_k=wide))    # whole query, full arsenal
         fused = fuse_ids(pools)[:top_k]
         return HarnessResult(ids=fused, skill="subagents", score=1.0 if fused else 0.0,
                              subagents=sub_traces, meta={"n_subagents": len(subs)})

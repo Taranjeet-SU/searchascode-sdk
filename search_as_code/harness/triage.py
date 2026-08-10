@@ -72,7 +72,7 @@ def triage(query: str) -> QueryIntent:
 
     # 2) multi-hop: explicit connective hints OR several distinct clauses/entities
     if sig["multi_hint"] or sig["n_clauses"] >= 3:
-        return QueryIntent("multi_hop", sig, "decompose_fuse", "multi",
+        return QueryIntent("multi_hop", sig, "decompose_arsenal", "multi",
                            0.85 if sig["multi_hint"] and sig["n_clauses"] >= 3 else 0.65)
 
     # 3) definition / factoid → one focused lookup

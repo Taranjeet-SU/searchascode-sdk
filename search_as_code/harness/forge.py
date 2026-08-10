@@ -175,15 +175,16 @@ def reflect(ctx, result, forge: HarnessForge, threshold: float = 0.5) -> list:
         name = f"learned_multihop_{kind}"
         if name not in forge.store.skills:
             forge.create_skill(name, f"multi-hop {kind} queries needing several docs",
-                               retrievers=["decompose", "dense", "keyword"], combine="fuse", cost=2)
+                               retrievers=["decompose_arsenal"], combine="fuse", cost=2)
             forge.create_subagent(f"sub_{kind}", f"a sub-question of a {kind} query",
-                                  plan=["dense_lookup", "keyword_search"])
+                                  plan=["arsenal_single"])
             created += [name, f"sub_{kind}"]
 
     # 3) error-code / definition wins → refine the supplemental prompt with a rule
     if kind == "error_code":
         forge.refine_prompt("For error-code / ID queries, try exact_lookup before semantic search.")
     elif kind == "multi_hop":
-        forge.refine_prompt("For multi-hop queries, decompose into sub-questions and FUSE — do not "
-                            "rerank the fused union (it drops per-sub-fact coverage).")
+        forge.refine_prompt("For multi-hop: decompose into sub-facts and use the full arsenal per sub "
+                            "— hybrid + HyDE (for generically-described entities) + fielded — then FUSE "
+                            "(don't rerank the union).")
     return created

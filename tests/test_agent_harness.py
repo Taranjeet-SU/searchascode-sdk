@@ -30,7 +30,7 @@ def test_triage_error_code():
 def test_triage_definition_and_multihop():
     assert triage("What is the Agilex 7 FPGA").kind == "definition"
     it = triage("Compare the Agilex 7 transceivers and the Quartus install steps")
-    assert it.kind == "multi_hop" and it.depth == "multi" and it.recommended_skill == "decompose_fuse"
+    assert it.kind == "multi_hop" and it.depth == "multi" and it.recommended_skill == "decompose_arsenal"
     assert triage("who is the lead architect").kind == "entity_factoid"
 
 

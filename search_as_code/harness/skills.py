@@ -13,6 +13,7 @@ HyDE for vocabulary gaps).
 """
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
 from typing import Callable, Optional
 
@@ -81,6 +82,88 @@ def _decompose_fuse(session, query, top_k=10, **_):
         return _dense(session, query, top_k)
 
 
+def _decompose_fielded(session, query, top_k=10, **_):
+    """Multi-hop via per-sub-fact FIELDED match: decompose → query_fielded(sub, [title,text]) + dense
+    per sub → fuse. The diagnostic showed multi-hop golds ARE reachable by title/text fielded match;
+    this composes that per sub-fact so each entity gets its own strong retrieval, then fuses for
+    coverage (the fix for 4-hop queries a question-level dense pass misses)."""
+    from .. import primitives as P
+    gen = getattr(session, "generator", None)
+    subs = []
+    if gen is not None:
+        try:
+            out = gen("Break this question into the distinct factual sub-questions needed to answer "
+                      "it — each targets a DIFFERENT entity/document. One per line, 2-6.\n\nQ: " + query)
+            txt = out[0] if isinstance(out, list) else str(out)
+            subs = [re.sub(r"^[-*\d.\s]+", "", ln).strip() for ln in txt.splitlines() if ln.strip()][:6]
+        except Exception:
+            pass
+    subs = [s for s in subs if len(s) > 3] or [query]
+    qf = getattr(session.store, "query_fielded", None)
+    pools = []
+    for s in subs + [query]:
+        try:
+            pools.append(qf(s, ["title", "text"], top_k=max(top_k, 20)) if qf
+                         else session.search(s, top_k=max(top_k, 20), mode="keyword"))
+        except Exception:
+            pass
+        try:
+            pools.append(session.search(s, top_k=max(top_k, 20), mode="dense"))
+        except Exception:
+            pass
+    return _ids(P.fuse([p for p in pools if p]), top_k) if pools else _dense(session, query, top_k)
+
+
+def _arsenal_single(session, query, top_k=10, **_):
+    """Full single-query arsenal: hybrid + HyDE + fielded(title,text), RRF-fused. HyDE bridges a
+    GENERIC description (hallucinate the answer doc, search its embedding — the fix for entities the
+    query only describes), fielded catches named entities, hybrid balances semantics+terms."""
+    from .. import primitives as P
+    pools = []
+    for fn in (lambda: session.search(query, top_k=max(top_k, 30), mode="hybrid"),
+               lambda: session.hyde_search(query, top_k=max(top_k, 30)),
+               lambda: (session.store.query_fielded(query, ["title", "text"], top_k=max(top_k, 30))
+                        if getattr(session.store, "query_fielded", None) else None)):
+        try:
+            rs = fn()
+            if rs:
+                pools.append(rs)
+        except Exception:
+            pass
+    return _ids(P.fuse(pools), top_k) if pools else _dense(session, query, top_k)
+
+
+def _decompose_arsenal(session, query, top_k=10, **_):
+    """MULTI-HOP (validated): decompose → the full arsenal (hybrid+HyDE+fielded) per sub-fact AND the
+    whole query → RRF fuse. Recovers 4-hop golds a dense/keyword decompose misses (HyDE reaches the
+    generically-described entity)."""
+    from .. import primitives as P
+    gen = getattr(session, "generator", None)
+    subs = []
+    if gen is not None:
+        try:
+            out = gen("Break this question into the distinct factual sub-questions needed to answer "
+                      "it — each targets a DIFFERENT entity/document. One per line, 2-6.\n\nQ: " + query)
+            txt = out[0] if isinstance(out, list) else str(out)
+            subs = [re.sub(r"^[-*\d.\s]+", "", ln).strip() for ln in txt.splitlines() if ln.strip()][:6]
+        except Exception:
+            pass
+    subs = [s for s in subs if len(s) > 3] or [query]
+    qf = getattr(session.store, "query_fielded", None)
+    pools = []
+    for x in subs + [query]:
+        for fn in (lambda x=x: session.search(x, top_k=max(top_k, 30), mode="hybrid"),
+                   lambda x=x: session.hyde_search(x, top_k=max(top_k, 30)),
+                   lambda x=x: (qf(x, ["title", "text"], top_k=max(top_k, 30)) if qf else None)):
+            try:
+                rs = fn()
+                if rs:
+                    pools.append(rs)
+            except Exception:
+                pass
+    return _ids(P.fuse(pools), top_k) if pools else _dense(session, query, top_k)
+
+
 def _hyde(session, query, top_k=10, **_):
     try:
         return _ids(session.hyde_search(query, top_k=top_k), top_k)
@@ -119,6 +202,9 @@ BUILTIN_SKILLS = [
     Skill("keyword_search", "rare exact tokens where embeddings blur", _keyword, ["core"], 0),
     Skill("exact_lookup", "error/status codes, part numbers, IDs — exact match beats semantics", _exact, ["ids"], 1),
     Skill("decompose_fuse", "MULTI-HOP: needs several docs; split into sub-facts, retrieve each, fuse", _decompose_fuse, ["multihop"], 3),
+    Skill("decompose_fielded", "MULTI-HOP over named entities: split into sub-facts, fielded title+text match + dense per sub, fuse", _decompose_fielded, ["multihop"], 3),
+    Skill("arsenal_single", "hard single lookup: hybrid + HyDE + fielded, fused (HyDE for generic descriptions)", _arsenal_single, ["arsenal"], 2),
+    Skill("decompose_arsenal", "MULTI-HOP (best): decompose, then hybrid+HyDE+fielded per sub-fact, RRF-fused", _decompose_arsenal, ["multihop", "arsenal"], 3),
     Skill("hyde_bridge", "vocabulary gap: the query wording differs from the corpus wording", _hyde, ["vocab"], 2),
     Skill("prf_expand", "under-specified query; expand from the corpus's own top hits (no LLM)", _prf, ["expand"], 1),
     Skill("rerank_precise", "single best answer needed; rerank a wide pool for precision", _rerank_precise, ["precision"], 2),

@@ -37,11 +37,12 @@ HERE = Path(__file__).parent
 def explore_hint(memory, query: str) -> str:
     recalled = memory.recall(query, k=4)
     mem = "\n".join(f"- {m.content}" for m in recalled)
-    return ("EXPLORE THIS CORPUS WITH RAW QUERIES — do not rely on one canned recipe. Compose atomic "
-            "OpenSearch queries: sac.search(q, mode='keyword'|'hybrid'|'dense'), sac.hyde_search, and "
-            "sac.decompose_search per sub-fact, then sac.fuse the pools. For a multi-hop question, "
-            "DECOMPOSE into sub-facts, retrieve each with its own query, and FUSE (do NOT rerank the "
-            "union — it drops per-sub-fact coverage). Iterate until ALL needed docs are found.\n"
+    return ("EXPLORE THIS CORPUS WITH RAW QUERIES — do not rely on one canned recipe. For EACH "
+            "sub-fact use the FULL ARSENAL and fuse (RRF): sac.search(q, mode='hybrid'), "
+            "sac.hyde_search(q) — HyDE is essential when the question only DESCRIBES an entity "
+            "generically (it hallucinates the answer doc), and a fielded title+text keyword match for "
+            "named entities. DECOMPOSE multi-hop questions into sub-facts, run the arsenal per sub, "
+            "then sac.fuse (do NOT rerank the union). Iterate until ALL needed docs are found.\n"
             + (f"WHAT WORKED BEFORE (memory):\n{mem}" if mem else ""))
 
 
@@ -102,12 +103,12 @@ def main():
     if ex["solved"] > 0:
         forge = HarnessForge(store, sac.SkillRegistry(embedder=session.embedder), memory)
         forge.create_skill("explored_multihop", "multi-hop queries needing several docs (learned by "
-                           "oracle exploration on this corpus)", retrievers=["decompose", "dense", "keyword"],
+                           "oracle exploration on this corpus)", retrievers=["decompose_arsenal"],
                            combine="fuse", cost=2, origin="forged")
         forge.create_subagent("sub_fact", "a single sub-fact of a multi-hop query",
-                              plan=["dense_lookup", "keyword_search"])
-        forge.refine_prompt("Multi-hop: decompose into sub-facts, retrieve each, FUSE — do not rerank "
-                            "the union (it drops per-sub-fact coverage).")
+                              plan=["arsenal_single"])
+        forge.refine_prompt("Multi-hop: decompose into sub-facts, run the full arsenal per sub "
+                            "(hybrid + HyDE + fielded), then FUSE — do not rerank the union.")
         forged = ["explored_multihop", "sub_fact"]
         print(f"[forge] created {forged} + {len(store.learnings)} learned rule(s)", flush=True)
 
