@@ -1,0 +1,23 @@
+{
+  "global": {
+    "solve_rate": 0.333,
+    "avg_recall": 0.771,
+    "avg_hops": 4.58,
+    "avg_calls": 19.6,
+    "n": 12
+  },
+  "widen": {
+    "solve_rate": 0.167,
+    "avg_recall": 0.667,
+    "avg_hops": 5.17,
+    "avg_calls": 39.6,
+    "n": 12
+  },
+  "diagnostic": {
+    "solve_rate": 0.333,
+    "avg_recall": 0.75,
+    "avg_hops": 4.5,
+    "avg_calls": 21.5,
+    "n": 12
+  }
+}

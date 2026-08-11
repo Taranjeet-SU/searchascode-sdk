@@ -18,6 +18,23 @@ Running log of everything built/changed/learned. Newest first.
 
 ---
 
+## 2026-08-11 — Diagnostic LLM-as-judge + forged-primitive playbook (SDK)
+- `search_as_code.harness.DiagnosticJudge`: STOP/CONTINUE controller; per-sub-fact CROSS-ENCODER coverage
+  signal (primary) + bi-encoder/lexical/cliff. Oracle-agreement 0.63->0.72 balanced-acc = the SIGNAL
+  ceiling (same-model self-critique 0.721; independent Qwen-32B 0.70; neither beats it).
+- `harness.diagnostic_solve`: decompose -> per-sub-fact arsenal -> reserve-slot assembly -> judge +
+  RAG-Techniques `SkillLookup` (NirDiamant/RAG_Techniques) route weak sub-facts to hyde/fielded/rerank/
+  decompose/prf/authored `os_query`. `forged=` runs through forged primitives (SAC-replicate).
+- Results (n=30, 4-hop): SU diagnostic 0.53 vs 0.33 all-golds (+0.10 recall, 30%% fewer hops); HotpotQA
+  ~parity. Forge authored 5 free-form code primitives + skills/subagents from discovered OpenSearch queries.
+- SAC-replicate: forged primitives reproduce raw-query recall (sac_oracle~raw_oracle); autonomous judge
+  keeps recall within ~0.02-0.06 but loses ~0.10-0.20 strict all-golds to an imperfect stop.
+- pip test: `tests/test_diagnostic_playbook.py` (raw 0.875 / forged-SAC 0.750 recall@10). Write-up:
+  `experiments/deep_judge/README.md`.
+
+---
+
+
 # STATUS & TASK BOARD (updated 2026-07-22)
 
 Granular status so another agent can pick up the work. Read this first, then the dated log below.

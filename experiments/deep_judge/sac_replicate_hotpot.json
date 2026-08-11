@@ -1,0 +1,23 @@
+{
+  "corpus": "hotpot",
+  "n": 30,
+  "hop": 4,
+  "arms": {
+    "raw_oracle": {
+      "all_golds@10": 0.467,
+      "recall@10": 0.808,
+      "avg_hops": 3.7
+    },
+    "sac_oracle": {
+      "all_golds@10": 0.433,
+      "recall@10": 0.792,
+      "avg_hops": 4.07
+    },
+    "sac_judge": {
+      "all_golds@10": 0.367,
+      "recall@10": 0.783,
+      "avg_hops": 3.43,
+      "stop_correct": 0.567
+    }
+  }
+}

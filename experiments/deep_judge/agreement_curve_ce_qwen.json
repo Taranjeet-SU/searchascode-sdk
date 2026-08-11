@@ -1,0 +1,202 @@
+[
+  {
+    "round": 0,
+    "tune": {
+      "n": 100,
+      "tp": 40,
+      "tn": 36,
+      "fp": 11,
+      "fn": 13,
+      "accuracy": 0.76,
+      "balanced_acc": 0.76,
+      "false_accept_rate": 0.234,
+      "false_reject_rate": 0.245
+    },
+    "test": {
+      "n": 100,
+      "tp": 37,
+      "tn": 33,
+      "fp": 14,
+      "fn": 16,
+      "accuracy": 0.7,
+      "balanced_acc": 0.7,
+      "false_accept_rate": 0.298,
+      "false_reject_rate": 0.302
+    }
+  },
+  {
+    "round": 1,
+    "tune": {
+      "n": 100,
+      "tp": 40,
+      "tn": 36,
+      "fp": 11,
+      "fn": 13,
+      "accuracy": 0.76,
+      "balanced_acc": 0.76,
+      "false_accept_rate": 0.234,
+      "false_reject_rate": 0.245
+    },
+    "test": {
+      "n": 100,
+      "tp": 37,
+      "tn": 33,
+      "fp": 14,
+      "fn": 16,
+      "accuracy": 0.7,
+      "balanced_acc": 0.7,
+      "false_accept_rate": 0.298,
+      "false_reject_rate": 0.302
+    }
+  },
+  {
+    "round": 2,
+    "tune": {
+      "n": 100,
+      "tp": 40,
+      "tn": 36,
+      "fp": 11,
+      "fn": 13,
+      "accuracy": 0.76,
+      "balanced_acc": 0.76,
+      "false_accept_rate": 0.234,
+      "false_reject_rate": 0.245
+    },
+    "test": {
+      "n": 100,
+      "tp": 37,
+      "tn": 33,
+      "fp": 14,
+      "fn": 16,
+      "accuracy": 0.7,
+      "balanced_acc": 0.7,
+      "false_accept_rate": 0.298,
+      "false_reject_rate": 0.302
+    }
+  },
+  {
+    "round": 3,
+    "tune": {
+      "n": 100,
+      "tp": 40,
+      "tn": 36,
+      "fp": 11,
+      "fn": 13,
+      "accuracy": 0.76,
+      "balanced_acc": 0.76,
+      "false_accept_rate": 0.234,
+      "false_reject_rate": 0.245
+    },
+    "test": {
+      "n": 100,
+      "tp": 37,
+      "tn": 33,
+      "fp": 14,
+      "fn": 16,
+      "accuracy": 0.7,
+      "balanced_acc": 0.7,
+      "false_accept_rate": 0.298,
+      "false_reject_rate": 0.302
+    }
+  },
+  {
+    "round": 4,
+    "tune": {
+      "n": 100,
+      "tp": 40,
+      "tn": 36,
+      "fp": 11,
+      "fn": 13,
+      "accuracy": 0.76,
+      "balanced_acc": 0.76,
+      "false_accept_rate": 0.234,
+      "false_reject_rate": 0.245
+    },
+    "test": {
+      "n": 100,
+      "tp": 37,
+      "tn": 33,
+      "fp": 14,
+      "fn": 16,
+      "accuracy": 0.7,
+      "balanced_acc": 0.7,
+      "false_accept_rate": 0.298,
+      "false_reject_rate": 0.302
+    }
+  },
+  {
+    "round": 5,
+    "tune": {
+      "n": 100,
+      "tp": 40,
+      "tn": 36,
+      "fp": 11,
+      "fn": 13,
+      "accuracy": 0.76,
+      "balanced_acc": 0.76,
+      "false_accept_rate": 0.234,
+      "false_reject_rate": 0.245
+    },
+    "test": {
+      "n": 100,
+      "tp": 37,
+      "tn": 33,
+      "fp": 14,
+      "fn": 16,
+      "accuracy": 0.7,
+      "balanced_acc": 0.7,
+      "false_accept_rate": 0.298,
+      "false_reject_rate": 0.302
+    }
+  },
+  {
+    "round": 6,
+    "tune": {
+      "n": 100,
+      "tp": 40,
+      "tn": 36,
+      "fp": 11,
+      "fn": 13,
+      "accuracy": 0.76,
+      "balanced_acc": 0.76,
+      "false_accept_rate": 0.234,
+      "false_reject_rate": 0.245
+    },
+    "test": {
+      "n": 100,
+      "tp": 37,
+      "tn": 33,
+      "fp": 14,
+      "fn": 16,
+      "accuracy": 0.7,
+      "balanced_acc": 0.7,
+      "false_accept_rate": 0.298,
+      "false_reject_rate": 0.302
+    }
+  },
+  {
+    "round": 7,
+    "tune": {
+      "n": 100,
+      "tp": 40,
+      "tn": 36,
+      "fp": 11,
+      "fn": 13,
+      "accuracy": 0.76,
+      "balanced_acc": 0.76,
+      "false_accept_rate": 0.234,
+      "false_reject_rate": 0.245
+    },
+    "test": {
+      "n": 100,
+      "tp": 37,
+      "tn": 33,
+      "fp": 14,
+      "fn": 16,
+      "accuracy": 0.7,
+      "balanced_acc": 0.7,
+      "false_accept_rate": 0.298,
+      "false_reject_rate": 0.302
+    }
+  }
+]

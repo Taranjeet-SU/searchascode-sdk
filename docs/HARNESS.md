@@ -65,3 +65,22 @@ prompt, persisted and reused across sessions**; `sac.Harness(learn=True)`.
 4. **Mid-loop refinement.** Forging happens post-solve; not yet *during* the loop.
 
 Tests: `tests/test_agent_harness.py` (no GPU/LLM — memory backend + dependency-free embedder).
+
+---
+
+## Diagnostic judge + forged-primitive playbook (2026-08-11)
+
+`search_as_code.harness.DiagnosticJudge` turns the judge from a one-bit gate into a STOP/CONTINUE
+controller: it reads per-sub-fact coverage signals (cross-encoder relevance = primary; bi-encoder cosine,
+lexical overlap, score cliff = secondary) and emits `COVERED / MISSING / DIAGNOSIS / TECHNIQUE /
+NEXT_QUERY / VERDICT`. Its PASS/FAIL mimics a gold oracle without seeing gold, at **0.72 held-out
+balanced-acc — the signal ceiling** (a supervised model, same-model self-critique, and an independent
+Qwen-32B critic all land ~0.70–0.72; the residual is snippet-level, not a reasoning/critic limit).
+
+`harness.diagnostic_solve(session, query, ...)` is the reusable loop: decompose → per-sub-fact arsenal →
+reserve-one-slot-per-sub-fact assembly → judge + `harness.SkillLookup` (seeded from NirDiamant/RAG_Techniques)
+route each weak sub-fact to HyDE / fielded / rerank / decompose / PRF / LLM-authored `harness.author_os_query`.
+Pass `forged=[primitive.run, ...]` to retrieve through **forged authored primitives** — reproduces
+raw-query relevance (`sac_oracle ≈ raw_oracle`). With `gold=None` the judge stops autonomously; recall
+matches the oracle to within ~0.02–0.06, the only loss being ~0.10–0.20 of *strict* all-golds from an
+imperfect stop signal. See `experiments/deep_judge/` and `tests/test_diagnostic_playbook.py`.
