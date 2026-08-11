@@ -1,0 +1,36 @@
+{
+  "corpus": "hotpot",
+  "n": 30,
+  "arms": {
+    "dense": {
+      "all_golds@10": 0.233,
+      "recall@10": 0.592,
+      "avg_hops": 1.0
+    },
+    "oneshot_sac": {
+      "all_golds@10": 0.367,
+      "recall@10": 0.717,
+      "avg_hops": 1.0
+    },
+    "deep_sac": {
+      "all_golds@10": 0.333,
+      "recall@10": 0.708,
+      "avg_hops": 1.4
+    },
+    "diagnostic": {
+      "all_golds@10": 0.433,
+      "recall@10": 0.783,
+      "avg_hops": 3.7
+    },
+    "forged_sac": {
+      "all_golds@10": 0.4,
+      "recall@10": 0.792,
+      "avg_hops": 3.9
+    },
+    "diagnostic_oracle": {
+      "all_golds@10": 0.467,
+      "recall@10": 0.8,
+      "avg_hops": 3.73
+    }
+  }
+}

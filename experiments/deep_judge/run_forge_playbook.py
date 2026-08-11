@@ -63,6 +63,24 @@ def build(corpus, embed, gen):
         loader.add(docs)
         store = loader.store
         rows = [json.loads(l) for l in (SU_DATA / "su_multihop_4docs.jsonl").open()]
+    elif corpus == "browsecomp":
+        # BrowseComp-Plus: 100K-doc FastMemoryStore with precomputed gte-base vectors; real qrels golds.
+        # Memory store -> no raw _search/query_fielded (os_query/fielded degrade to keyword, as designed).
+        import numpy as np
+        from experiments.browsecomp import bc_common
+        from search_as_code.types import Document
+        vecs = np.load(bc_common.VECS_NPY)
+        ids = json.loads(bc_common.IDS_JSON.read_text())
+        texts = {}
+        for line in bc_common.TEXTS_JSONL.open():
+            row = json.loads(line)
+            texts[row["id"]] = row["text"]
+        store = bc_common.FastMemoryStore()
+        store.upsert([Document(id=str(i), text=texts.get(str(i), ""), vector=vecs[k].tolist())
+                      for k, i in enumerate(ids)])
+        golds, queries = bc_common.load_golds(), bc_common.load_queries()
+        rows = [{"query": queries[q], "gold_ids": golds[q]} for q in queries
+                if q in golds and queries.get(q)]
     else:
         raise SystemExit(f"unknown corpus {corpus}")
     return store, rows

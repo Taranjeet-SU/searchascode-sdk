@@ -111,6 +111,66 @@ Take-away: SAC primitives + diagnostic judge mimic raw-query *recall* autonomous
 remaining advantage is the last ~10–20 pts of all-golds, purely a perfect stop signal.
 (`run_sac_replicate.py`, `sac_replicate_{hotpot,su}.json`.)
 
+## 5. Free-form explore — structure-emergent, forged from raw OpenSearch queries
+
+The diagnostic playbook above **hardcodes** `decompose → per-sub-fact arsenal`. That wins on multi-hop
+(HotpotQA/SU) but **loses on BrowseComp** (dense 0.079 vs decompose 0.025 recall@10) — because BrowseComp
+questions are ONE entity satisfying MANY constraints (the gold matches the *whole conjunction*, so
+splitting the query scatters retrieval). A fixed recipe can't know this; **explore should discover it.**
+
+### `agentic_solve` (standard: `search_as_code.harness.agentic_solve`)
+The LLM **authors the retrieval strategy itself each hop**, as code over the OpenSearch query surface
+(`session.search` dense/keyword/hybrid, `hyde_search`, `query_fielded`, raw `store._search` DSL, plus
+in-scope `fuse_ids` / `rerank`). It **chooses the structure** — keep the query whole (dense/hybrid + rerank)
+or decompose — instead of being forced to decompose. Guidance, not dictation:
+- the **deep judge** runs every hop and emits `COVERED / MISSING / DIAGNOSIS / TECHNIQUE / NEXT_QUERY`,
+  fed to the next hop as a *structure-neutral* hint (an earlier version let the judge's "absent→decompose"
+  heuristic bias the strategist to decompose everything — fixed by framing it as an optional hint);
+- the **RAG-Techniques `SkillLookup`** suggests techniques for the missing aspect;
+- **memory**: per-hop findings persist within a query (cross-hop, `AgentMemory` working set) and winning
+  strategies persist across queries (cross-query `skill_win`, recalled to seed later queries → skill building).
+
+### Structure emerges (the key result)
+Given only the question + judge/memory guidance, the LLM picks opposite structures per corpus, unprompted:
+
+| corpus | LLM decomposed | correct structure |
+|---|---|---|
+| HotpotQA (multi-doc) | **3/3** → decompose | ✅ recall 1.0 / 0.75 / 0.50 |
+| BrowseComp (conjunctive) | **1/5** → whole-query | ✅ (free-form recall@10 ≈ 0.11 vs hardcoded-decompose 0.025, dense 0.079) |
+
+So keeping the query whole on BrowseComp — **discovered, not set** — recovers it from the decompose disaster.
+
+### The 7-stage explore pipeline (`run_explore_pipeline.py`) — the default way to run explore
+1. **Explore with raw OS queries, ORACLE (ceiling) stop** — `agentic_solve` gold-stopped, up to `max_hops`
+   (10), capturing the winning strategies. Runs on **max(200, 33% of the corpus)** queries, parallelized.
+2. **Deep judge** — the `DiagnosticJudge` (0.72 signal-ceiling), corpus-agnostic.
+3. **Validate WITHOUT the ceiling** — re-run held queries with the judge deciding stop; compare to oracle-stop.
+4. **Forge from the raw queries** — synthesize ONE reusable primitive from the winning strategies,
+   **preserving the discovered structure** (whole-query vs decompose), validated on held gold; + skill + subagent.
+5. **Validate on training with the new forge** — the forged primitive reproduces exploration recall.
+6. **Explore ends → commit** the forged artifacts.
+7. **Run on all data with the new primitive** — then the actual analysis.
+
+```bash
+python -m experiments.deep_judge.run_explore_pipeline <corpus> [n_train] [n_val] [n_test] [max_hops=10] [workers=8]
+```
+
+### BrowseComp → OpenSearch
+BrowseComp was memory-only (so `os_query` degraded there). `experiments/browsecomp/index_to_opensearch.py`
+indexes its 100K docs + precomputed gte-base vectors into OpenSearch (with a plain `text` field — the
+default `text.keyword` sub-field hits Lucene's 32766-byte term limit on BrowseComp's large docs). Verified:
+OS kNN matches exact cosine 19/20; raw OS queries (BM25/phrase/hybrid/kNN/boosts) now run there.
+
+### Honest status
+- `agentic_solve` (free-form, structure-emergent, judge-guided, memory) is **built + exported in the
+  standard package**, and the structure discovery is **demonstrated** (BrowseComp→whole-query, HotpotQA→
+  decompose) at small n. The **full max(200, 33%)-query BrowseComp explore+forge run is the next step**
+  (parallelized; ~1–2 h) — it produces the forged `browsecomp_explored_primitive`/skill/subagent + the
+  stage-3/5/7 numbers.
+- Relationship to the past: this is the **same** `explore→forge→replicate` loop as `explore_forge`
+  (tasks #40/#41), with the one assumption removed that broke it — exploration is **no longer hardcoded
+  to decompose**; structure is discovered and forged per corpus.
+
 ## Files
 - `judge_core.py` — the diagnostic judge (prompt, render, parse, metrics).
 - `build_evalset.py` / `augment_ce.py` — frozen oracle-labelled eval set + cross-encoder signal.
