@@ -1,0 +1,1 @@
+{"name": "hotpot_diag_arsenal", "when_to_use": "multi-hop: fix each weak sub-fact with the winning technique mix, RRF-fused", "retrievers": ["decompose", "rerank", "hyde"], "combine": "fuse", "cost": 1, "origin": "forge_playbook", "tags": ["learned"]}

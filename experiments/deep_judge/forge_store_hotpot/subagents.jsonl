@@ -1,0 +1,1 @@
+{"name": "hotpot_subfact_agent", "when_to_use": "solve one weak sub-fact using authored primitive then arsenal", "plan": ["hotpot_authored_1", "hotpot_authored_2", "hotpot_authored_3"], "base_prompt": "", "tags": ["learned"]}

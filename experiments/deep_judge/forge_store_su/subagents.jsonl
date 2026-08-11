@@ -1,0 +1,1 @@
+{"name": "su_subfact_agent", "when_to_use": "solve one weak sub-fact using authored primitive then arsenal", "plan": ["su_authored_2", "su_authored_3"], "base_prompt": "", "tags": ["learned"]}

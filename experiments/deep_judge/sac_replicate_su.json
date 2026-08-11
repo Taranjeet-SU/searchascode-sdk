@@ -1,0 +1,23 @@
+{
+  "corpus": "su",
+  "n": 30,
+  "hop": 4,
+  "arms": {
+    "raw_oracle": {
+      "all_golds@10": 0.533,
+      "recall@10": 0.85,
+      "avg_hops": 3.33
+    },
+    "sac_oracle": {
+      "all_golds@10": 0.433,
+      "recall@10": 0.817,
+      "avg_hops": 3.9
+    },
+    "sac_judge": {
+      "all_golds@10": 0.333,
+      "recall@10": 0.792,
+      "avg_hops": 3.33,
+      "stop_correct": 0.467
+    }
+  }
+}

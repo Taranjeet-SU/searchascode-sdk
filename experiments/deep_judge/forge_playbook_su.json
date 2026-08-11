@@ -1,0 +1,55 @@
+{
+  "corpus": "su",
+  "n": 30,
+  "hop": 4,
+  "results": {
+    "global": {
+      "solve_rate": 0.333,
+      "avg_recall": 0.758,
+      "avg_hops": 4.8,
+      "avg_calls": 19.9,
+      "n": 30
+    },
+    "diagnostic": {
+      "solve_rate": 0.533,
+      "avg_recall": 0.858,
+      "avg_hops": 3.33,
+      "avg_calls": 19.0,
+      "n": 30
+    }
+  },
+  "captured_events": 10,
+  "authored_os_queries": 0,
+  "artifacts": {
+    "code_primitives": [
+      "su_authored_2",
+      "su_authored_3"
+    ],
+    "skills": [
+      "su_diag_arsenal"
+    ],
+    "subagents": [
+      "su_subfact_agent"
+    ],
+    "learned_rules": [
+      "[su] for a generically-DESCRIBED entity use hyde; for a NAMED entity use fielded/os_query; fuse per-sub-fact with RRF and reserve one slot per sub-fact"
+    ],
+    "authored": [
+      {
+        "name": "su_authored_1",
+        "accepted": false,
+        "code": "def run(session, query, top_k):\n    def choose_mode(subq):\n        ql = subq.lower()\n        # Named entity patterns (likely to use fielded query)\n        named_entity_indicators = ['who', 'what', 'where', 'when', 'which', 'how', 'prerequisites', 'requirements', 'steps']\n        # If query looks like a question or contains named entity indicators, use fielded\n        if any(word in ql for word in named_entity_indicators):\n            return 'fielded'\n        # If query is generic or descriptive, use hyde\n        # fallback to hybrid for other cases\n        return 'hybrid'\n\n    # Decompose query on ' and ' and commas\n    import re\n    parts = re.split(r'\\s+and\\s+|,', query)\n    parts = [p.strip() for p in parts if p.strip()]\n\n    resultsets = []\n    for part in parts:\n        mode = choose_mode(part)\n        try:\n            if mode == 'fielded':\n                rs = session.store.query_fielded(part, ['title', 'text'], top_k=top_k)\n            elif mode == 'hybrid':\n                rs = session.search(part, top_k=top_k, mode='hybrid')\n            else:\n                # fallback to hybrid if unknown mode\n                rs = session.search(part, top_k=top_k, mode='hybrid')\n        except Exception:\n            # fallback to hyde_search on any failure\n            rs = session.hyde_search(part, top_k=top_k)\n        resultsets.append(rs)\n\n    # Always add a hyde_search pass for coverage\n    try:\n        hyde_rs = session.hyde_search(query, top_k=top_k)\n        resultsets.append(hyde_rs)\n    except Exception:\n        pass\n\n    fused = session.fuse(resultsets)\n    return fused.ids if hasattr(fused, 'ids') else fused"
+      },
+      {
+        "name": "su_authored_2",
+        "accepted": true,
+        "code": "def run(session, query, top_k):\n    import re\n\n    # Helper to decide mode per subquery\n    def pick_mode(subq):\n        subq_lower = subq.lower()\n        # Named entity patterns (titles, text)\n        named_entity_keywords = [\n            'who', 'what', 'where', 'when', 'how', 'which', 'identify', 'prerequisite',\n            'configuration', 'steps', 'requirements', 'support', 'ensure', 'last editor',\n            'security features', 'integrating', 'set up', 'authentication', 'content source'\n        ]\n        # If any named entity keyword in subq, use query_fielded\n        if any(k in subq_lower for k in named_entity_keywords):\n            return 'fielded'\n        # If query looks generic or descriptive, use hyde_search\n        if len(subq.split()) > 8:\n            return 'hyde'\n        # Otherwise fallback to hybrid\n        return 'hybrid'\n\n    # Decompose query on ' and ' or commas\n    parts = re.split(r'\\s+and\\s+|,', query)\n    parts = [p.strip() for p in parts if p.strip()]\n\n    results = []\n    for part in parts:\n        mode = pick_mode(part)\n        if mode == 'fielded':\n            # Use session.store.query_fielded if available\n            # Defensive: check attribute existence\n            if hasattr(session.store, 'query_fielded'):\n                res = session.store.query_fielded(part, ['title', 'text'], top_k=top_k)\n            else:\n                # fallback to hybrid if query_fielded not available\n                res = session.search(part, top_k=top_k, mode='hybrid')\n        elif mode == 'hyde':\n            res = session.hyde_search(part, top_k=top_k)\n        else:\n            res = session.search(part, top_k=top_k, mode='hybrid')\n        results.append(res)\n\n    # Always add a hyde pass for coverage on full query\n    hyde_res = session.hyde_search(query, top_k=top_k)\n    results.append(hyde_res)\n\n    fused = session.fuse(results)\n    return fused"
+      },
+      {
+        "name": "su_authored_3",
+        "accepted": true,
+        "code": "def run(session, query, top_k):\n    import re\n\n    # Helper to detect if a subquery is \"named entity\" style (likely a question about specific fields)\n    def is_named_entity(q):\n        # Heuristic: presence of words like \"who\", \"what\", \"where\", \"when\", \"which\" or \"title\", \"text\"\n        # or if query looks like a question about specific entities\n        keywords = ['who', 'what', 'where', 'when', 'which', 'title', 'text', 'identify', 'prerequisites', 'configuration', 'steps', 'requirements']\n        q_low = q.lower()\n        return any(k in q_low for k in keywords)\n\n    # Helper to pick mode for a subquery\n    def pick_mode(q):\n        q_low = q.lower()\n        # If query looks like a keyword search (short, or contains config/prerequisites/steps)\n        if any(w in q_low for w in ['configuration', 'prerequisites', 'steps', 'requirements', 'setup']):\n            return 'keyword'\n        # If query looks like a descriptive or generic entity question\n        if len(q.split()) > 8:\n            return 'hybrid'\n        # fallback dense\n        return 'dense'\n\n    # Decompose query on ' and ' or commas, strip parts\n    parts = re.split(r'\\s+and\\s+|,', query)\n    parts = [p.strip() for p in parts if p.strip()]\n\n    resultsets = []\n\n    for part in parts:\n        # Always do a hyde_search for coverage\n        hyde_rs = session.hyde_search(part, top_k=top_k)\n\n        # Decide if named entity or generic\n        if is_named_entity(part):\n            # Named entity: use fielded query on title,text + hyde fused\n            fielded_rs = session.store.query_fielded(part, ['title', 'text'], top_k=top_k)\n            fused = session.fuse([fielded_rs, hyde_rs])\n            resultsets.append(fused)\n        else:\n            # Generic: use search with mode + hyde fused\n            mode = pick_mode(part)\n            search_rs = session.search(part, top_k=top_k, mode=mode)\n            fused = session.fuse([search_rs, hyde_rs])\n            resultsets.append(fused)\n\n    # Fuse all parts results with RRF\n    if len(resultsets) == 1:\n        final_rs = resultsets[0]\n    else:\n        final_rs = session.fuse(resultsets)\n\n    return final_rs"
+      }
+    ]
+  }
+}
