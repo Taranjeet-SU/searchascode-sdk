@@ -78,6 +78,34 @@ Granular status so another agent can pick up the work. Read this first, then the
 
 ---
 
+## 2026-08-11 — Diagnostic LLM-as-judge + forged-primitive playbook (promoted to the SDK)
+- **Diagnostic judge** (`search_as_code.harness.DiagnosticJudge`): a STOP/CONTINUE controller that
+  coverage-checks each sub-fact with calibrated signals (per-sub-fact CROSS-ENCODER score is the primary
+  signal; bi-encoder cosine is saturated) and emits `MISSING/DIAGNOSIS/TECHNIQUE/NEXT_QUERY/VERDICT` the
+  next hop consumes. Oracle-agreement **0.63→0.72 balanced-acc** once the cross-encoder signal is added —
+  and 0.72 **is the signal ceiling**: a supervised model tops out there, and neither same-model
+  self-critique (0.721) nor an independent **Qwen-32B** critic (0.70) beats it. The residual is
+  snippet-level (can't verify the exact gold vs a distractor), not a reasoning/critic limit.
+- **Playbook** (`harness.diagnostic_solve`): decompose → per-sub-fact arsenal (hybrid+HyDE+fielded RRF) →
+  reserve-one-slot-per-sub-fact assembly (fixes multi-hop dilution) → judge + **RAG-Techniques skill
+  lookup** (`harness.SkillLookup`, seeded from NirDiamant/RAG_Techniques) routes each weak sub-fact to
+  HyDE/fielded/rerank/decompose/PRF/**authored os_query** (`harness.author_os_query`, validated read-only DSL).
+- **Forge from discovered OpenSearch queries** (`experiments/deep_judge/run_forge_playbook.py`): on
+  HotpotQA+SU (n=30, 4-hop) the loop captured winning queries and the LLM **authored 5 free-form code
+  primitives over the full SDK** (all validated on held queries; compose hybrid+HyDE+fielded+RRF), plus
+  composed skills + subagents + a learned rule per corpus, persisted to `forge_store_{hotpot,su}/`.
+  Numbers: **SU diagnostic 0.53 vs 0.33 all-golds (+0.10 recall, 30% fewer hops)**; HotpotQA ~parity
+  (its comparison queries name their entities, so broad retrieval already suffices).
+- **SAC-replicate** (`run_sac_replicate.py`): the forged SAC primitives reproduce raw-query relevance —
+  `sac_oracle` recall within ~0.02–0.03 of `raw_oracle`; the autonomous judge (`sac_judge`, no oracle)
+  keeps recall within ~0.02–0.06 but loses ~0.10–0.20 on *strict* all-golds because its stop decision is
+  right only ~47–57% of the time (the same 0.72 ceiling). **Retrieval is not the limiter — the stop
+  signal is.**
+- **Pip test**: `tests/test_diagnostic_playbook.py` reproduces raw≈SAC recall via the installed package API.
+- Full write-up: `experiments/deep_judge/README.md`.
+
+---
+
 ## Multi-dataset campaign (in progress)
 - **Datasets added** — SciFact, NFCorpus, ArguAna, SciDocs, TREC-COVID (BEIR, real qrels,
   diverse query types) on top of FiQA + HotpotQA. Generic ingest/eval harness (`phase2/beir.py`,
@@ -131,6 +159,21 @@ Granular status so another agent can pick up the work. Read this first, then the
   Retrieval and Abstention" — parallel our adaptive-routing + confidence/abstain primitives.
 - **Planned Phase 3** — multi-backend adapters (FAISS/nmslib/Elasticsearch/Milvus/SQLite/Mongo/Pinecone)
   + HotpotQA cross-DB relevance (`docs/PHASE3.md`).
+
+## Phase 4 — answer-generation benchmark (global RAG authenticity, task #24)
+- **HotpotQA answer-gen DONE (n=200, EM/F1 + bootstrap 95% CIs, gen=gpt-4.1-mini, k=5).** All arms share
+  generator+corpus+prompt; only retrieval differs; closed-book = contamination control.
+  | arm | EM [95% CI] | F1 [95% CI] |
+  |---|---|---|
+  | **SAC** | **0.520 [0.450,0.585]** | **0.673 [0.614,0.728]** |
+  | tool-RAG | 0.500 [0.430,0.565] | 0.659 [0.600,0.713] |
+  | vanilla-RAG | 0.470 [0.405,0.535] | 0.626 [0.568,0.683] |
+  | closed-book | 0.310 [0.250,0.375] | 0.423 [0.362,0.485] |
+  - **SAC tops answer quality**, clearly beats vanilla RAG (+0.05 EM/+0.05 F1); edges tool-calling (CIs
+    overlap → the two agentic methods tie, both > vanilla). Retrieval lift over closed-book +0.20–0.25 F1
+    (real value, not memorization). Harness: `phase4/{metrics.py,answer_gen.py}`, `runs/answergen_hotpotqa.json`.
+  - Method note: authentic protocol (deterministic EM/F1 = leaderboard metric; contamination control;
+    equal budget). 2WikiMultiHopQA/MuSiQue queued (need their own corpora built).
 
 ## Phase 3 extensions (task #23)
 - **Tuned-HNSW re-index CONFIRMS the ANN finding.** Rebuilt HotpotQA as `hotpotqa_tuned` (m=48,
