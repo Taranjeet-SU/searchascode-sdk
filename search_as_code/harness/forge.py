@@ -83,7 +83,25 @@ def _safe_globals():
             raise ImportError(f"import '{name}' not allowed in a primitive")
         return importlib.import_module(name)
     allowed["__import__"] = _imp
-    return {"__builtins__": allowed, "sac": sac, "P": P, "fuse": P.fuse, "re": _re}
+
+    def _fuse_ids(lists, k=60):                    # RRF over id lists (so authored code is self-contained)
+        s: dict = {}
+        for lst in lists:
+            for r, i in enumerate(list(lst)):
+                s[i] = s.get(i, 0.0) + 1.0 / (k + r + 1)
+        return sorted(s, key=lambda i: -s[i])
+
+    def _rerank(session, query, ids, top_k=10):    # cross-encoder rerank an id list
+        docs = session.store.get(list(ids)[:60])
+        texts = [d.text or "" for d in docs]
+        if not texts:
+            return list(ids)[:top_k]
+        scores = session.reranker(query, texts) if getattr(session, "reranker", None) else list(range(len(texts), 0, -1))
+        order = sorted(range(len(docs)), key=lambda j: -scores[j])
+        return [str(docs[j].id) for j in order[:top_k]]
+
+    return {"__builtins__": allowed, "sac": sac, "P": P, "fuse": P.fuse, "re": _re,
+            "fuse_ids": _fuse_ids, "rerank": _rerank}
 
 
 @dataclass

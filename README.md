@@ -68,6 +68,46 @@ python -m pytest -q                        # 77 in-memory unit tests; +18 OpenSe
 The base install ships a dependency-free embedder + in-memory backend, so the
 demo and unit tests run with **zero setup**.
 
+## 🧠 Explore first — the default workflow
+
+Before you analyze a corpus, **run explore**: let the agent *discover* the retrieval
+strategy from raw OpenSearch queries and *forge* it into reusable primitives — bottom-up,
+not from a predefined recipe. The key property is **structure-emergent**: the LLM decides
+per query whether to keep the question **whole** (one entity, many constraints → dense +
+rerank) or **decompose** it (several documents → sub-queries + fuse). Nothing is hardcoded,
+so the same pipeline fits both multi-hop (HotpotQA/SU) and conjunctive-constraint (BrowseComp)
+corpora — which a fixed "always decompose" recipe cannot.
+
+```python
+from search_as_code.harness import agentic_solve
+# The recommended entry point: the LLM authors the OpenSearch-query strategy each hop,
+# guided (not dictated) by a diagnostic LLM-judge + a RAG-Techniques skill lookup.
+res = agentic_solve(session, query, generator=llm, reranker=rr, embedder=embed)  # judge decides when to stop
+res["ids"]          # results   ·   res["codes"]  # the authored strategies (the "raw OpenSearch queries")
+```
+
+The explore run itself is a 7-stage pipeline (`experiments/deep_judge/run_explore_pipeline.py`):
+
+1. **Explore with raw OpenSearch queries, oracle as judge** — the LLM authors the strategy per hop
+   (up to 10), gold-stopped, capturing the winning strategies.
+2. **Create the deep judge** — a `DiagnosticJudge` (per-sub-fact cross-encoder coverage; validated to
+   the ~0.72 signal ceiling) that mimics the oracle without seeing gold.
+3. **Validate without the ceiling** — re-run held queries with the judge deciding when to stop; confirm
+   its recall matches the oracle-stopped run.
+4. **Forge from the raw queries** — synthesize one reusable primitive from the winning strategies,
+   *preserving the discovered structure*, plus a skill + subagent; persist them.
+5. **Validate on training with the new forge** — the forged primitive reproduces exploration recall.
+6. **Explore ends → commit** the forged primitives/skills/subagents.
+7. **Run on all data with the new primitives** — *then* do the actual analysis, using what was forged.
+
+```bash
+python -m experiments.deep_judge.run_explore_pipeline <corpus> [n_train] [n_val] [n_test] [max_hops=10]
+```
+
+This is the same explore→forge→replicate loop as before, with the one assumption removed that used to
+break it: exploration is **no longer hardcoded to decompose** — the structure is discovered and forged
+per corpus. Full write-up + numbers: [`experiments/deep_judge/README.md`](experiments/deep_judge/README.md).
+
 ## ⚡ Why it wins (measured, not claimed)
 
 Benchmark on **BEIR FiQA** (57,638 docs in OpenSearch, **100 labeled queries**,
@@ -85,7 +125,7 @@ pts**) and nDCG@10, **~2.1× faster**, **~1.6× cheaper**, **2× the prompt-cach
 hit** (54% vs 27%), and **<½ the LLM calls** — because intermediate results stay
 in the sandbox instead of flowing back through context. Reproduce with
 `python -m phase1.benchmark -n 100`; full run log in
-[`CHANGELOG.md`](CHANGELOG.md), narrative in
+[`benchmark_changelog.md`](benchmark_changelog.md), narrative in
 [`phase1/RESULTS.md`](phase1/RESULTS.md).
 
 ## 🧰 Capabilities
@@ -142,7 +182,7 @@ Full map + placement rules: **[`STRUCTURE.md`](STRUCTURE.md)**. Quick orientatio
 | [`docs/CACHING.md`](docs/CACHING.md) | passing the SDK surface to the LLM efficiently |
 | [`docs/SELECTION.md`](docs/SELECTION.md) | exposing the SDK in the prompt + how the LLM picks the right primitive (55 sources) |
 | [`docs/RESEARCH.md`](docs/RESEARCH.md) | 150-source research base |
-| [`CHANGELOG.md`](CHANGELOG.md) | scalability / throughput / latency / token benchmarks |
+| [`benchmark_changelog.md`](benchmark_changelog.md) | scalability / throughput / latency / token benchmarks |
 | [`phase1/`](phase1/) | OpenSearch benchmark: base vs tool-calling vs SAC + live UI |
 
 ## 🖥️ Live trace UI
