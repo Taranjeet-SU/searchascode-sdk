@@ -129,7 +129,7 @@ def main():
 
     def explore_one(idx, r):
         res = solve_one(r, False)
-        best = res["codes"][-1] if res["codes"] else ""
+        best = res["codes"][0] if res["codes"] else ""   # FIRST hop = the initial structural choice
         d = bool(re.search(r"re\.split|split\(|decompose|for .* in .*(parts|sub)", (best or "").lower()))
         with slock:
             ex_rec.append(res["all_recall"]); nonlocal_decomp[0] += int(d)

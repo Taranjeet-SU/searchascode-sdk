@@ -1,0 +1,1 @@
+{"name": "browsecomp_explored_skill", "when_to_use": "explored whole-query strategy for browsecomp", "retrievers": ["hybrid", "dense", "rerank"], "combine": "fuse", "cost": 1, "origin": "forged", "tags": ["learned"]}
