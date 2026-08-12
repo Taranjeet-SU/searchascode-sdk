@@ -111,6 +111,162 @@ Take-away: SAC primitives + diagnostic judge mimic raw-query *recall* autonomous
 remaining advantage is the last ~10–20 pts of all-golds, purely a perfect stop signal.
 (`run_sac_replicate.py`, `sac_replicate_{hotpot,su}.json`.)
 
+## 5. Free-form explore — structure-emergent, forged from raw OpenSearch queries
+
+The diagnostic playbook above **hardcodes** `decompose → per-sub-fact arsenal`. That wins on multi-hop
+(HotpotQA/SU) but **loses on BrowseComp** (dense 0.079 vs decompose 0.025 recall@10) — because BrowseComp
+questions are ONE entity satisfying MANY constraints (the gold matches the *whole conjunction*, so
+splitting the query scatters retrieval). A fixed recipe can't know this; **explore should discover it.**
+
+### `agentic_solve` (standard: `search_as_code.harness.agentic_solve`)
+The LLM **authors the retrieval strategy itself each hop**, as code over the OpenSearch query surface
+(`session.search` dense/keyword/hybrid, `hyde_search`, `query_fielded`, raw `store._search` DSL, plus
+in-scope `fuse_ids` / `rerank`). It **chooses the structure** — keep the query whole (dense/hybrid + rerank)
+or decompose — instead of being forced to decompose. Guidance, not dictation:
+- the **deep judge** runs every hop and emits `COVERED / MISSING / DIAGNOSIS / TECHNIQUE / NEXT_QUERY`,
+  fed to the next hop as a *structure-neutral* hint (an earlier version let the judge's "absent→decompose"
+  heuristic bias the strategist to decompose everything — fixed by framing it as an optional hint);
+- the **RAG-Techniques `SkillLookup`** suggests techniques for the missing aspect;
+- **memory**: per-hop findings persist within a query (cross-hop, `AgentMemory` working set) and winning
+  strategies persist across queries (cross-query `skill_win`, recalled to seed later queries → skill building).
+
+### Structure emerges (the key result)
+Given only the question + judge/memory guidance, the LLM picks opposite structures per corpus, unprompted:
+
+| corpus | LLM decomposed | correct structure |
+|---|---|---|
+| HotpotQA (multi-doc) | **3/3** → decompose | ✅ recall 1.0 / 0.75 / 0.50 |
+| BrowseComp (conjunctive) | **1/5** → whole-query | ✅ (free-form recall@10 ≈ 0.11 vs hardcoded-decompose 0.025, dense 0.079) |
+
+So keeping the query whole on BrowseComp — **discovered, not set** — recovers it from the decompose disaster.
+
+### The 7-stage explore pipeline (`run_explore_pipeline.py`) — the default way to run explore
+1. **Explore with raw OS queries, ORACLE (ceiling) stop** — `agentic_solve` gold-stopped, up to `max_hops`
+   (10), capturing the winning strategies. Runs on **max(200, 33% of the corpus)** queries, parallelized.
+2. **Deep judge** — the `DiagnosticJudge` (0.72 signal-ceiling), corpus-agnostic.
+3. **Validate WITHOUT the ceiling** — re-run held queries with the judge deciding stop; compare to oracle-stop.
+4. **Forge from the raw queries** — synthesize ONE reusable primitive from the winning strategies,
+   **preserving the discovered structure** (whole-query vs decompose), validated on held gold; + skill + subagent.
+5. **Validate on training with the new forge** — the forged primitive reproduces exploration recall.
+6. **Explore ends → commit** the forged artifacts.
+7. **Run on all data with the new primitive** — then the actual analysis.
+
+```bash
+python -m experiments.deep_judge.run_explore_pipeline <corpus> [n_train] [n_val] [n_test] [max_hops=10] [workers=8]
+```
+
+### BrowseComp → OpenSearch
+BrowseComp was memory-only (so `os_query` degraded there). `experiments/browsecomp/index_to_opensearch.py`
+indexes its 100K docs + precomputed gte-base vectors into OpenSearch (with a plain `text` field — the
+default `text.keyword` sub-field hits Lucene's 32766-byte term limit on BrowseComp's large docs). Verified:
+OS kNN matches exact cosine 19/20; raw OS queries (BM25/phrase/hybrid/kNN/boosts) now run there.
+
+### Full BrowseComp run (274 train = 33%, 40 val, 200 test, 10 hops, 8 workers) — end-to-end
+The pipeline ran on the OpenSearch-indexed BrowseComp and **closed the whole loop**:
+
+- **Stage 1 — discovered structure = `whole-query`** (decomposed **39/274 = 14%**), explore recall@20 **0.089**.
+  The agent chose to keep the query whole on its own — the learned rule records it.
+- **Stage 3 — validate without the ceiling**: judge-stop recall@20 **0.054** vs oracle-stop **0.119** (the
+  autonomous judge recovers ~45% of oracle recall — it stops early on this brutal corpus; honest).
+- **Stage 4 — forge**: synthesized a **whole-query** `browsecomp_explored_primitive` (decompose×… would be
+  wrong here) — hybrid + dense + HyDE fused, then cross-encoder rerank — plus `browsecomp_explored_skill`
+  and `browsecomp_explored_agent`.
+- **Stage 7 — run on ALL 830 gold queries** with the forged primitive vs dense:
+
+  | arm | recall@10 | recall@20 | all-golds@10 |
+  |---|---|---|---|
+  | dense (baseline) | 0.062 | 0.094 | 0.029 |
+  | **forged (explored whole-query)** | **0.086** | **0.131** | **0.048** |
+  | | **+38%** | **+40%** | **+67%** |
+
+  The forged whole-query primitive **beats dense on every metric** — the structure was *discovered*, *bottled*,
+  and *pays off* on the full data. (Absolute numbers stay low: BrowseComp is a ~signal-ceiling needle-in-100K
+  benchmark; the past dense floor was 0.061 recall@10.)
+
+Two bugs found + fixed en route (both now in standard): the forge's acceptance bar was too strict for a
+low-recall corpus (validate dense-relative on ≥25 held), and `CodePrimitive`s couldn't call `fuse_ids`/`rerank`
+(added to `forge._safe_globals`, so authored primitives are self-contained). One honest wrinkle: the pipeline
+classifies structure by the **first-hop** code (the initial strategic choice); the cross-query memory stored
+**last-hop** codes (which drift toward decompose over 10 hops), so the forged primitive was authored from the
+discovered *structure* rather than the memory exemplars.
+
+### Relationship to the past
+This is the **same** `explore→forge→replicate` loop as `explore_forge` (tasks #40/#41), with the one
+assumption removed that broke it — exploration is **no longer hardcoded to decompose**; structure is
+discovered and forged per corpus (decompose for HotpotQA/SU, whole-query for BrowseComp).
+
+### Artifacts (BrowseComp, `forge_store_browsecomp_explored/`)
+- code primitive `browsecomp_explored_primitive` (whole-query: hybrid+dense+HyDE → RRF → cross-encoder rerank)
+- skill `browsecomp_explored_skill`, subagent `browsecomp_explored_agent`
+- learned rule: *"discovered structure = whole-query (decomposed 39/274 in exploration)"*
+- runners: `run_explore_pipeline.py` (the 7-stage default), `reforge_and_full.py`, `run_forged_on_full.py`;
+  results `explore_pipeline_browsecomp.json`, `explore_full_browsecomp.json`.
+
+## 6. Reproduction — strong 8B retrievers on BrowseComp-Plus (Qwen3-Embedding-8B, ReasonIR-8B)
+
+To place our gte-base pipeline against the published BrowseComp-Plus retrievers (arXiv 2508.06600 Table 2),
+we re-embedded the **same 100K-doc corpus** with two 8B retrievers and measured dense recall on all 830 gold
+queries, **matching the paper's protocol**: docs truncated to **512 tokens** ("maximum context length of 512
+tokens across all methods for fair comparison") and encoded plain, cosine kNN with `ef_search=1200` so top-k
+is near-exact. Our golds come from `qrel_golds.txt` → the paper's **Gold Document Retrieval** setting, so we
+compare against that row and at the paper's own operating points (**R@5 / R@100 / R@1000**). The one
+non-obvious knob is the **query instruction**: Qwen3-Embedding prepends `Instruct: Given a web search query,
+retrieve relevant passages that answer the query\nQuery:{q}` on the *query* side only; ReasonIR's card uses an
+empty instruction.
+
+| Retriever (dim) | R@5 | R@100 | R@1000 | vs paper (Gold) |
+|---|---|---|---|---|
+| gte-base (768) — our default, plain | 0.043 | — | — | (weak baseline) |
+| **Qwen3-Embedding-8B** (4096) — instruct | **0.200** | **0.592** | **0.850** | **matches/exceeds** |
+| &nbsp;&nbsp;↳ *paper Qwen3-8B, Gold* | 0.185 | 0.558 | 0.835 | |
+| **ReasonIR-8B** (4096) — instruct | 0.122 | 0.452 | 0.761 | ~3–4 pts low |
+| &nbsp;&nbsp;↳ *paper ReasonIR-8B, Gold* | 0.153 | 0.497 | 0.789 | |
+
+*(830 queries. `repro_dense_extended.json`. An earlier pass reported R@5 0.175 for Qwen3 — that was
+understated by a too-low HNSW `ef_search`; the near-exact re-run gives 0.200, right on the paper's 0.185.)*
+
+**What it says**
+- **Qwen3-Embedding-8B is a 1-to-1 reproduction** — we match/exceed the paper's Gold-doc numbers at all three
+  operating points (R@5 0.200 vs 0.185, R@100 0.592 vs 0.558, R@1000 0.850 vs 0.835).
+- **ReasonIR-8B lands ~3–4 pts below the paper** at every point (80 % → 91 % → 96 % of the paper as k grows —
+  a ranking gap, not a coverage gap). The Qwen3 match validates our engine + protocol (same OpenSearch HNSW,
+  same `ef_search`, same 512-token cap), so the residual is a **ReasonIR-specific encoding difference**: the
+  paper encodes via Tevatron, its HF card only shows an empty-instruction example, and indeed the instruction
+  is a **no-op for us** (instruct 0.122 ≈ plain 0.122) — ReasonIR's intended reasoning-instruction/pooling
+  isn't fully public. Documented honestly rather than papered over.
+- **The retriever is the lever, not the augmentation.** gte-base → Qwen3-8B-instruct lifts Recall@5
+  **0.043 → 0.200 (~4.6×)**; ReasonIR-8B gives 0.122 (~2.8×). Both dwarf anything our forged SAC primitive
+  added on top of gte-base.
+- **The query instruction is half of Qwen3's score** (it was the missing piece in our first pass, not
+  truncation), but **~neutral for ReasonIR** (which the card confirms).
+- **SAC augmentation value is inverse to retriever strength.** On weak gte-base the forged primitive helped
+  (§4/§5); on the strong 8B dense arm the same forge *hurts* (forged R@10 0.114 < dense 0.149,
+  `explore_full_qwen8b.json`) — a strong retriever has less headroom for query-side scaffolding to recover.
+
+**Reproduction gotcha (documented so it doesn't recur).** ReasonIR-8B ships custom Llama modeling code for
+the transformers-4.5x era. On the repo's **transformers 5.6.2** it can be coerced to load, but its rotary
+`inv_freq` (a non-persistent buffer recomputed in `__init__`) materialises as **uninitialised random memory**
+under 5.x meta-device loading → per-process-random positional encoding → a corpus embedded in one process is
+orthogonal to queries encoded in another → **recall collapses to 0** (it looks fine within a single process,
+which is what makes it dangerous). Fix: run ReasonIR through an isolated venv pinned to **transformers
+4.51.3** (`reasonir_venv`, built `--system-site-packages` so it reuses the base torch/opensearch). Under it
+the same weights load with no patches, encode is deterministic across processes, and a 295-doc probe gold
+ranks 18/11/5/9/3 vs 289/240/78/9/2 on the corrupt path. Qwen3-8B has no such issue (loads on 5.6.2 via
+sentence-transformers). `reasonir_encoder.py` refuses to run under transformers ≥ 5.
+
+**Artifacts / how to reproduce**
+- Embed + index (per model): `experiments/browsecomp/embed_and_index.py` (Qwen3-8B, sentence-transformers)
+  and `experiments/browsecomp/embed_reasonir.py` (ReasonIR, venv). Indices: `browsecomp_qwen8b`,
+  `browsecomp_reasonir` (dim 4096), `browsecomp` (gte-base, 768).
+- Query eval: `experiments/browsecomp/reproduce_qwen8b.py` (env `BC_EMB`/`BC_INDEX`/`BC_TASK`; plain vs
+  instruct) and `experiments/browsecomp/repro_reasonir.py` (venv). Results: `repro_qwen8b.json`,
+  `repro_dense_reasonir.json`; the **operating-point comparison vs the paper** (R@5/R@100/R@1000, exact kNN)
+  is `repro_dense_extended.json`.
+- ReasonIR steps run as `reasonir_venv/bin/python -m experiments.browsecomp.{embed_reasonir,repro_reasonir}`.
+- To reproduce the paper's operating points, raise `ef_search` on the kNN index first
+  (`PUT <index>/_settings {"index":{"knn.algo_param.ef_search":1200}}`) — the HNSW default undershoots top-k
+  recall and made an earlier pass report Qwen3 R@5 0.175 instead of 0.200.
+
 ## Files
 - `judge_core.py` — the diagnostic judge (prompt, render, parse, metrics).
 - `build_evalset.py` / `augment_ce.py` — frozen oracle-labelled eval set + cross-encoder signal.
