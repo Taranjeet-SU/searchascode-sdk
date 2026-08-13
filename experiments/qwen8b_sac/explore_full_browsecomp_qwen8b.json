@@ -1,0 +1,18 @@
+{
+  "corpus": "browsecomp",
+  "n_full": 830,
+  "forged_primitive": "browsecomp_explored_primitive",
+  "present": true,
+  "arms": {
+    "forged": {
+      "recall@10": 0.1032,
+      "recall@20": 0.1577,
+      "all_golds@10": 0.0458
+    },
+    "dense": {
+      "recall@10": 0.1487,
+      "recall@20": 0.2075,
+      "all_golds@10": 0.0747
+    }
+  }
+}
