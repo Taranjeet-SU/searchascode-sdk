@@ -68,6 +68,65 @@ python -m pytest -q                        # 77 in-memory unit tests; +18 OpenSe
 The base install ships a dependency-free embedder + in-memory backend, so the
 demo and unit tests run with **zero setup**.
 
+## 🧠 Explore first — the default workflow
+
+Before you analyze a corpus, **run explore**: let the agent *discover* the retrieval
+strategy from raw OpenSearch queries and *forge* it into reusable primitives — bottom-up,
+not from a predefined recipe. The key property is **structure-emergent**: the LLM decides
+per query whether to keep the question **whole** (one entity, many constraints → dense +
+rerank) or **decompose** it (several documents → sub-queries + fuse). Nothing is hardcoded,
+so the same pipeline fits both multi-hop (HotpotQA/SU) and conjunctive-constraint (BrowseComp)
+corpora — which a fixed "always decompose" recipe cannot.
+
+```python
+from search_as_code.harness import agentic_solve
+# The recommended entry point: the LLM authors the OpenSearch-query strategy each hop,
+# guided (not dictated) by a diagnostic LLM-judge + a RAG-Techniques skill lookup.
+res = agentic_solve(session, query, generator=llm, reranker=rr, embedder=embed)  # judge decides when to stop
+res["ids"]          # results   ·   res["codes"]  # the authored strategies (the "raw OpenSearch queries")
+```
+
+The explore run itself is a 7-stage pipeline (`experiments/deep_judge/run_explore_pipeline.py`):
+
+1. **Explore with raw OpenSearch queries, oracle as judge** — the LLM authors the strategy per hop
+   (up to 10), gold-stopped, capturing the winning strategies.
+2. **Create the deep judge** — a `DiagnosticJudge` (per-sub-fact cross-encoder coverage; validated to
+   the ~0.72 signal ceiling) that mimics the oracle without seeing gold.
+3. **Validate without the ceiling** — re-run held queries with the judge deciding when to stop; confirm
+   its recall matches the oracle-stopped run.
+4. **Forge from the raw queries** — synthesize one reusable primitive from the winning strategies,
+   *preserving the discovered structure*, plus a skill + subagent; persist them.
+5. **Validate on training with the new forge** — the forged primitive reproduces exploration recall.
+6. **Explore ends → commit** the forged primitives/skills/subagents.
+7. **Run on all data with the new primitives** — *then* do the actual analysis, using what was forged.
+
+```bash
+python -m experiments.deep_judge.run_explore_pipeline <corpus> [n_train] [n_val] [n_test] [max_hops=10]
+```
+
+This is the same explore→forge→replicate loop as before, with the one assumption removed that used to
+break it: exploration is **no longer hardcoded to decompose** — the structure is discovered and forged
+per corpus.
+
+**Three guarantees make explore actually use the OpenSearch query surface (not degenerate to `session.search`):**
+
+- **Raw OpenSearch query is the first step, by construction.** `agentic_solve(..., os_first=True)` (the default)
+  forces hop 1 to be a validated `session.store._search` **bool / `match_phrase` DSL** over the text field —
+  with a deterministic fallback if the model doesn't comply — so every exploration *starts* from a real raw OS
+  query. This helps even a **text-only index with no metadata**: `match_phrase`/`bool` pin the exact constraints
+  (a year, a date, a proper name) that dense embeddings blur. Hops 2+ stay free-form and fuse raw DSL + dense.
+- **The playbook is applied, not just named.** The `RAG-Techniques` `SkillLookup` injects each suggested skill's
+  *recipe* into the author prompt, so the model uses the technique instead of seeing a bare label.
+- **Explore learns that dense is the default.** A **dense-default selection gate** adopts the forged primitive
+  only if it *beats* plain dense on held queries; otherwise it emits `session.search(mode='dense')`. So SAC never
+  underperforms dense — it matches it, and keeps the deep raw-OS structure only where that structure actually wins.
+
+Example: on BrowseComp with Qwen3-Embedding-8B, the guaranteed raw-OS-first start lifted exploration recall
+(0.175 → 0.185), but the gate correctly selected **dense-default** (the deep/raw-DSL strategy didn't beat dense on
+held queries), so the full 830-query run is forged == dense — eliminating an earlier forged-**below**-dense
+regression. Full write-up + numbers: [`experiments/deep_judge/README.md`](experiments/deep_judge/README.md) ·
+[`experiments/qwen8b_sac/README.md`](experiments/qwen8b_sac/README.md).
+
 ## ⚡ Why it wins (measured, not claimed)
 
 Benchmark on **BEIR FiQA** (57,638 docs in OpenSearch, **100 labeled queries**,
@@ -119,6 +178,18 @@ hybrid search, the harness emulates it in-SDK, so `mode="hybrid"` behaves the sa
 everywhere. Add a backend by implementing one `VectorStore`
 ([`adapters/base.py`](search_as_code/adapters/base.py)) — `memory.py` is the
 executable spec.
+
+## 🗺️ Repository map
+
+This repo couples the **shippable SDK**, **research experiments**, and **agent-assisted learnings**.
+Full map + placement rules: **[`STRUCTURE.md`](STRUCTURE.md)**. Quick orientation:
+
+| bucket | where | start here |
+|---|---|---|
+| 📦 **Standard package** (SDK) | [`search_as_code/`](search_as_code/) · [`tests/`](tests/) · [`docs/`](docs/) · [`examples/`](examples/) | this README |
+| 🔬 **Experiments** (research) | [`experiments/`](experiments/) | [`multi_hop_synth_queries/RESULTS.md`](experiments/multi_hop_synth_queries/RESULTS.md) |
+| 🧠 **Learnings & open problems** | [`experiments/explore_learning/`](experiments/explore_learning/) · [`open_problems.md`](open_problems.md) · [`research.md`](research.md) | [`open_problems.md`](open_problems.md) |
+| 🛠 **Internal harness & doc rules** | [`phase1/`](phase1/) · [`soul.md`](soul.md) | [`soul.md`](soul.md) |
 
 ## 📚 Docs
 
