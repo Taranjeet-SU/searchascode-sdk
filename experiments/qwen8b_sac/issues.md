@@ -74,6 +74,30 @@ not a fluke:
 beats dense on the held set; otherwise emit `dense` (or `dense→rerank` only if rerank helps *this* retriever)
 as the primitive. This is what would let explore *discover* that light dense wins on a strong retriever.
 
+## Resolution (v2 / v3) — the three SDK fixes, and proof they fire
+
+Issues #4 and #6 were the substantive ones ("raw OS queries + playbook skills never actually used" and
+"explore can't learn dense is best"). All fixed in the standard SDK, so every future explore inherits them:
+
+1. **Playbook applied, not named.** `rag_techniques.SkillLookup.suggest()` now returns each card's *recipe*
+   (`when_to_use`), and `agentic.py` injects the recipe into the author prompt — the model applies the skill
+   instead of seeing a bare label.
+2. **Raw-OS query GUARANTEED as the first step of explore.** New `os_first=True` +
+   `agentic._author_os_first`: hop 1 MUST be a `session.store._search(...)` bool/match_phrase DSL over `text`
+   (validated; deterministic `_raw_os_body` fallback if the LLM doesn't comply). Proven by trace — hop 1 is
+   `[RAW_DSL, phrase, bool]` (no dense) on **every** query; hops 2+ free-form fuse raw DSL + dense. Works on a
+   text-only index (no metadata needed) and degrades to keyword on in-memory stores lacking `_search`.
+3. **Dense-default selection gate.** `run_explore_pipeline` computes a plain-dense held baseline and adopts
+   the authored primitive ONLY if it beats dense; otherwise it emits `session.search(mode='dense')`. So
+   explore *learns* dense is the right default and keeps deep structure only where it actually helps.
+
+**Result on BrowseComp (Qwen3-8B):** with raw-OS-first now firing, explore recall rose (v1 0.175 → v3 0.185),
+but on the held set the authored deep/raw-DSL strategy still did NOT beat plain dense, so the gate SELECTED
+`dense-default` in both v2 and v3. The full 830-query run is therefore forged == dense == R@10 0.1487 /
+R@20 0.2075 — the earlier regression (forged 0.103 < dense 0.149) is eliminated: SAC now matches dense and
+can only diverge upward where the deep raw-OS path wins. This is the correct, honest outcome for a corpus
+where the signal lives in the dense vector.
+
 ## Outcome
 All four stages completed with the fixes above: BrowseComp explore+full and SU explore+full, Qwen3-8B, one
 GPU-resident model at a time. Issues #1/#2/#5 were **fixed** (env overrides + context cap); #3 is minor

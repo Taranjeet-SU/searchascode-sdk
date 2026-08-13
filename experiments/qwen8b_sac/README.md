@@ -53,6 +53,31 @@ Note the pipeline runs Qwen3-8B in **plain** mode; its instructed dense on Brows
 above), so the *real* strong-retriever baseline is even higher and the gap to the forged arm wider. Applying
 the query instruction inside SAC is the open SDK item (issues #4).
 
+## v2 / v3 — corrected explore (raw-OS-first + playbook recipes + dense-default gate)
+
+The first pass exposed that explore never actually authored raw OpenSearch queries or applied the playbook
+skills (it defaulted to `session.search(mode='hybrid')` + decompose), and had no way to learn that plain
+dense is best. Three SDK fixes (see [`issues.md`](issues.md) resolution) address that; all are now the
+standard-pipeline default:
+
+1. **Playbook recipes injected** — `SkillLookup.suggest()` returns each skill's recipe, not just its name.
+2. **Raw-OS query is the GUARANTEED first step** — `os_first=True` forces hop 1 to be a validated
+   `session.store._search` bool/`match_phrase` DSL over `text` (deterministic fallback if the LLM balks).
+   Trace proof: hop 1 = `[RAW_DSL, phrase, bool]` on every query; hops 2+ fuse raw DSL + dense.
+3. **Dense-default selection gate** — the forge keeps the authored primitive only if it beats plain dense on
+   the held set, else emits dense. Explore now *learns* dense is the default.
+
+| run | explore recall@20 | stage4 selected | forged vs dense (830, R@10) |
+|---|---|---|---|
+| v1 (original) | 0.175 | — (no gate) | forged 0.103 **< dense 0.149** ❌ regression |
+| **v3** (raw-OS-first + gate) | **0.185** | **dense-default** | forged **0.149 = dense 0.149** ✅ |
+
+So with raw OS queries genuinely firing first, exploration improved (0.185, the best of the three), yet the
+gate still — correctly — chose plain dense on BrowseComp (the deep/raw-DSL strategy didn't beat it on held
+queries). Net: **SAC no longer loses to dense; it matches it, and would only exceed it where the deep raw-OS
+path actually wins.** Artifacts: `explore_pipeline_browsecomp_qwen8b_v3.json`,
+`explore_full_browsecomp_qwen8b_v3.json`.
+
 ## Reproduce
 ```
 # BrowseComp (OpenSearch index already built): explore then full

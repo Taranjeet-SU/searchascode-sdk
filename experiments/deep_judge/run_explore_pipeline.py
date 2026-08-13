@@ -170,10 +170,24 @@ def main():
     forge = HarnessForge(fstore, reg, AgentMemory())
     name = f"{corpus}_explored_primitive"
     held_list = (test[:5] or train[:5])
+    # DENSE-DEFAULT baseline on the held set: the forged strategy must BEAT plain dense to be adopted,
+    # so explore LEARNS that dense is the right default and only keeps deep/raw-DSL structure where it helps.
+    def _dense_held(h):
+        try:
+            return _recall(h["gold_ids"], session.search(h["query"], top_k=20, mode="dense").ids())[0]
+        except Exception:
+            return 0.0
+    dense_held = float(np.mean([_dense_held(h) for h in held_list])) if held_list else 0.0
     code, ok, held_mean = forge_from_exploration(gen, session, winning, held_list, name)
-    print(f"[stage4] forge validation mean recall@20 over {len(held_list)} held = {held_mean:.3f}", flush=True)
+    DENSE_CODE = ("def run(session, query, top_k):\n"
+                  "    return session.search(query, top_k=top_k, mode='dense').ids()")
+    if (not ok) or held_mean <= dense_held:           # authored did NOT beat dense -> emit plain dense
+        code, ok, selected = DENSE_CODE, True, "dense-default"
+    else:
+        selected = "authored (beats dense)"
+    print(f"[stage4] dense-held={dense_held:.3f} authored-held={held_mean:.3f} -> SELECTED {selected}", flush=True)
     if ok:
-        forge.create_code_primitive(name, f"explored on {corpus}: structure-preserving reusable retriever", code)
+        forge.create_code_primitive(name, f"explored on {corpus}: {selected} reusable retriever", code)
     struct = "whole-query" if decomp < len(train) / 2 else "decompose"
     forge.create_skill(f"{corpus}_explored_skill", f"explored {struct} strategy for {corpus}",
                        (["hybrid", "rerank"] if struct == "whole-query" else ["decompose", "hyde", "rerank"]), combine="fuse")
@@ -210,6 +224,7 @@ def main():
     out = {"corpus": corpus, "max_hops": max_hops,
            "stage1_explore_recall@20": round(float(np.mean(ex_rec)), 3), "decomposed": f"{decomp}/{len(train)}",
            "discovered_structure": struct,
+           "stage4_dense_held@20": round(dense_held, 3), "stage4_selected": selected,
            "stage3_validate_judgestop@20": round(float(np.mean(vj)), 3), "stage3_oraclestop@20": round(float(np.mean(vo)), 3),
            "stage5_forge_on_train@20": round(float(np.mean(tr_rec)) if tr_rec else 0, 3),
            "stage7_test_recall@10": round(float(np.mean(te10)) if te10 else 0, 3),

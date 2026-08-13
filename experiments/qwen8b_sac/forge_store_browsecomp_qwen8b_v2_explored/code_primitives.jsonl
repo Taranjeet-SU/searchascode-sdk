@@ -1,0 +1,1 @@
+{"name": "browsecomp_explored_primitive", "when_to_use": "explored on browsecomp: dense-default reusable retriever", "code": "def run(session, query, top_k):\n    return session.search(query, top_k=top_k, mode='dense').ids()", "origin": "llm_code", "tags": ["learned", "code"]}
