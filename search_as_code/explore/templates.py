@@ -34,7 +34,8 @@ def extract_codes(q: str) -> list[str]:
     seen, out = set(), []
     for m in CODE_RE.findall(q):
         if m not in seen and len(m) >= 4:
-            seen.add(m); out.append(m)
+            seen.add(m)
+            out.append(m)
     return out[:2]
 
 

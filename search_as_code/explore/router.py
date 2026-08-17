@@ -96,8 +96,8 @@ def label_via_templates(ctx, gold, k: int = 10, cascade: bool = True, all_golds:
             hits[name] = _hit(name)
         hits.update(unavailable)
         return best_from_hits(hits), hits
-    for _cost, grp in groupby(order, key=lambda t: TEMPLATE_COST.get(t, 99)):
-        grp = list(grp)
+    for _cost, group in groupby(order, key=lambda t: TEMPLATE_COST.get(t, 99)):
+        grp = list(group)
         for name in grp:
             hits[name] = _hit(name)
         if any(hits[n] for n in grp):

@@ -9,9 +9,9 @@ from collections import Counter
 
 import numpy as np
 
+from .._genutil import gen_lines
 from .router import TemplateRouter, featurize, label_via_templates, train_router
 from .templates import TEMPLATE_NAMES, StrategyContext
-from .._genutil import gen_lines
 
 
 def _rephrase(session, query: str, n: int) -> list[str]:
@@ -61,7 +61,8 @@ def _collect_queries(explorer, queries, n, rephrases, gen_llm):
         if not fresh:
             break
         for d in fresh:
-            seen.add(d.id); di += 1
+            seen.add(d.id)
+            di += 1
             text = getattr(d, "text", None) or ""
             for _diff, q in _gen_queries(ctx, text, per_doc):
                 out.append({"query": q, "gold_id": d.id})
@@ -120,7 +121,7 @@ def fit_router(explorer, *, queries=None, n=5000, rephrases=2, k=10, P=25,
                           f"({done[0] / (time.time() - t0):.1f} q/s)", flush=True)
         return i, featurize(q, emb), best, hits
 
-    results = [None] * len(data)
+    results: list = [None] * len(data)
     if workers > 1:
         with ThreadPoolExecutor(max_workers=workers) as ex:
             for fut in as_completed([ex.submit(_label_one, i) for i in range(len(data))]):
@@ -132,15 +133,17 @@ def fit_router(explorer, *, queries=None, n=5000, rephrases=2, k=10, P=25,
             results[i] = (feat, best, hits)
 
     rows, X, y = [], [], []
-    per_template = Counter()
-    any_hit = Counter()          # how often each template retrieves gold (oracle view)
+    per_template: Counter = Counter()
+    any_hit: Counter = Counter()          # how often each template retrieves gold (oracle view)
     solved = 0
     for i, (feat, best, hits) in enumerate(results):
         for name, h in hits.items():
             any_hit[name] += h
-        X.append(feat); y.append(best)
+        X.append(feat)
+        y.append(best)
         if best != "none":
-            solved += 1; per_template[best] += 1
+            solved += 1
+            per_template[best] += 1
         rows.append({"query": data[i]["query"], "gold_id": data[i]["gold_id"], "best": best})
 
     pack.write_jsonl("router_labels.jsonl", rows)

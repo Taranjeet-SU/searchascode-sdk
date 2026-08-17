@@ -135,7 +135,8 @@ def parse_verdict(text):
         elif u.startswith("COVERED"):
             out["covered"] = val
     if out["verdict"] is None:
-        out["verdict"] = "PASS" if out["confidence"] >= 0.5 else "FAIL"
+        conf = out.get("confidence")
+        out["verdict"] = "PASS" if isinstance(conf, (int, float)) and conf >= 0.5 else "FAIL"
     out["pred_pass"] = int(out["verdict"] == "PASS")
     return out
 

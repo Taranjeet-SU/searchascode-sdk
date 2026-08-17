@@ -74,7 +74,8 @@ class AgentMemory:
             line = f"- [{w.kind}] {w.content}"
             if total + len(line) > max_chars:
                 break
-            lines.append(line); total += len(line)
+            lines.append(line)
+            total += len(line)
         return "\n".join(reversed(lines))
 
     # ---- cross-session (long-term) -----------------------------------------
@@ -107,6 +108,7 @@ class AgentMemory:
         return item
 
     def _append(self, item: "MemoryItem") -> None:
+        assert self.path is not None
         self.path.parent.mkdir(parents=True, exist_ok=True)
         with self.path.open("a") as f:
             f.write(json.dumps(self._as_row(item)) + "\n")
@@ -160,6 +162,7 @@ class AgentMemory:
                     f.write(json.dumps(self._as_row(m)) + "\n")
 
     def load(self) -> None:
+        assert self.path is not None
         self.longterm = []
         for line in self.path.read_text().splitlines():
             if not line.strip():

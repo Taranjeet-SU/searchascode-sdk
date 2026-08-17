@@ -17,6 +17,7 @@ from typing import Any, Callable, Optional, Sequence
 
 from . import filters as F
 from . import primitives as P
+from ._genutil import gen_text
 from .adapters.base import VectorStore
 from .adapters.registry import connect
 from .embeddings import Embedder, HashEmbedder, as_embedder
@@ -28,7 +29,6 @@ from .errors import (
 )
 from .filters import normalize
 from .types import Capabilities, Document, Hit, ResultSet
-from ._genutil import gen_text
 
 _MODES = ("dense", "keyword", "hybrid", "regex")
 

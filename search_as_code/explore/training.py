@@ -27,6 +27,7 @@ import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 
@@ -147,7 +148,7 @@ def build_dataset(explorer, *, n=5000, rephrases=2, k=10, P=25, label_llm=False,
         batch = data[bi * batch_size:(bi + 1) * batch_size]
         embs = _batch_embed(session, [b["query"] for b in batch], bs=64)
 
-        def _label(j):
+        def _label(j, batch=batch, embs=embs):      # bind the loop vars explicitly (B023)
             item, emb = batch[j], embs[j]
             golds = item.get("gold_ids") or [item["gold_id"]]     # single or multi (qrels)
             ctx = StrategyContext(session, item["query"], P_pool=P, emb=emb, use_llm=label_llm,
@@ -158,7 +159,7 @@ def build_dataset(explorer, *, n=5000, rephrases=2, k=10, P=25, label_llm=False,
             return (j, featurize(item["query"], emb).astype(np.float32), best, hits,
                     dict(ctx.degraded))
 
-        rows = [None] * len(batch)
+        rows: list = [None] * len(batch)
         if workers > 1:
             with ThreadPoolExecutor(max_workers=workers) as ex:
                 for fut in as_completed([ex.submit(_label, j) for j in range(len(batch))]):
@@ -177,7 +178,8 @@ def build_dataset(explorer, *, n=5000, rephrases=2, k=10, P=25, label_llm=False,
                  "best": rows[j][1], "hits": rows[j][2],
                  **({"degraded": rows[j][3]} if rows[j][3] else {})}
                 for j in range(len(batch))]
-        _atomic_write_bytes(sdir / f"feat_{bi:05d}.npy", lambda f: np.save(f, feats))
+        _atomic_write_bytes(sdir / f"feat_{bi:05d}.npy",
+                            lambda f, feats=feats: np.save(f, feats))   # bind (B023)
         _atomic_write_text(sdir / f"lab_{bi:05d}.jsonl",
                            "\n".join(json.dumps(x) for x in labs) + "\n")
         _atomic_write_text(ckpt_path, json.dumps(
@@ -226,7 +228,7 @@ def load_dataset(pack) -> RouterDataset:
     # derive the label from the stored per-template recall@k hits with the current winner
     # policy (cheapest template that solves) — decoupled from the expensive labeling pass.
     y = [best_from_hits(r.get("hits") or {}) for r in labs]
-    any_hit = Counter()
+    any_hit: Counter = Counter()
     degraded_reasons: Counter = Counter()
     n_degraded = 0
     n_evaluated: Counter = Counter()      # unavailable templates (hits[t] is None) are not misses
@@ -271,7 +273,7 @@ def unsolved(pack) -> list[dict]:
     return out
 
 
-def write_dataset_csv(pack, out_dir=None) -> dict[str, str]:
+def write_dataset_csv(pack, out_dir=None) -> dict[str, Any]:
     """Persist the labeled dataset as CSV for reuse/inspection. Writes two files:
 
     - ``labels.csv``          one row per query: query, gold_id, winner (cheapest solver),
@@ -293,8 +295,8 @@ def write_dataset_csv(pack, out_dir=None) -> dict[str, str]:
         rows.extend(_read_jsonl(f))
 
     from collections import Counter
-    hit_count = Counter()
-    win_count = Counter()
+    hit_count: Counter = Counter()
+    win_count: Counter = Counter()
     n = len(rows)
 
     lpath = out / "labels.csv"
@@ -321,7 +323,7 @@ def write_dataset_csv(pack, out_dir=None) -> dict[str, str]:
         w.writerow(["template", "tier", "cost", "recall@k", "times_winner", "win_frac"])
         for t in sorted(TEMPLATE_NAMES, key=lambda x: TEMPLATE_COST.get(x, 99)):
             recall = round(hit_count[t] / n, 4) if n else 0.0
-            w.writerow([t, TEMPLATE_DOCS[t]["tier"], TEMPLATE_COST.get(t), recall,
+            w.writerow([t, str(TEMPLATE_DOCS[t]["tier"]), TEMPLATE_COST.get(t), recall,
                         win_count[t], round(win_count[t] / n, 4) if n else 0.0])
     return {"labels": str(lpath), "template_recall": str(tpath), "rows": n}
 
@@ -454,7 +456,8 @@ def classify_failure(session, item, k=50, sem_lo=0.45, lex_lo=0.08,
 def analyze_failures(session, items, sample=300) -> dict:
     """Bucket the unsolved queries into the four failure categories (see classify_failure)."""
     from collections import Counter
-    cats, ex = Counter(), {}
+    cats: Counter = Counter()
+    ex: dict = {}
     for it in list(items)[:sample]:
         try:
             r = classify_failure(session, it)
@@ -477,7 +480,7 @@ def duplication_scan(session, items, sample=80, k=5, sim_thresh=0.9) -> dict:
     """
     items = list(items)[:sample]
     checked = near_dup = 0
-    examples = []
+    examples: list = []
     for it in items:
         gold = it["gold_id"]
         try:

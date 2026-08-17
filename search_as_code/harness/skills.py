@@ -20,7 +20,6 @@ from typing import Callable, Optional
 import numpy as np
 
 from .._genutil import gen_lines
-
 from .triage import extract_codes
 
 
@@ -251,7 +250,8 @@ class SkillRegistry:
                 return [skills[i] for i in order]
             except Exception:
                 pass
-        import re
-        _tok = lambda t: set(re.findall(r"[a-z0-9]+", (t or "").lower()))
+        def _tok(t):
+            return set(re.findall(r"[a-z0-9]+", (t or "").lower()))
+
         qtok = _tok(query)
         return sorted(skills, key=lambda s: -len(qtok & _tok(s.when_to_use + " " + " ".join(s.tags))))[:k]

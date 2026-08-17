@@ -18,7 +18,7 @@ _ALLOWED = {"query", "bool", "must", "should", "must_not", "filter", "match", "m
             "multi_match", "term", "terms", "range", "prefix", "wildcard", "fuzzy", "boosting",
             "positive", "negative", "negative_boost", "function_score", "field_value_factor",
             "functions", "boost", "boost_mode", "score_mode", "minimum_should_match", "fields",
-            "query", "type", "operator", "fuzziness", "slop", "gte", "lte", "gt", "lt", "value",
+            "type", "operator", "fuzziness", "slop", "gte", "lte", "gt", "lt", "value",
             "field", "factor", "modifier", "missing", "tie_breaker", "analyzer", "lenient"}
 _BANNED = {"script", "script_score", "aggs", "aggregations", "_source", "size", "from", "sort", "pit"}
 

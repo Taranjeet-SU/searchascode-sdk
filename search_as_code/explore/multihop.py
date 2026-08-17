@@ -70,7 +70,9 @@ def _build_chain(session, seed, n_docs: int):
         if not nbrs:
             return None
         nxt = nbrs[0]
-        chain.append(nxt); used.add(nxt.id); cur = nxt
+        chain.append(nxt)
+        used.add(nxt.id)
+        cur = nxt
     return chain
 
 
@@ -121,7 +123,8 @@ def generate_multihop(session, n_docs: int = 2, target: int = 1000, *, workers: 
                 if len(out) < target:
                     out.append(q)
                     if fh:
-                        fh.write(json.dumps(q) + "\n"); fh.flush()
+                        fh.write(json.dumps(q) + "\n")
+                        fh.flush()
                     if progress_every and len(out) % progress_every == 0:
                         print(f"[multihop {n_docs}d] {len(out)}/{target}", flush=True)
         return bool(q)
@@ -140,12 +143,13 @@ def generate_multihop(session, n_docs: int = 2, target: int = 1000, *, workers: 
                     continue
                 key = tuple(sorted(d.id for d in c))
                 if key not in seen:
-                    seen.add(key); chains.append(c)
+                    seen.add(key)
+                    chains.append(c)
             if not chains:
                 empty_rounds += 1
                 continue
             empty_rounds = 0
-            for fut in as_completed([ex.submit(worker, c) for c in chains]):
+            for _fut in as_completed([ex.submit(worker, c) for c in chains]):
                 if len(out) >= target:
                     break
     if fh:

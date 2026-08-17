@@ -6,7 +6,7 @@ larger-is-better similarity so scores are comparable across every backend.
 
 from __future__ import annotations
 
-from typing import Any, Optional, Sequence
+from typing import Any, Optional, Sequence, cast
 
 from .._resilience import DEFAULT_BATCH_SIZE, chunked
 from ..errors import MissingDependencyError
@@ -39,7 +39,11 @@ class ChromaStore(VectorStore):
         for batch in chunked(docs, self.batch_size):
             self._col.upsert(
                 ids=[d.id for d in batch],
-                embeddings=[d.vector for d in batch],
+                # `docs` is filtered to vector-bearing documents above, but the comprehension
+                # still types as list[list[float] | None] — make the narrowing explicit.
+                # cast: chromadb's stub types `embeddings` invariantly, but a list of
+                # per-document vectors is the documented input.
+                embeddings=cast(Any, [list(d.vector or []) for d in batch]),
                 documents=[d.text or "" for d in batch],
                 metadatas=[d.metadata or {"_": ""} for d in batch],
             )
@@ -47,34 +51,50 @@ class ChromaStore(VectorStore):
     def _to_where(self, flt: Optional[dict]) -> Optional[dict]:
         if not flt:
             return None
-        clauses = []
+        clauses: list[dict[str, Any]] = []
         for field_name, cond in normalize(flt).items():
             if field_name.startswith("$"):
                 continue
             clauses.append({field_name: {_OP_MAP[op]: v for op, v in cond.items() if op in _OP_MAP}})
         if not clauses:
             return None
-        return clauses[0] if len(clauses) == 1 else {"$and": clauses}
+        return clauses[0] if len(clauses) == 1 else cast(dict, {"$and": clauses})
+
+    @staticmethod
+    def _rows(res: Any, key: str, outer: bool) -> list:
+        """One result column from a Chroma response, as a plain list.
+
+        Chroma types every column as Optional and query() nests each one inside a
+        per-query list, so direct indexing is not type-safe (and is a real IndexError
+        when a column is omitted from `include`).
+        """
+        col = (res or {}).get(key)
+        if not col:
+            return []
+        return list(col[0] or []) if outer else list(col)
 
     def query_vector(self, vector, top_k=10, flt=None) -> ResultSet:
         res = self._col.query(
-            query_embeddings=[list(vector)],
+            query_embeddings=cast(Any, [list(vector)]),
             n_results=top_k,
             where=self._to_where(flt),
             include=["documents", "metadatas", "distances"],
         )
+        ids = self._rows(res, "ids", True)
+        dists = self._rows(res, "distances", True)
+        texts = self._rows(res, "documents", True)
+        metas = self._rows(res, "metadatas", True)
         hits = []
-        ids = res["ids"][0]
         for i, _id in enumerate(ids):
-            dist = res["distances"][0][i]
+            dist = dists[i] if i < len(dists) else 0.0
             hits.append(
                 Hit(
-                    id=_id,
+                    id=str(_id),
                     score=1.0 / (1.0 + float(dist)),  # distance -> larger-is-better
                     document=Document(
-                        id=_id,
-                        text=res["documents"][0][i],
-                        metadata=res["metadatas"][0][i] or {},
+                        id=str(_id),
+                        text=texts[i] if i < len(texts) else None,
+                        metadata=dict(metas[i]) if i < len(metas) and metas[i] else {},
                     ),
                     store=self.backend,
                 )
@@ -83,9 +103,14 @@ class ChromaStore(VectorStore):
 
     def get(self, ids: Sequence[str]) -> list[Document]:
         res = self._col.get(ids=list(ids), include=["documents", "metadatas"])
+        got = self._rows(res, "ids", False)
+        texts = self._rows(res, "documents", False)
+        metas = self._rows(res, "metadatas", False)
         return [
-            Document(id=_id, text=res["documents"][i], metadata=res["metadatas"][i] or {})
-            for i, _id in enumerate(res["ids"])
+            Document(id=str(_id),
+                     text=texts[i] if i < len(texts) else None,
+                     metadata=dict(metas[i]) if i < len(metas) and metas[i] else {})
+            for i, _id in enumerate(got)
         ]
 
     def delete(self, ids: Sequence[str]) -> None:

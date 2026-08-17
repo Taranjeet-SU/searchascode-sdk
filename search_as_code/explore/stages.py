@@ -15,8 +15,8 @@ from collections import Counter
 
 import numpy as np
 
-from .engine import ExploreContext, Stage  # noqa: F401  (re-exported for convenience)
 from .._genutil import gen_text
+from .engine import ExploreContext, Stage  # noqa: F401  (re-exported for convenience)
 
 
 # --------------------------------------------------------------------------- #

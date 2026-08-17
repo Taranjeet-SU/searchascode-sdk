@@ -97,7 +97,7 @@ class QdrantStore(VectorStore):
                 query_filter=flt_, with_payload=True,
             ).points
         else:  # older clients
-            res = self._client.search(
+            res = self._client.search(  # type: ignore[attr-defined]  # removed in qdrant-client 1.12+
                 self.collection, query_vector=list(vector), limit=top_k,
                 query_filter=flt_, with_payload=True,
             )

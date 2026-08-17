@@ -19,7 +19,7 @@ import numpy as np
 
 from . import diagnostic_judge as dj
 from .forge import _safe_globals
-from .playbook import _coverage, _reserve, _rrf, sf_arsenal   # reuse coverage + fusion helpers
+from .playbook import _coverage, _reserve, _rrf  # reuse coverage + fusion helpers
 from .rag_techniques import SkillLookup
 
 _CODE = re.compile(r"```(?:python)?\s*(.*?)```", re.DOTALL)
@@ -77,7 +77,8 @@ def _raw_os_body(query, top_k):
         lw = w.lower()
         if lw in _STOP or lw in seen:
             continue
-        seen.add(lw); terms.append(w)
+        seen.add(lw)
+        terms.append(w)
     terms = terms[:12] or [query[:40]]
     return {"size": top_k * 3, "query": {"bool": {"should": [{"match": {"text": t}} for t in terms],
                                                   "minimum_should_match": 1}}}
@@ -125,7 +126,7 @@ def _rerank_helper(session, query, ids, top_k=10):
 
 def _exec(code, session, query, top_k):
     g = _safe_globals()
-    g["fuse_ids"] = lambda lists: _rrf([list(l) for l in lists])       # RRF over id lists
+    g["fuse_ids"] = lambda lists: _rrf([list(x) for x in lists])       # RRF over id lists
     g["rerank"] = _rerank_helper                                        # cross-encoder rerank helper
     ns: dict = {}
     exec(compile(code, "<agentic>", "exec"), g, ns)  # noqa: S102 — restricted sandbox
@@ -166,7 +167,8 @@ def agentic_solve(session, query, *, gold=None, max_hops=4, generator=None, judg
     mem_wins = "\n".join(f"- {m.content}" for m in recalled) or ""
 
     pooled, codes, diagnosis, prior = [], [], "", ""
-    fused, got, stopped_by = [], 0, None
+    fused: list = []
+    got, stopped_by = 0, None
     for hop in range(1, max_hops + 1):
         subfacts = [query]                           # decomposition here is ONLY the judge's coverage lens
         try:
@@ -199,9 +201,11 @@ def agentic_solve(session, query, *, gold=None, max_hops=4, generator=None, judg
             capture.append({"hop": hop, "code": code, "n_ids": len(ids),
                             "won": bool(goldset and (goldset & set(fused[:top_k])))})
         if hop == max_hops:
-            stopped_by = "maxhops"; break
+            stopped_by = "maxhops"
+            break
         if not judge_stop and goldset and got == len(goldset):
-            stopped_by = "oracle"; break
+            stopped_by = "oracle"
+            break
         # ALWAYS run the deep judge for its structured suggestion (guides the next hop in BOTH modes)
         sub_vecs = np.asarray(embedder(subfacts), dtype=np.float32)
         cov, cids, ctexts = _coverage(session, embedder, reranker, subfacts, sub_vecs, fused)
@@ -210,7 +214,8 @@ def agentic_solve(session, query, *, gold=None, max_hops=4, generator=None, judg
             cands = [{"id": i, "score": 1.0 / (r + 1), "snippet": t} for r, (i, t) in enumerate(zip(cids, ctexts))]
             v = judge.judge(query, subfacts, cands, cov)
             if judge_stop and v["verdict"] == "PASS":
-                stopped_by = "judge_pass"; break
+                stopped_by = "judge_pass"
+                break
         weakest = min((c["ce_best"] for c in cov), default=0.0)
         diagnosis = (f"COVERAGE: the current set does NOT fully answer the question yet "
                      f"(weakest ce={weakest:.1f}). Covered aspects: {v.get('covered') or '?'}; still MISSING: "

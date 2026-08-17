@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from typing import Any
 
 # error/status codes and part numbers: ORA-01017, HTTP 500, E1234, 0x80070005, ERR_CONN, AGFC012
 _CODE_RE = re.compile(
@@ -70,7 +71,8 @@ def extract_codes(query: str) -> list[str]:
     for m in _CODE_RE.findall(query):
         m = m.strip()
         if m and m not in seen:
-            seen.add(m); out.append(m)
+            seen.add(m)
+            out.append(m)
     return out[:4]
 
 
@@ -83,11 +85,13 @@ def triage(query: str) -> QueryIntent:
     q = (query or "").strip()
     codes = extract_codes(q)
     n_entities = _n_named_entities(q)
-    sig = {"len": len(q), "n_words": len(q.split()), "codes": codes,
-           "has_error_word": bool(_HTTP_RE.search(q)), "n_clauses": _n_clauses(q),
-           "multi_hint": bool(_MULTI_HINT.search(q)),
-           "weak_multi_hint": bool(_WEAK_MULTI_HINT.search(q)),
-           "n_entities": n_entities}
+    sig: dict[str, Any] = {
+        "len": len(q), "n_words": len(q.split()), "codes": codes,
+        "has_error_word": bool(_HTTP_RE.search(q)), "n_clauses": _n_clauses(q),
+        "multi_hint": bool(_MULTI_HINT.search(q)),
+        "weak_multi_hint": bool(_WEAK_MULTI_HINT.search(q)),
+        "n_entities": n_entities,
+    }
 
     # 1) multi-hop: a STRONG contrastive/enumerating hint, or a weak conjunction that comes
     #    with several distinct named entities (two documents), or many clauses AND several

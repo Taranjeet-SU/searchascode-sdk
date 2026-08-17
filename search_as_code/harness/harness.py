@@ -130,7 +130,8 @@ class Harness:
                 ids = arsenal.run(self.session, sub, top_k=wide)
                 skill = "arsenal_single"
             else:
-                r = self.spawn(sub, top_k=top_k); ids, skill = r.ids, r.skill
+                r = self.spawn(sub, top_k=top_k)
+                ids, skill = r.ids, r.skill
             pools.append(ids)
             sub_traces.append({"query": sub, "ids": ids[:top_k], "skill": skill})
             # cross-hop memory: write each sub-fact's FINDING so later hops recall it (not just the query)
