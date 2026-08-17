@@ -14,7 +14,10 @@
 `search()` endpoint, the LLM writes a short Python program against a unified
 **primitive API** — search modes, fan-out, rerank, rephrase, fuse, dedup, MMR,
 filter, aggregate — executed in a sandbox with intermediate state kept **out of
-the model context**. The same agent code runs over **any vector database**
+the model context**. In a matched head-to-head that is worth **one model turn
+instead of nine and ~25× fewer input tokens** at comparable recall — an
+efficiency win rather than a quality one ([the measurement, with
+intervals](experiments/multi_hop_synth_queries/RESULTS.md)). The same agent code runs over **any vector database**
 (OpenSearch, Qdrant, Chroma, pgvector, Pinecone, Weaviate, Milvus …) — no
 per-database SDK, no per-database rewrite. It's *code-mode* retrieval (à la
 Anthropic/Cloudflare) meets *search-as-code* primitives (à la Perplexity), made
@@ -168,7 +171,9 @@ Currently corrected or verified:
 |---|---|
 | Judge reaches 0.721 held-out, "0.72 **is** the signal ceiling" | **softened.** 0.721 **[0.633, 0.811]**; the tuning gain over the untuned prompt is +0.020 [−0.110, +0.150] — not distinguishable from noise; two of the five table rows were the *untuned* prompt. The qualitative finding (cross-encoder signal is what moves the judge) survives. `experiments/deep_judge/README.md` §1 |
 | "SAC beats MCP tool-calling on every axis" (FiQA) | **unconfirmed.** The arms were not matched (3 tools vs ~20 primitives). Re-run pending. |
-| SAC > tool-calling on multi-hop | **being re-measured** with identical prompts for both arms and an explore-seeded variant. |
+| SAC > tool-calling on multi-hop (**quality**) | **not reproduced.** With matched prompts and explore-first applied to *both* harnesses (5 arms, n=30/hop, forge-disjoint slice), `sac_explored − tool_explored` is −0.10/−0.07/−0.08 — all within noise. The published +0.06/+0.08/+0.13 was an artifact of handing the code arm the winning recipe as a worked program. [`RESULTS.md` §4b](experiments/multi_hop_synth_queries/RESULTS.md) |
+| SAC > tool-calling on **cost** | **holds, and it is large.** 1 model turn vs ~8–9, ~600 input tokens vs ~15,000–19,000 (25–30×), widening with hop depth. Structural to code-mode. |
+| `sac.explore` earns its keep | **yes, and it was missing from the old comparison.** Seeding the forged primitive lifts SAC +0.083/+0.056/+0.025 recall and cuts its searches 5.3→3.3. But it lifts the *tool* arm as much or more — explore is a corpus-knowledge win, not a code-mode win. |
 | Forged SAC ≥ dense on a strong retriever | **holds as a negative result** — on Qwen3-Embedding-8B the forged primitive does *not* beat plain dense, which is why the dense-default gate exists. |
 | Adapter contract ("the test suite is the contract") | **now true.** `tests/test_conformance.py` runs 15 contract tests against every installed backend; enforcing it found 3 real bugs in faiss/sqlite/chroma. |
 | Cost profile (turns, tokens, cache) | **holds.** Structural to code-mode, unaffected by the prompt-matching issue. |

@@ -1,0 +1,173 @@
+{
+  "2hop": {
+    "dense": {
+      "recall_ci": [
+        0.8167,
+        0.7,
+        0.9167
+      ],
+      "allgolds": 0.7,
+      "searches": 1.0,
+      "turns": 0.0,
+      "in_tok": 0
+    },
+    "tool": {
+      "recall_ci": [
+        0.9,
+        0.8167,
+        0.9667
+      ],
+      "allgolds": 0.8,
+      "searches": 5.07,
+      "turns": 8.03,
+      "in_tok": 13610
+    },
+    "sac": {
+      "recall_ci": [
+        0.7667,
+        0.6833,
+        0.85
+      ],
+      "allgolds": 0.5333,
+      "searches": 5.3,
+      "turns": 1.0,
+      "in_tok": 512
+    },
+    "tool_explored": {
+      "recall_ci": [
+        0.95,
+        0.8833,
+        1.0
+      ],
+      "allgolds": 0.9,
+      "searches": 5.2,
+      "turns": 8.17,
+      "in_tok": 15236
+    },
+    "sac_explored": {
+      "recall_ci": [
+        0.85,
+        0.75,
+        0.9333
+      ],
+      "allgolds": 0.7333,
+      "searches": 3.27,
+      "turns": 1.0,
+      "in_tok": 602
+    }
+  },
+  "3hop": {
+    "dense": {
+      "recall_ci": [
+        0.6556,
+        0.5222,
+        0.7778
+      ],
+      "allgolds": 0.4,
+      "searches": 1.0,
+      "turns": 0.0,
+      "in_tok": 0
+    },
+    "tool": {
+      "recall_ci": [
+        0.7222,
+        0.6,
+        0.8333
+      ],
+      "allgolds": 0.5,
+      "searches": 5.73,
+      "turns": 8.8,
+      "in_tok": 16153
+    },
+    "sac": {
+      "recall_ci": [
+        0.6889,
+        0.5778,
+        0.7889
+      ],
+      "allgolds": 0.3667,
+      "searches": 4.87,
+      "turns": 1.0,
+      "in_tok": 512
+    },
+    "tool_explored": {
+      "recall_ci": [
+        0.8111,
+        0.7111,
+        0.9
+      ],
+      "allgolds": 0.6,
+      "searches": 5.87,
+      "turns": 8.47,
+      "in_tok": 16889
+    },
+    "sac_explored": {
+      "recall_ci": [
+        0.7444,
+        0.6444,
+        0.8333
+      ],
+      "allgolds": 0.4333,
+      "searches": 3.83,
+      "turns": 1.0,
+      "in_tok": 610
+    }
+  },
+  "4hop": {
+    "dense": {
+      "recall_ci": [
+        0.65,
+        0.5333,
+        0.7583
+      ],
+      "allgolds": 0.2667,
+      "searches": 1.0,
+      "turns": 0.0,
+      "in_tok": 0
+    },
+    "tool": {
+      "recall_ci": [
+        0.6167,
+        0.525,
+        0.7167
+      ],
+      "allgolds": 0.2,
+      "searches": 5.83,
+      "turns": 9.33,
+      "in_tok": 17736
+    },
+    "sac": {
+      "recall_ci": [
+        0.6417,
+        0.5333,
+        0.7583
+      ],
+      "allgolds": 0.3,
+      "searches": 4.9,
+      "turns": 1.0,
+      "in_tok": 527
+    },
+    "tool_explored": {
+      "recall_ci": [
+        0.7417,
+        0.65,
+        0.8333
+      ],
+      "allgolds": 0.4,
+      "searches": 5.6,
+      "turns": 8.97,
+      "in_tok": 18750
+    },
+    "sac_explored": {
+      "recall_ci": [
+        0.6667,
+        0.55,
+        0.7667
+      ],
+      "allgolds": 0.2667,
+      "searches": 4.5,
+      "turns": 1.0,
+      "in_tok": 616
+    }
+  }
+}
