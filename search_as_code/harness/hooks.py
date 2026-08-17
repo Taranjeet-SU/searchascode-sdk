@@ -68,8 +68,10 @@ def post_write_memory(ctx) -> None:
     r = ctx.result
     ctx.memory.observe(f"{ctx.intent.kind if ctx.intent else '?'} -> {r.skill} "
                        f"(score {r.score:.2f}, {len(r.ids)} hits)", kind="outcome")
-    # long-term: remember the winning strategy so future similar queries recall it
-    if r.ids and r.score >= 0.5:
+    # Long-term memory is only written from a VERIFIED win. Previously any non-empty result
+    # scored 1.0, so "the skill X worked" was written on every run and recall() later biased
+    # the plan toward whatever happened to run first (SDK-A3).
+    if r.ids and getattr(r, "verified", False) and r.score >= 0.5:
         ctx.memory.remember(f"For a '{ctx.intent.kind if ctx.intent else '?'}' query like "
                             f"\"{ctx.query[:120]}\", the skill '{r.skill}' worked.",
                             kind="skill_win", skill=r.skill,

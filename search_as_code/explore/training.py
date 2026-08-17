@@ -191,11 +191,26 @@ def load_dataset(pack) -> RouterDataset:
     """Concatenate the on-disk shards into a RouterDataset."""
     ddir = pack.root / "dataset"
     sdir = ddir / "shards"
+    # Pair the shards by INDEX instead of globbing the two patterns independently. A crash
+    # between writing feat_{bi}.npy and lab_{bi}.jsonl leaves an orphan feature shard; two
+    # independent globs + np.concatenate then shifted features against labels with no error
+    # (SDK-C9). An unpaired or length-mismatched shard is skipped loudly.
     feats, labs = [], []
-    for f in sorted(sdir.glob("feat_*.npy")):
-        feats.append(np.load(f))
-    for f in sorted(sdir.glob("lab_*.jsonl")):
-        labs.extend(_read_jsonl(f))
+    feat_by_idx = {f.stem.split("_")[-1]: f for f in sdir.glob("feat_*.npy")}
+    lab_by_idx = {f.stem.split("_")[-1]: f for f in sdir.glob("lab_*.jsonl")}
+    for idx in sorted(set(feat_by_idx) | set(lab_by_idx)):
+        fpath, lpath = feat_by_idx.get(idx), lab_by_idx.get(idx)
+        if fpath is None or lpath is None:
+            print(f"[dataset] WARNING: incomplete shard {idx} "
+                  f"({'labels' if fpath is None else 'features'} missing) — skipped", flush=True)
+            continue
+        fx, lx = np.load(fpath), _read_jsonl(lpath)
+        if len(fx) != len(lx):
+            print(f"[dataset] WARNING: shard {idx} has {len(fx)} features vs {len(lx)} "
+                  f"labels — skipped", flush=True)
+            continue
+        feats.append(fx)
+        labs.extend(lx)
     from collections import Counter
 
     from .router import best_from_hits
@@ -205,9 +220,13 @@ def load_dataset(pack) -> RouterDataset:
     # policy (cheapest template that solves) — decoupled from the expensive labeling pass.
     y = [best_from_hits(r.get("hits") or {}) for r in labs]
     any_hit = Counter()
+    n_evaluated: Counter = Counter()      # unavailable templates (hits[t] is None) are not misses
     for r in labs:
         for t, h in (r.get("hits") or {}).items():
-            any_hit[t] += h
+            if h is None:                 # not evaluated under these capabilities (SDK-A1)
+                continue
+            any_hit[t] += int(h)
+            n_evaluated[t] += 1
     solved = sum(1 for lab in y if lab != "none")
     meta = {"n": len(y), "solved": solved, "unsolved": len(y) - solved,
             "oracle_coverage": round(solved / len(y), 4) if y else 0.0,
@@ -267,9 +286,12 @@ def write_dataset_csv(pack, out_dir=None) -> dict[str, str]:
             if solved:
                 win_count[winner] += 1
             for t in TEMPLATE_NAMES:
-                hit_count[t] += int(hits.get(t, 0))
+                hit_count[t] += int(hits.get(t) or 0)
+            # "" (not 0) for an unavailable template, so a CSV reader can tell
+            # "this strategy missed" from "this strategy was never run" (SDK-A1).
             w.writerow([r.get("query", ""), r.get("gold_id", ""), winner, solved]
-                       + [int(hits.get(t, 0)) for t in TEMPLATE_NAMES])
+                       + ["" if hits.get(t) is None else int(hits.get(t) or 0)
+                          for t in TEMPLATE_NAMES])
 
     tpath = out / "template_recall.csv"
     with tpath.open("w", newline="") as fh:

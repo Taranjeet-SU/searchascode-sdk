@@ -313,6 +313,26 @@ class ValidateStage(Stage):
         return {"n": n, "best": best,
                 "recall_at_k": {s: round(recall[s], 3) for s in self.STRATEGIES}}
 
+    def validate(self, ctx: ExploreContext, summary: dict) -> tuple[bool, str]:
+        """Implement the keep-if-usable gate the engine defines and the docs advertise.
+
+        ``Stage.validate`` and docs/EXPLORE.md's robustness table describe rejecting output
+        that does not beat baseline as "the honesty rule", but no stage in default_pipeline()
+        overrode it — so ``status="rejected"`` was unreachable and the table over-claimed
+        (SDK-A5). A validation pass whose best strategy retrieves nothing is measuring noise
+        (usually: the synth queries are not answerable from the corpus), so it is rejected
+        rather than recorded as a baseline later stages would trust.
+        """
+        recall = summary.get("recall_at_k") or {}
+        best = max(recall.values(), default=0.0)
+        floor = float(ctx.cfg("validate_min_recall", 0.05))
+        if best <= 0.0:
+            return False, "no strategy retrieved any gold document — baseline is not usable"
+        if best < floor:
+            return False, (f"best recall@k {best:.3f} is below the usable floor {floor:.2f} "
+                           f"(set config['validate_min_recall'] to override)")
+        return True, f"baseline established: {summary.get('best')} @ {best:.3f}"
+
 
 def _search_ids(ctx: ExploreContext, mode: str, query: str, k: int) -> set:
     try:

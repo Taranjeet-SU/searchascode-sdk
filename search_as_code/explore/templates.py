@@ -240,6 +240,47 @@ TEMPLATES: dict[str, Callable[[StrategyContext], ResultSet]] = {
 
 TEMPLATE_NAMES = list(TEMPLATES)
 
+# What each template NEEDS to be itself. Without the dependency the strategy silently
+# degrades to another template's behaviour — e.g. with ``use_llm=False`` hyde/decompose/
+# rephrase/expand all return dense() or hybrid(), and with no reranker rerank() returns its
+# input unchanged. Under the shipped labeling defaults (label_llm=False, label_rerank=False)
+# that made 10 of the 16 templates *literally the same function*, and since best_from_hits
+# breaks ties by cheapest cost, light_dense (cost 0) won essentially every tie by
+# construction — the mechanical cause of the "minority collapse" in open_problems.md #1/#8.
+# Labeling now marks these `unavailable` instead of scoring a degenerate duplicate (SDK-A1).
+TEMPLATE_REQUIRES: dict[str, set[str]] = {
+    "rephrase_rerank": {"llm", "rerank"},
+    "dense_rerank": {"rerank"},
+    "hyde_rerank": {"llm", "rerank"},
+    "mmr_diverse": {"rerank"},
+    "prf_rerank": {"rerank"},
+    "multi_rephrase": {"llm"},
+    "decompose_rerank": {"llm", "rerank"},
+    "deep_hyde_decompose": {"llm"},
+    "deep_all": {"llm", "rerank"},
+    "score_guarded": {"llm", "rerank"},
+    "escalating": {"llm", "rerank"},
+    "confidence_gated_exact": {"llm", "rerank"},
+}
+
+
+def template_available(name: str, *, use_llm: bool, use_rerank: bool) -> bool:
+    """Is ``name`` genuinely runnable, or would it degrade to a duplicate of another
+    template? See :data:`TEMPLATE_REQUIRES` (SDK-A1)."""
+    need = TEMPLATE_REQUIRES.get(name, set())
+    if "llm" in need and not use_llm:
+        return False
+    if "rerank" in need and not use_rerank:
+        return False
+    return True
+
+
+def available_templates(*, use_llm: bool, use_rerank: bool) -> list[str]:
+    """The subset of TEMPLATE_NAMES that is distinct under these capabilities."""
+    return [t for t in TEMPLATE_NAMES
+            if template_available(t, use_llm=use_llm, use_rerank=use_rerank)]
+
+
 # effort cost per tier — used to pick the CHEAPEST template that still solves a query
 # (recall@k), so the router learns the lightest strategy that works.
 _TIER_COST = {"light": 0, "medium": 1, "adaptive": 2, "deep": 3}

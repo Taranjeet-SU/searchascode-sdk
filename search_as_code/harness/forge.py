@@ -295,7 +295,10 @@ def reflect(ctx, result, forge: HarnessForge, threshold: float = 0.5) -> list:
     created = []
     intent = getattr(ctx, "intent", None)
     kind = intent.kind if intent is not None else "unknown"
-    if not result.ids or result.score < threshold:
+    # Forge only from a VERIFIED win. The gate used to be `score < threshold` alone, and with
+    # the old default_verify (1.0 for any non-empty list) it was never true — so every
+    # non-empty multi-hop run forged a skill and a subagent from no evidence at all (SDK-A3).
+    if not result.ids or result.score < threshold or not getattr(result, "verified", False):
         return created
 
     # 1) always remember the win (durable memory)

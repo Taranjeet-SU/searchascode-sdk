@@ -9,6 +9,15 @@ from search_as_code.harness import (
 )
 
 
+def _gold_verify(gold):
+    """A REAL reward signal (gold-based). Online learning refuses to learn from
+    default_verify, which cannot see relevance — see issues.md SDK-A3."""
+    def verify(ctx, ids):
+        hit = len(set(gold) & set(ids)) / max(1, len(gold))
+        return (hit >= 1.0, hit)
+    return verify
+
+
 def _session():
     s = sac.Session("memory", dim=32, embedder=sac.HashEmbedder(dim=32))
     s.add([{"id": f"p{i}", "text": f"The Agilex 7 FPGA family supports high-bandwidth designs. "
@@ -97,7 +106,7 @@ def test_harness_multihop_spawns_subagents():
 
 def test_harness_writes_memory_and_recalls_next_time():
     s = _session()
-    h = Harness(s)
+    h = Harness(s, verify=_gold_verify({"c3"}))
     h.run("Device AGFC03 error transceiver count", top_k=5)     # error_code -> should log a skill_win
     assert h.memory.stats()["longterm"] >= 1
     r2 = h.run("AGFC05 error status", top_k=5)                  # similar query recalls prior win
@@ -127,8 +136,9 @@ def test_harness_cross_hop_findings():
 def test_harness_cross_session_memory(tmp_path):
     """Long-term memory persists across Harness instances (sessions) via memory_path."""
     path = str(tmp_path / "hmem.jsonl")
-    Harness(_session(), memory_path=path).run("Device AGFC03 error transceiver count", top_k=5)
-    h2 = Harness(_session(), memory_path=path)                 # fresh 'session', same store
+    Harness(_session(), memory_path=path, verify=_gold_verify({"c3"})).run(
+        "Device AGFC03 error transceiver count", top_k=5)
+    h2 = Harness(_session(), memory_path=path, verify=_gold_verify({"c7"}))   # fresh 'session', same store
     assert h2.memory.stats()["longterm"] >= 1
     r = h2.run("AGFC07 error status", top_k=5)
     assert "RELEVANT MEMORY" in r.dynamic_prompt               # recalled the persisted win
@@ -160,12 +170,43 @@ def test_forge_refine_prompt_and_persist(tmp_path):
 def test_harness_online_learning_end_to_end(tmp_path):
     """Solve → forge a skill + learned rule → persist → NEW session loads and uses it (online)."""
     sp = str(tmp_path / "store")
-    h = Harness(_session(), store_path=sp, learn=True)
+    verify = _gold_verify({"p0"})
+    h = Harness(_session(), store_path=sp, learn=True, verify=verify)
     r = h.run("Compare the Agilex 7 transceivers and the Quartus install steps", top_k=6)
     assert r.meta.get("forged")                                # created artifacts from the solve
     assert any(n.startswith("learned_multihop") for n in h.store.skills)
     # a fresh harness (new session) loads the forged skill + learned rule and injects the rule
-    h2 = Harness(_session(), store_path=sp, learn=True)
+    h2 = Harness(_session(), store_path=sp, learn=True, verify=verify)
     assert any(n.startswith("learned_multihop") for n in h2.skills.names())   # forged skill online
     r2 = h2.run("Compare the transceivers and install steps", top_k=6)
     assert "LEARNED RULES" in r2.dynamic_prompt                # self-modifiable prompt in effect
+
+
+def test_online_learning_refuses_to_learn_without_a_real_reward(tmp_path):
+    """SDK-A3: with the default verify (no relevance signal) the harness must NOT forge
+    skills or write "X worked" to long-term memory. Any non-empty result used to score 1.0,
+    so every run forged a skill and a subagent from no evidence at all."""
+    h = Harness(_session(), store_path=str(tmp_path / "store"), learn=True)
+    r = h.run("Compare the Agilex 7 transceivers and the Quartus install steps", top_k=6)
+    assert r.ids                                     # it still retrieves
+    assert r.verified is False                       # but nothing verified it
+    assert r.meta.get("forged") == []                # so nothing was forged
+    assert h.memory.stats()["longterm"] == 0         # and no "skill X worked" was recorded
+
+
+def test_plan_execute_verify_actually_iterates_without_a_real_reward():
+    """SDK-A3: default_verify returned 1.0 for any non-empty list, so the loop always broke
+    on the first skill and max_steps never bound."""
+    from search_as_code.harness.context import HarnessContext
+    from search_as_code.harness.loop import default_verify, plan_execute_verify
+
+    ctx = HarnessContext(query="q", top_k=10)
+    ctx.plan = ["a", "b", "c"]
+    tried = []
+
+    def execute(name):
+        tried.append(name)
+        return ["d1", "d2"]
+
+    plan_execute_verify(ctx, execute, lambda ids: default_verify(ctx, ids), max_steps=3)
+    assert tried == ["a", "b", "c"], f"loop stopped early at {tried} — max_steps never bound"

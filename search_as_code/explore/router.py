@@ -38,6 +38,13 @@ def featurize(query: str, emb: np.ndarray) -> np.ndarray:
     return np.concatenate([np.asarray(emb, dtype=np.float32), lexical_features(query)])
 
 
+# What an UNFITTED router returns. It must be a real template: predict()/route_plan() used to
+# return "all_rerank", which is not in TEMPLATE_NAMES, so the value KeyError'd in run_template
+# and the unfitted path was simply broken (SDK-C12). `deep_all` is the nearest real strategy —
+# the widest one — which is the right default when nothing has been learned yet.
+_UNFITTED_FALLBACK = "deep_all"
+
+
 def best_from_hits(hits: dict) -> str:
     """Winner policy over recall@k hits: the **cheapest-effort** template that retrieved the
     gold doc (so the router learns the lightest strategy that works). 'none' if all missed."""
@@ -66,24 +73,37 @@ def label_via_templates(ctx, gold, k: int = 10, cascade: bool = True, all_golds:
     """
     from itertools import groupby
 
+    from .templates import available_templates
+
     golds = {gold} if isinstance(gold, str) else set(gold)
 
     def _hit(name):
         got = set(run_template(name, ctx, top_k=k))
         return int(golds <= got) if all_golds else int(bool(golds & got))
 
-    order = sorted(TEMPLATE_NAMES, key=lambda t: (TEMPLATE_COST.get(t, 99), TEMPLATE_NAMES.index(t)))
+    # Only label templates that are genuinely DISTINCT under this context's capabilities.
+    # Without a generator, hyde/decompose/rephrase/expand return dense()/hybrid(); without a
+    # reranker, rerank() is the identity — so labeling all 16 scored ~4 real strategies many
+    # times over and handed every tie to light_dense on cost (SDK-A1). Unavailable templates
+    # are recorded as None (= "not evaluated"), never as a miss.
+    usable = available_templates(use_llm=bool(getattr(ctx, "use_llm", False)),
+                                 use_rerank=bool(getattr(ctx, "use_rerank", False)))
+    order = sorted(usable, key=lambda t: (TEMPLATE_COST.get(t, 99), TEMPLATE_NAMES.index(t)))
+    unavailable = {t: None for t in TEMPLATE_NAMES if t not in set(usable)}
     hits: dict = {}
     if not cascade:
         for name in order:
             hits[name] = _hit(name)
+        hits.update(unavailable)
         return best_from_hits(hits), hits
     for _cost, grp in groupby(order, key=lambda t: TEMPLATE_COST.get(t, 99)):
         grp = list(grp)
         for name in grp:
             hits[name] = _hit(name)
         if any(hits[n] for n in grp):
+            hits.update(unavailable)
             return best_from_hits(hits), hits     # cheapest solver is in this group
+    hits.update(unavailable)
     return "none", hits
 
 
@@ -98,7 +118,7 @@ class TemplateRouter:
 
     def predict(self, query: str, emb: np.ndarray) -> str:
         if self.model is None:
-            return "all_rerank"
+            return _UNFITTED_FALLBACK
         x = featurize(query, emb).reshape(1, -1)
         return str(self.model.predict(x)[0])
 
@@ -108,7 +128,7 @@ class TemplateRouter:
         which is where routing actually pays off (chaining, not betting on a single template).
         Falls back to a single predict when the head has no ``predict_proba``."""
         if self.model is None:
-            return ["all_rerank"]
+            return [_UNFITTED_FALLBACK]
         x = featurize(query, emb).reshape(1, -1)
         if not hasattr(self.model, "predict_proba"):
             return [str(self.model.predict(x)[0])]
