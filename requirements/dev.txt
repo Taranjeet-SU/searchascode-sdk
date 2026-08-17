@@ -1,0 +1,8 @@
+# Tooling for `make check`. Pin the linters: a ruff/mypy minor bump changes what CI rejects.
+pytest==8.3.4
+pytest-cov==6.0.0
+ruff==0.16.3
+mypy==1.14.1
+numpy>=1.24,<3
+build==1.2.2
+pre-commit==4.0.1

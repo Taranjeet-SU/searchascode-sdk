@@ -7,7 +7,7 @@
   <img alt="python" src="https://img.shields.io/badge/python-3.10+-blue">
   <img alt="license" src="https://img.shields.io/badge/license-Apache--2.0-green">
   <img alt="backends" src="https://img.shields.io/badge/backends-memory·opensearch·qdrant·chroma·pgvector·faiss·sqlite-orange">
-  <img alt="tests" src="https://img.shields.io/badge/tests-95%20passing-brightgreen">
+  <img alt="tests" src="https://img.shields.io/badge/tests-199%20unit%20%2B%2023%20integration-brightgreen">
 </p>
 
 **Search as Code** is an agentic retrieval harness: instead of calling a fixed
@@ -62,7 +62,7 @@ pip install -e '.[dev]'          # editable + test/lint/type tooling (pytest, ru
 python -c "import search_as_code as sac; print(sac.available())"   # ['chroma', 'faiss', 'memory', 'opensearch', ...]
 python examples/demo.py                    # in-memory demo, zero setup, no API key
 python examples/opensearch_quickstart.py   # needs .[opensearch] + a running OpenSearch
-python -m pytest -q                        # 77 in-memory unit tests; +18 OpenSearch integration
+python -m pytest -q                        # 199 in-memory unit tests; +23 OpenSearch integration
 ```
 
 The base install ships a dependency-free embedder + in-memory backend, so the
@@ -143,7 +143,8 @@ MCP tool-calling vs Search-as-Code (totals over the 100 queries):
 pts**) and nDCG@10, **~2.1× faster**, **~1.6× cheaper**, **2× the prompt-cache
 hit** (54% vs 27%), and **<½ the LLM calls** — because intermediate results stay
 in the sandbox instead of flowing back through context. Reproduce with
-`python -m phase1.benchmark -n 100`; full run log in
+`python -m phase1.benchmark -n 100 --reranker cross-encoder/ms-marco-MiniLM-L-12-v2`
+(the ms-marco reranker is the one these numbers were measured with; see issues.md P1-14); full run log in
 [`benchmark_changelog.md`](benchmark_changelog.md), narrative in
 [`phase1/RESULTS.md`](phase1/RESULTS.md).
 
@@ -218,8 +219,8 @@ We develop in parallel using **git worktrees** (isolated checkouts per feature):
 ```bash
 git worktree add ../sac-<feature> -b feat/<feature>   # isolated working copy
 cd ../sac-<feature> && pip install -e '.[dev]'
-# …make your change, then keep it green:
-ruff check search_as_code && mypy search_as_code && pytest -q
+# …make your change, then keep it green (one target, same as CI):
+make check          # lint + typecheck + tests + repo guard + doc links
 ```
 
 - **Add a backend** by implementing one `VectorStore`
@@ -227,8 +228,10 @@ ruff check search_as_code && mypy search_as_code && pytest -q
   and the in-memory test suite is the contract every adapter must satisfy.
 - **Add a primitive** in `primitives.py` (portable, model-free) or as a backend
   method (native); update [`docs/DATABASES.md`](docs/DATABASES.md).
-- CI runs **ruff + mypy + pytest** on Python 3.10–3.12 plus a live-OpenSearch
-  integration job ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)).
+- CI runs **ruff + mypy + pytest** on Python 3.10–3.12, the **adapter conformance suite**,
+  a **wheel-install smoke test**, a **docs link check**, and a live-OpenSearch integration
+  job ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)). Full contributor guide:
+  [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ## 🧭 Philosophy
 

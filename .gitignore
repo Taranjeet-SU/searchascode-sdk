@@ -34,3 +34,19 @@ experiments/su_multihop/
 
 # BrowseComp-Plus benchmark — INTERNAL, do not push
 experiments/browsecomp/
+
+# --- customer / credential artifacts (issues.md GOV-2, P4-3) -------------------
+# .gitignore does NOT untrack already-committed files; the tracked customer paths were
+# removed with `git rm --cached` in the audit-fix sweep. scripts/check_no_customer_artifacts.py
+# is the enforcing control (pre-commit + CI) — these patterns are the second line of defence.
+*.pub
+*.pem
+*.key
+*.p12
+*.pfx
+.env
+**/.secrets
+phase4/
+!phase4/__init__.py
+!phase4/answer_gen.py
+!phase4/metrics.py

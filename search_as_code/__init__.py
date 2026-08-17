@@ -40,6 +40,14 @@ from .explore import (
     explore,
 )
 from .harness import AgentMemory, Harness, SkillRegistry, triage
+from .metrics import (
+    all_golds_at_k,
+    bootstrap_ci,
+    compare,
+    format_ci,
+    ndcg_at_k,
+    recall_at_k,
+)
 from .primitives import (
     abstain,
     auto_filter,
@@ -83,6 +91,8 @@ __all__ = [
     # exploration / onboarding
     "explore", "ProfilePack", "Explorer", "TemplateRouter", "TEMPLATE_NAMES", "TEMPLATE_DOCS",
     "Harness", "AgentMemory", "SkillRegistry", "triage",
+    # metrics (with uncertainty — see metrics.compare / bootstrap_ci)
+    "recall_at_k", "all_golds_at_k", "ndcg_at_k", "bootstrap_ci", "compare", "format_ci",
     # primitives
     "fan_out", "fuse", "dedup", "rerank", "freshness", "extract",
     "mmr", "expand", "decompose", "rephrase", "rrf", "topics", "auto_filter", "score_cutoff",

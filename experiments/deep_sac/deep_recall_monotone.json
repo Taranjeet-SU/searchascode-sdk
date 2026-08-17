@@ -1,0 +1,168 @@
+{
+  "hotpotqa": {
+    "2hop": {
+      "n": 15,
+      "oneshot": {
+        "recall@10": 0.9333,
+        "all_golds@10": 0.9333,
+        "avg_hops": 1.0,
+        "avg_searches": 8.07,
+        "avg_in_tokens": 1448,
+        "avg_out_tokens": 343
+      },
+      "deep_legacy": {
+        "recall@10": 0.9,
+        "all_golds@10": 0.8667,
+        "avg_hops": 1.67,
+        "avg_searches": 9.0,
+        "avg_in_tokens": 2566,
+        "avg_out_tokens": 688
+      },
+      "deep_mono": {
+        "recall@10": 0.9,
+        "all_golds@10": 0.8667,
+        "avg_hops": 1.8,
+        "avg_searches": 16.8,
+        "avg_in_tokens": 2487,
+        "avg_out_tokens": 1011
+      }
+    },
+    "3hop": {
+      "n": 15,
+      "oneshot": {
+        "recall@10": 0.7778,
+        "all_golds@10": 0.5333,
+        "avg_hops": 1.0,
+        "avg_searches": 7.93,
+        "avg_in_tokens": 1702,
+        "avg_out_tokens": 370
+      },
+      "deep_legacy": {
+        "recall@10": 0.7333,
+        "all_golds@10": 0.4,
+        "avg_hops": 1.2,
+        "avg_searches": 3.2,
+        "avg_in_tokens": 1731,
+        "avg_out_tokens": 332
+      },
+      "deep_mono": {
+        "recall@10": 0.8667,
+        "all_golds@10": 0.6,
+        "avg_hops": 1.4,
+        "avg_searches": 12.4,
+        "avg_in_tokens": 1757,
+        "avg_out_tokens": 755
+      }
+    },
+    "4hop": {
+      "n": 15,
+      "oneshot": {
+        "recall@10": 0.7,
+        "all_golds@10": 0.2,
+        "avg_hops": 1.0,
+        "avg_searches": 8.0,
+        "avg_in_tokens": 1590,
+        "avg_out_tokens": 384
+      },
+      "deep_legacy": {
+        "recall@10": 0.6667,
+        "all_golds@10": 0.3333,
+        "avg_hops": 1.4,
+        "avg_searches": 5.4,
+        "avg_in_tokens": 2168,
+        "avg_out_tokens": 565
+      },
+      "deep_mono": {
+        "recall@10": 0.6833,
+        "all_golds@10": 0.2667,
+        "avg_hops": 1.2,
+        "avg_searches": 10.47,
+        "avg_in_tokens": 1349,
+        "avg_out_tokens": 587
+      }
+    }
+  },
+  "su": {
+    "2hop": {
+      "n": 15,
+      "oneshot": {
+        "recall@10": 1.0,
+        "all_golds@10": 1.0,
+        "avg_hops": 1.0,
+        "avg_searches": 8.0,
+        "avg_in_tokens": 1094,
+        "avg_out_tokens": 321
+      },
+      "deep_legacy": {
+        "recall@10": 0.9333,
+        "all_golds@10": 0.8667,
+        "avg_hops": 1.0,
+        "avg_searches": 1.0,
+        "avg_in_tokens": 1372,
+        "avg_out_tokens": 161
+      },
+      "deep_mono": {
+        "recall@10": 0.9333,
+        "all_golds@10": 0.8667,
+        "avg_hops": 1.07,
+        "avg_searches": 9.33,
+        "avg_in_tokens": 1372,
+        "avg_out_tokens": 420
+      }
+    },
+    "3hop": {
+      "n": 15,
+      "oneshot": {
+        "recall@10": 0.8444,
+        "all_golds@10": 0.5333,
+        "avg_hops": 1.0,
+        "avg_searches": 8.0,
+        "avg_in_tokens": 1796,
+        "avg_out_tokens": 341
+      },
+      "deep_legacy": {
+        "recall@10": 0.8,
+        "all_golds@10": 0.4667,
+        "avg_hops": 1.0,
+        "avg_searches": 1.0,
+        "avg_in_tokens": 1373,
+        "avg_out_tokens": 150
+      },
+      "deep_mono": {
+        "recall@10": 0.8444,
+        "all_golds@10": 0.5333,
+        "avg_hops": 1.0,
+        "avg_searches": 8.0,
+        "avg_in_tokens": 954,
+        "avg_out_tokens": 381
+      }
+    },
+    "4hop": {
+      "n": 15,
+      "oneshot": {
+        "recall@10": 0.8,
+        "all_golds@10": 0.4,
+        "avg_hops": 1.0,
+        "avg_searches": 8.0,
+        "avg_in_tokens": 1837,
+        "avg_out_tokens": 361
+      },
+      "deep_legacy": {
+        "recall@10": 0.6,
+        "all_golds@10": 0.2,
+        "avg_hops": 1.0,
+        "avg_searches": 1.0,
+        "avg_in_tokens": 1387,
+        "avg_out_tokens": 167
+      },
+      "deep_mono": {
+        "recall@10": 0.85,
+        "all_golds@10": 0.5333,
+        "avg_hops": 1.0,
+        "avg_searches": 8.0,
+        "avg_in_tokens": 1230,
+        "avg_out_tokens": 401
+      }
+    }
+  }
+}
