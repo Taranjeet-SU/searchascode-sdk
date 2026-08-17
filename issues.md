@@ -1399,3 +1399,93 @@ was not followed. The four cheapest structural changes, in order of defects-prev
 conformance suite (STR-2 → SDK-C2/C3/C6, TEST-3), **(3)** `.pre-commit-config.yaml` with
 `detect-private-key` + `check-added-large-files` (STR-5 → GOV-2), **(4)** a docs link-checker
 (STR-6 → DOC-4/5/6).
+
+---
+
+## 15. Found while executing the fix sweep (branch `fix/audit-sweep`, 2026-08-17)
+
+New defects surfaced *by* the fixes — mostly by the two controls that did not exist before (the
+adapter conformance suite and the CI gates). Logged per the standing routine.
+
+#### 🟥 CI-3 `[C]` The branch could not pass its own CI: ruff and mypy were both failing before any fix
+`CLAUDE.md:62` and `README.md:222` both state the invariant
+`ruff check search_as_code && mypy search_as_code && pytest -q`, and `.github/workflows/ci.yml`
+runs the first two. Measured on **committed** `feat/deep-sac` in a clean `git worktree` (so this
+predates the audit sweep):
+```bash
+git worktree add --detach /tmp/base HEAD && cd /tmp/base
+python3 -m mypy search_as_code        # -> Found 52 errors in 12 files
+python3 -m ruff check search_as_code  # -> Found 37 errors
+```
+So every "keep it green" instruction in the repo was unenforceable, and any PR from this branch
+would have gone red on the first CI run. **FIXED** 2026-08-17 `d27542a` (both to 0; `make check`
+now runs the same set locally).
+
+#### 🟥 ADP-1 `[C]` `FaissStore.upsert` is not idempotent by id — duplicate vectors, drifting `count()`
+`adapters/faiss_store.py:42-52` unconditionally `self.index.add(...)` and extends `self._ids`,
+while the composed `MemoryStore` **replaces** the document. Re-upserting a known id therefore
+appends a *second* vector: `count()` (which reads `index.ntotal`) drifts away from the true
+document count, and the stale vector stays searchable forever. Reproduce:
+`store.upsert([d]); store.upsert([d]); assert store.count() == 1` → fails with 2.
+Found by `tests/test_conformance.py::test_upsert_is_idempotent_on_id[faiss]`, which is the first
+test any of these backends have ever had (TEST-3). **FIXED** 2026-08-17 `e1bd684`.
+
+#### 🟥 ADP-2 `[C]` `delete()` was unimplemented on two shipped backends
+`FaissStore` and `SqliteStore` defined no `delete`, so the call fell through to
+`adapters/base.py:84` and raised `NotImplementedError` — on two backends the README badge and
+`adapters.available()` advertise as shipped. **FIXED** 2026-08-17 `e1bd684`.
+
+#### 🟧 ADP-3 `[C]` Chroma drops `$`-prefixed filter operators — the same fail-open shape as SDK-C2
+`adapters/chroma.py:_to_where` skipped any key starting with `$`, so
+`search(filter={"$or": [...]})` ran **unfiltered** and over-returned. Identical class to SDK-C2 on
+OpenSearch, in a second adapter, and invisible for the same reason: no conformance suite.
+**FIXED** 2026-08-17 `e1bd684` (`$and`/`$or` translated; anything unsupported raises).
+
+#### 🟧 EXP-1 `[C]` `eval_fair.py` swallows every worker exception, so a crashed run looks like an empty one
+`experiments/multi_hop_synth_queries/eval_fair.py` runs the per-query work as
+`list(as_completed([ex.submit(one, r) for r in rows]))` — it never calls `.result()`, so any
+exception inside `one()` is discarded silently. A run that fails on every query produces no
+traceback and no output; I hit exactly this and had to re-run in the foreground to see the error.
+This is LEG-5's shape at the experiment level: measurement cannot distinguish "the arm scored 0"
+from "the arm never ran". Fix: `for fut in as_completed(...): fut.result()`, or collect and report
+the exception count beside the metrics.
+
+#### 🟧 EXP-2 `[A]` The multi-hop "SAC beats tool-calling" quality margin does not survive prompt matching
+Confirms P1-7 and supersedes §4 of `experiments/multi_hop_synth_queries/RESULTS.md`. With one
+`STRATEGY_BRIEF` given verbatim to both LLM arms, and `sac.explore`'s forged primitive supplied to
+**both** as knowledge *and* capability (n=30/hop, `rows[200:230]`, forge-disjoint):
+`sac_explored − tool_explored` = **−0.100 / −0.067 / −0.075** recall@10 at 2/3/4 hops, all within
+noise. The published **+0.06 / +0.08 / +0.13** is not reproduced. Written up as
+[`RESULTS.md` §4b](experiments/multi_hop_synth_queries/RESULTS.md); raw
+`recall_fair_explore5{,_ci,_perquery}.json(l)`.
+**What survives:** the cost axis (1 turn vs ~8–9; ~600 vs ~15,000–19,000 input tokens), and
+explore itself (it lifts SAC +0.083/+0.056/+0.025 and cuts searches 5.3→3.3) — but explore lifts
+the *tool* arm as much or more, so it is a corpus-knowledge win, not a code-mode win.
+
+#### 🟨 EXP-3 `[A]` My own first attempt at the P1-7 fix was wrong — recorded so it is not repeated
+Deleting the worked recipe from `CODE_SYS` made the prompts symmetric but removed the **mechanism**:
+the SDK's documented workflow is explore-first, so single-shot SAC with no strategy measures
+something the SDK never claims. The corrected design seeds *both* harnesses with the forged
+artifact. Noting it because "make the arms equal by taking the good thing away from one of them" is
+a tempting and wrong way to fix an unfair comparison — the fair version gives it to both.
+
+#### 🟨 EXP-4 `[C]` `sac_explored` ≈ dense on this corpus, which the dense-default gate should catch
+`sac_explored − dense` = +0.033 / +0.089 / +0.017 recall@10, all ns. Consistent with the
+`qwen8b_sac` finding that SAC's value is inverse to retriever strength, and with why the
+dense-default gate exists — but the gate lives in the explore pipeline, not in `eval_fair.py`, so
+this comparison does not actually exercise it. Worth running the multi-hop arms *through* the gate.
+
+#### 🟨 GOV-4 `[C]` `.gitignore` listed `phase4/altera_*.py` but 19 `phase4/run_*.sh` wrappers were tracked
+Extends P4-3 with the exact count. `.gitignore` only covered `phase4/run_altera*.sh`, leaving
+`run_call.sh`, `run_claude_code.sh`, `run_dump.sh`, `run_eval_explore.sh`, `run_explore.sh`,
+`run_fit.sh`, `run_hyde.sh` and 12 others tracked, each `source phase4/.secrets`. Untracked in the
+sweep. **FIXED** 2026-08-17 `bf4ed25`; `scripts/check_no_customer_artifacts.py --check-tree` is now
+the enforcing control and is green.
+
+#### 🟨 DOC-10 `[C]` Two public docs linked to files that were untracked, so the links break on clone
+Found by the new `scripts/check_doc_links.py --public`. `README.md` linked to `STRUCTURE.md` and
+`open_problems.md`; `open_problems.md` linked to `experiments/explore_learning/README.md`,
+`primitive_selection/*`, `deep_sac/*.json` and four figures — none of them tracked. Same class as
+DOC-6, five more instances. Resolved by tracking the genuinely-public docs and **de-linking**
+`experiments/browsecomp/RESULTS.md`, which GOV-1 says must not be published (a public doc must not
+link to a file we refuse to publish). **FIXED** 2026-08-17 `bf4ed25`.
