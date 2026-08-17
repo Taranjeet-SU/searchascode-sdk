@@ -98,6 +98,16 @@ class SqliteStore(VectorStore):
     def get(self, ids: Sequence[str]) -> list[Document]:
         return self._mem.get(ids)
 
+    def delete(self, ids: Sequence[str]) -> None:
+        """Delete by id (was unimplemented, so it raised NotImplementedError — ADP-2)."""
+        ids = list(ids)
+        if not ids:
+            return
+        self.db.executemany("DELETE FROM docs WHERE id = ?", [(i,) for i in ids])
+        self.db.commit()
+        self._mem.delete(ids)
+        self._dirty = True
+
     def count(self) -> int:
         return self.db.execute("SELECT COUNT(*) FROM docs").fetchone()[0]
 

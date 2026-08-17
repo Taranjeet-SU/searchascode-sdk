@@ -9,7 +9,7 @@ from __future__ import annotations
 from typing import Any, Optional, Sequence, cast
 
 from .._resilience import DEFAULT_BATCH_SIZE, chunked
-from ..errors import MissingDependencyError
+from ..errors import InvalidFilterError, MissingDependencyError
 from ..filters import normalize
 from ..types import Capabilities, Document, Hit, ResultSet
 from .base import VectorStore
@@ -53,8 +53,25 @@ class ChromaStore(VectorStore):
             return None
         clauses: list[dict[str, Any]] = []
         for field_name, cond in normalize(flt).items():
-            if field_name.startswith("$"):
+            if field_name == "$and":
+                for sub in cond:
+                    w = self._to_where(sub)
+                    if w:
+                        clauses.append(w)
                 continue
+            if field_name == "$or":
+                subs = [w for w in (self._to_where(x) for x in cond) if w]
+                if subs:
+                    clauses.append(cast(dict, {"$or": subs}))
+                continue
+            if field_name.startswith("$"):
+                # Never skip silently: an unsupported operator used to be dropped, so the
+                # query ran UNFILTERED and over-returned — the same fail-open shape as
+                # SDK-C2 on OpenSearch (issues.md ADP-3).
+                raise InvalidFilterError(
+                    "unsupported filter operator for the chroma backend",
+                    op=field_name, backend="chroma",
+                )
             clauses.append({field_name: {_OP_MAP[op]: v for op, v in cond.items() if op in _OP_MAP}})
         if not clauses:
             return None
