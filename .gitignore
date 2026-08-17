@@ -30,3 +30,7 @@ phase4/run_altera*.sh
 pypi.txt
 chatbot/logs/
 chatbot/*.log
+experiments/su_multihop/
+
+# BrowseComp-Plus benchmark — INTERNAL, do not push
+experiments/browsecomp/

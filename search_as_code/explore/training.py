@@ -59,8 +59,15 @@ def _mlp(**p):
     return MLPClassifier(**{"hidden_layer_sizes": (256,), "max_iter": 300, "random_state": 0, **p})
 
 
+def _xgb(**p):
+    from xgboost import XGBClassifier
+    return XGBClassifier(**{"n_estimators": 400, "learning_rate": 0.07, "max_depth": 6,
+                            "subsample": 0.9, "colsample_bytree": 0.9, "tree_method": "hist",
+                            "n_jobs": -1, "random_state": 0, **p})
+
+
 MODEL_REGISTRY = {"hist_gb": _hist_gb, "logreg": _logreg,
-                  "random_forest": _random_forest, "mlp": _mlp}
+                  "random_forest": _random_forest, "mlp": _mlp, "xgb": _xgb}
 
 
 def make_model(spec="hist_gb", **params):
@@ -104,7 +111,7 @@ class RouterDataset:
 
 def build_dataset(explorer, *, n=5000, rephrases=2, k=10, P=25, label_llm=False,
                   label_rerank=False, workers=1, batch_size=256, resume=True,
-                  queries=None, progress_every=1) -> RouterDataset:
+                  queries=None, progress_every=1, all_golds=True) -> RouterDataset:
     """Generate/label queries into an atomic, resumable, sharded dataset on disk."""
     session, pack = explorer.session, explorer.pack
     ddir = pack.root / "dataset"
@@ -143,7 +150,7 @@ def build_dataset(explorer, *, n=5000, rephrases=2, k=10, P=25, label_llm=False,
             golds = item.get("gold_ids") or [item["gold_id"]]     # single or multi (qrels)
             ctx = StrategyContext(session, item["query"], P_pool=P, emb=emb, use_llm=label_llm,
                                   use_rerank=label_rerank, top_k=k, rerank_lock=rr_lock)
-            best, hits = label_via_templates(ctx, set(golds), k=k)
+            best, hits = label_via_templates(ctx, set(golds), k=k, all_golds=all_golds)
             return j, featurize(item["query"], emb).astype(np.float32), best, hits
 
         rows = [None] * len(batch)
@@ -273,6 +280,70 @@ def write_dataset_csv(pack, out_dir=None) -> dict[str, str]:
             w.writerow([t, TEMPLATE_DOCS[t]["tier"], TEMPLATE_COST.get(t), recall,
                         win_count[t], round(win_count[t] / n, 4) if n else 0.0])
     return {"labels": str(lpath), "template_recall": str(tpath), "rows": n}
+
+
+def fewshot_exemplars(pack, per_template: int = 3, max_query_chars: int = 160) -> dict:
+    """Per-winning-template example queries mined from the labeling pass.
+
+    For each labeled query we know the CHEAPEST template that actually retrieved its gold (the
+    winner). Grouping queries by winner yields, per strategy, real *corpus-grounded* examples of
+    the queries that strategy wins on — the empirical answer to "which primitive chain works for
+    queries like this on THIS data." Returns, ordered by how often each strategy wins::
+
+        {template: {"tier","does","differs","n_wins": int, "examples": [query, ...]}}
+
+    Feed to an agent via :func:`format_fewshot_block` so it picks a strategy from evidence rather
+    than a static blanket instruction (a corpus-wide "always decompose" hint measurably hurt — see
+    experiments/multi_hop_synth_queries §11).
+    """
+    from collections import Counter, defaultdict
+
+    from .router import best_from_hits
+    from .templates import TEMPLATE_DOCS
+
+    sdir = pack.root / "dataset" / "shards"
+    groups: dict[str, list[str]] = defaultdict(list)
+    counts: Counter = Counter()
+    for f in sorted(sdir.glob("lab_*.jsonl")):
+        for r in _read_jsonl(f):
+            w = best_from_hits(r.get("hits") or {})
+            if w == "none":
+                continue
+            counts[w] += 1
+            q = (r.get("query") or "").strip()
+            if q and len(groups[w]) < per_template * 6:      # keep a small pool to pick from
+                groups[w].append(q)
+
+    out: dict[str, dict] = {}
+    for t, qs in groups.items():
+        seen, picked = set(), []
+        for q in sorted(qs, key=len):                        # shorter, distinct = more readable exemplars
+            key = q.lower()
+            if key in seen:
+                continue
+            seen.add(key)
+            picked.append(q[:max_query_chars])
+            if len(picked) >= per_template:
+                break
+        d = TEMPLATE_DOCS.get(t, {})
+        out[t] = {"tier": d.get("tier", ""), "does": d.get("does", ""),
+                  "differs": d.get("differs", ""), "n_wins": counts[t], "examples": picked}
+    return dict(sorted(out.items(), key=lambda kv: -kv[1]["n_wins"]))
+
+
+def format_fewshot_block(exemplars: dict, max_templates: int = 8) -> str:
+    """Render :func:`fewshot_exemplars` as a prompt block an agent reads to pick a strategy."""
+    if not exemplars:
+        return ""
+    lines = ["Learned strategy exemplars for THIS corpus (an `explore` labeling pass recorded which "
+             "primitive chain actually retrieved the gold for queries like these). Match the "
+             "incoming query to the closest exemplars to pick your first strategy:"]
+    for t, d in list(exemplars.items())[:max_templates]:
+        ex = "; ".join(f'"{q}"' for q in d["examples"]) or "(no example)"
+        lines.append(f"- {t} — {d['does']} (wins {d['n_wins']}x). e.g. {ex}")
+    lines.append("If the query matches no exemplar well, start cheap (dense/hybrid) and deepen only "
+                 "if the result looks weak — do NOT fan out blindly.")
+    return "\n".join(lines)
 
 
 def _tok(s: str) -> set:

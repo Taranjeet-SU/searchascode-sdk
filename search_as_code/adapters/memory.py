@@ -137,6 +137,8 @@ class MemoryStore(VectorStore):
         return len(self._docs)
 
     def sample(self, n: int = 5) -> list[Document]:
+        # deterministic (first-n) so corpus_fingerprint / resume stay stable; the OpenSearch
+        # adapter samples randomly server-side, and the qrels path uses real pairs directly.
         return list(self._docs.values())[:n]
 
     def describe_schema(self) -> dict:

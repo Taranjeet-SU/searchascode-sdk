@@ -5,6 +5,7 @@ cross-session memory + dynamic prompt + subagents + pluggable reward. See ``harn
 """
 from __future__ import annotations
 
+from .agentic import agentic_solve
 from .context import HarnessContext, HarnessResult, StepResult
 from .diagnostic_judge import DIAGNOSTIC_PROMPT, DiagnosticJudge, coverage_signals, parse_verdict
 from .forge import CodePrimitive, HarnessForge, HarnessStore, LearnedSkill, LearnedSubagent, reflect
@@ -28,6 +29,6 @@ __all__ = [
     "DEFAULT_PRE_HOOKS", "DEFAULT_POST_HOOKS",
     "HarnessForge", "HarnessStore", "LearnedSkill", "LearnedSubagent", "CodePrimitive", "reflect",
     "DiagnosticJudge", "DIAGNOSTIC_PROMPT", "coverage_signals", "parse_verdict",
-    "diagnostic_solve", "apply_technique", "sf_arsenal",
+    "agentic_solve", "diagnostic_solve", "apply_technique", "sf_arsenal",
     "SkillLookup", "CATALOG", "catalog_summary", "author_os_query",
 ]
