@@ -6,26 +6,59 @@ using calibrated signals, and for each still-missing sub-fact it **diagnoses why
 next technique** — which the next hop executes. The winning OpenSearch queries the loop discovers are then
 **forged into reusable primitives / skills / subagents**.
 
-## 1. The judge mimics the gold oracle — and it's at the signal ceiling
+## 1. The judge tracks the gold oracle — but the "ceiling" claim is weaker than first reported
+
+> **Corrected 2026-08-17.** The original version of this section reported point estimates with no
+> intervals, and its selection procedure tie-broke on the test split. Re-derived by
+> [`reselect_judge.py`](reselect_judge.py) (selection on TUNE only, ties broken by earliest round,
+> bootstrap 95% CIs from `search_as_code.metrics`) → [`judge_reanalysis.json`](judge_reanalysis.json).
+> The audit entries are `issues.md` DJ-1 / DJ-2 / DJ-3. **No new API calls** — pure re-analysis of the
+> same tuning logs.
 
 Frozen eval set: 100 multi-hop HotpotQA queries × {shallow top-5 hybrid, deep arsenal top-10} = 200
 examples, oracle-labelled (`oracle = all gold ids ⊆ candidate set`), 106 PASS / 94 FAIL. We measure the
 judge's PASS/FAIL agreement with the oracle (balanced accuracy on a held-out 100).
 
-| judge / bound | held-out balanced-acc | false-accept |
+| judge / bound | held-out balanced-acc **[95% CI]** | tuned? |
 |---|---|---|
-| **Supervised ceiling** (LogReg, 5-fold CV, cross-encoder feature) | **0.725** | — |
-| LLM judge v0 — bi-encoder cosine signal (saturated) | 0.585 → ~0.68 | 0.34 |
-| LLM judge — **+ cross-encoder coverage signal** (v1) | 0.70 | 0.30 |
-| LLM judge — v1 + **same-model critic** tuning | **0.721** | 0.255 |
-| LLM judge — v1 + **independent Qwen-32B critic** | 0.70 | 0.298 |
+| **Supervised ceiling** (LogReg, 5-fold CV, cross-encoder feature) | **0.725** *(no CI reported)* | — |
+| LLM judge v0 — bi-encoder cosine signal (saturated) | 0.585 [0.490, 0.685] | **no — round 0** |
+| LLM judge — **+ cross-encoder coverage signal** (v1) | 0.700 [0.610, 0.791] | — |
+| LLM judge — v1 + **same-model critic** tuning | **0.721 [0.633, 0.811]** | yes (round 7) |
+| LLM judge — v1 + **independent Qwen-32B critic** | 0.700 [0.610, 0.791] | **no — round 0** |
+
+**What the intervals change (all three are honest corrections against ourselves):**
+
+- **The tuning gain is not distinguishable from noise (DJ-2).** Same-model critic tuning moves TEST
+  balanced accuracy by **+0.020 [−0.110, +0.150]** over the untuned prompt. On TUNE the adopted gain was
+  +0.011 — *a single example flipping* (tn 36→37, fp 11→10), which is what cleared the code's own 0.01
+  "don't chase eval noise" margin. At n=100 and p≈0.72 the interval is ±0.09, several times the effect.
+  The earlier "0.63 → 0.72" phrasing is not supported.
+- **Two of the five rows are the UNTUNED prompt (DJ-3).** Both `tuning_log_same.md` and
+  `tuning_log_ce_qwen.md` record `## Best (round 0)`. So the "independent Qwen-32B critic → 0.70" row is
+  the *baseline*, not a tuned outcome, and the honest statement is stronger and different: **the
+  independent critic produced no adopted improvement at all.** Likewise the v0 row's "0.585 → ~0.68"
+  had no log entry for the 0.68; it is 0.585.
+- **The selection defect is real but did not change this pick (DJ-1).** `tune_judge.py:146-150` tie-breaks
+  on TEST, which contradicts its own stated intent. Re-selecting on TUNE alone still yields round 7 here,
+  so the 0.721 figure survives — but it was not *arrived at* honestly, and the code must be fixed before
+  the next run, where it may well bite.
+- **"0.72 is the ceiling" is therefore an over-claim as stated.** The LLM judge's CI [0.633, 0.811]
+  overlaps the supervised bound (0.725) so heavily that "the judge is AT the signal ceiling" is not
+  testable at n=100 — it is consistent with the data, not demonstrated by it. Distinguishing a 0.02
+  difference at 95% confidence needs roughly n≈2,000, not 100. The *qualitative* finding — the
+  bi-encoder cosine is saturated and the cross-encoder signal is what moves the judge — survives, and
+  that is the part the deep-SAC line actually rests on.
 
 Findings, honestly:
 - The bi-encoder cosine is **saturated** (PASS min-sim 0.86 vs FAIL 0.81) — the judge can't separate
   covered from missing, and no critic fixes it. Adding a **cross-encoder** per-sub-fact score (PASS +1.5
-  vs FAIL −4.0, a 5.5-pt gap) is what moves the judge from 0.63 → 0.72.
-- 0.72 **is the ceiling**: a supervised model on the same signals tops out there, because snippet-level
-  relevance can't verify whether the *exact* gold doc (vs a near-identical HotpotQA distractor) is present.
+  vs FAIL −4.0, a 5.5-pt gap) is what moves the judge from 0.585 to ~0.70 (a gap that IS larger than the interval, unlike the
+  critic-tuning step above).
+- 0.72 is *consistent with* a signal ceiling: a supervised model on the same signals tops out around
+  there, plausibly because snippet-level relevance can't verify whether the *exact* gold doc (vs a
+  near-identical HotpotQA distractor) is present. **Stated as a proven ceiling this was an over-claim** —
+  see the CI discussion above (DJ-2).
 - **The critic was never the bottleneck.** Same-model self-critique reaches 0.721; an independent
   **Qwen-32B** critic reaches 0.70 — neither beats the signal ceiling. (gpt-4.1/4o are 403 on this project,
   so the independent critic had to be local; Qwen-32B ran 4-bit on the shared GPU.)

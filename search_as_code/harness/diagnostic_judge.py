@@ -15,7 +15,11 @@ from __future__ import annotations
 
 import re
 
-# Tuned default (round-7 critic revision; held-out balanced-acc 0.721). Calibrated ce thresholds.
+# Tuned default (round-7 critic revision). Held-out balanced accuracy 0.721 [0.633, 0.811] at
+# n=100 — the interval matters: the gain over the UNTUNED prompt is +0.020 [-0.110, +0.150], i.e.
+# not distinguishable from noise, and the "0.72 is the signal ceiling" claim this figure was used
+# to support is consistent with the data rather than demonstrated by it. See issues.md DJ-1/2/3
+# and experiments/deep_judge/judge_reanalysis.json. Calibrated ce thresholds.
 DIAGNOSTIC_PROMPT = """You are the STOP/CONTINUE controller for a MULTI-HOP retrieval agent. A multi-hop \
 question requires SEVERAL distinct documents—one per sub-fact. Your task is to decide whether the CURRENT \
 result set already contains a sufficiently strong document for EVERY sub-fact (VERDICT = PASS, stop) or \
