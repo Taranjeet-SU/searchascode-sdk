@@ -7,6 +7,7 @@ retrieve-then-rerank primitive — and plugs straight into ``Session(reranker=..
 
 from __future__ import annotations
 
+import threading
 from typing import Any, Sequence
 
 
@@ -20,14 +21,21 @@ class CrossEncoderReranker:
         self.model_name = model
         self._device = device
         self._model = None
+        self._lock = threading.Lock()
 
     def _ensure(self):
+        # Double-checked locking: agentic_solve / run_explore_pipeline share one reranker
+        # across 8 worker threads, and a plain check-then-load let N threads each load their
+        # own copy of the model onto the GPU — a plausible root cause of the CHANGELOG's
+        # standing "Qwen reranker OOMs with >2 workers" gotcha (SDK-C7).
         if self._model is None:
-            import torch
-            from sentence_transformers import CrossEncoder
+            with self._lock:
+                if self._model is None:
+                    import torch
+                    from sentence_transformers import CrossEncoder
 
-            device = self._device or ("cuda" if torch.cuda.is_available() else "cpu")
-            self._model = CrossEncoder(self.model_name, device=device)
+                    device = self._device or ("cuda" if torch.cuda.is_available() else "cpu")
+                    self._model = CrossEncoder(self.model_name, device=device)
         return self._model
 
     def __call__(self, query: str, texts: Sequence[str]) -> list[float]:
@@ -57,21 +65,32 @@ class QwenReranker:
         self.max_length = max_length
         self.instruction = instruction
         self._model: Any = None
+        self._lock = threading.Lock()
+        # Declared up front so attribute access before the first call raises a clear
+        # AttributeError-free None rather than an opaque one (SDK-C14).
+        self.tok: Any = None
+        self.dev: str | None = None
+        self.tid_yes: Any = None
+        self.tid_no: Any = None
 
     def _ensure(self):
+        # Double-checked locking — see CrossEncoderReranker._ensure (SDK-C7).
         if self._model is None:
-            import torch
-            from transformers import AutoModelForCausalLM, AutoTokenizer
+            with self._lock:
+                if self._model is None:
+                    import torch
+                    from transformers import AutoModelForCausalLM, AutoTokenizer
 
-            dev = self._device or ("cuda" if torch.cuda.is_available() else "cpu")
-            self.tok = AutoTokenizer.from_pretrained(self.model_name, padding_side="left")
-            self._model = AutoModelForCausalLM.from_pretrained(
-                self.model_name,
-                torch_dtype=torch.float16 if dev == "cuda" else torch.float32,
-            ).to(dev).eval()  # type: ignore[arg-type]
-            self.dev = dev
-            self.tid_yes = self.tok.convert_tokens_to_ids("yes")
-            self.tid_no = self.tok.convert_tokens_to_ids("no")
+                    dev = self._device or ("cuda" if torch.cuda.is_available() else "cpu")
+                    self.tok = AutoTokenizer.from_pretrained(self.model_name, padding_side="left")
+                    model = AutoModelForCausalLM.from_pretrained(
+                        self.model_name,
+                        torch_dtype=torch.float16 if dev == "cuda" else torch.float32,
+                    ).to(dev).eval()  # type: ignore[arg-type]
+                    self.dev = dev
+                    self.tid_yes = self.tok.convert_tokens_to_ids("yes")
+                    self.tid_no = self.tok.convert_tokens_to_ids("no")
+                    self._model = model      # publish last: readers see a fully-built object
         return self._model
 
     def __call__(self, query: str, texts: Sequence[str], batch_size: int = 16) -> list[float]:

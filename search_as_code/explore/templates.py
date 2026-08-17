@@ -122,7 +122,10 @@ class StrategyContext:
         def _go():
             out = ResultSet()
             for c in extract_codes(self.q):
-                out = P.fuse([out, self.s.search(re.escape(c), self.P, mode="regex")])
+                # Wrap with .* — OpenSearch `regexp` anchors to the WHOLE field value, so a
+                # bare escaped code never matched and the regex pool was always empty,
+                # silently weakening exact_partnum / confidence_gated_exact (SDK-C6).
+                out = P.fuse([out, self.s.search(f".*{re.escape(c)}.*", self.P, mode="regex")])
             return out
         return self._memo("regex", _go)
 

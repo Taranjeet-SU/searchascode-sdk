@@ -371,9 +371,21 @@ def classify_failure(session, item, k=50, sem_lo=0.45, lex_lo=0.08,
     qv = qv / (np.linalg.norm(qv) + 1e-9)
     qtok = _tok(q)
     best_sem, best_lex = 0.0, 0.0
-    for d in session.store.get(list(golds)):
-        if getattr(d, "vector", None) is not None:
-            gv = np.asarray(d.vector, dtype=np.float32)
+    fetched = list(session.store.get(list(golds)))
+    # Re-embed the gold TEXT rather than reading d.vector: every network adapter strips the
+    # vector field from _source before building the Document, so d.vector was always None on
+    # OpenSearch, best_sem was always 0.0, and the 4-way taxonomy could only ever emit
+    # low_similarity / synonym_metadata — mislabelling every OpenSearch query (SDK-C5).
+    # duplication_scan already re-embeds; this makes the two consistent.
+    need_embed = [d for d in fetched if getattr(d, "vector", None) is None and d.text]
+    embedded = {}
+    if need_embed:
+        vecs = session.embedder.embed([d.text or "" for d in need_embed])
+        embedded = {d.id: v for d, v in zip(need_embed, vecs)}
+    for d in fetched:
+        gvec = getattr(d, "vector", None) or embedded.get(d.id)
+        if gvec is not None:
+            gv = np.asarray(gvec, dtype=np.float32)
             best_sem = max(best_sem, float(qv @ (gv / (np.linalg.norm(gv) + 1e-9))))
         if d.text:
             gt = _tok(d.text)

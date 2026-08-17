@@ -19,7 +19,7 @@ def _corpus():
 
 
 def _session():
-    s = sac.Session("memory", dim=32)
+    s = sac.Session("memory", dim=32, embedder=sac.HashEmbedder(dim=32))
     s.add(_corpus())
     return s
 
@@ -83,7 +83,7 @@ def test_llm_profile_uses_generator(tmp_path):
         return ["Curated FPGA fact-cards + prose. Entities: device, transceivers. "
                 "Use keyword/regex for part-numbers, dense for prose."]
 
-    s = sac.Session("memory", dim=32, generator=gen)
+    s = sac.Session("memory", dim=32, generator=gen, embedder=sac.HashEmbedder(dim=32))
     s.add(_corpus())
     pack = explore(s, out=str(tmp_path / "pack"), config={"llm": True})
     prof = pack.read_json("content_profile.json")
@@ -104,7 +104,7 @@ def test_synthesize_and_validate(tmp_path):
             ])]
         return ["Mixed FPGA corpus; use keyword for part numbers, dense for prose."]
 
-    s = sac.Session("memory", dim=32, generator=gen)
+    s = sac.Session("memory", dim=32, generator=gen, embedder=sac.HashEmbedder(dim=32))
     s.add(_corpus())
     pack = explore(s, out=str(tmp_path / "pack"),
                    config={"llm": True, "synth_docs": 5, "synth_per_doc": 3})
@@ -131,7 +131,7 @@ def test_templates_and_router_fit(tmp_path):
     assert {"light_hybrid", "rephrase_rerank", "deep_hyde_decompose",
             "score_guarded", "escalating"} <= set(TEMPLATE_NAMES)
 
-    s = sac.Session("memory", dim=32)
+    s = sac.Session("memory", dim=32, embedder=sac.HashEmbedder(dim=32))
     s.add(_corpus())
     ex = explore(s, out=str(tmp_path / "pack"))
 
@@ -167,7 +167,7 @@ def pack_has(explorer, name):
 
 
 def test_training_dataset_setmodel_train(tmp_path):
-    s = sac.Session("memory", dim=32)
+    s = sac.Session("memory", dim=32, embedder=sac.HashEmbedder(dim=32))
     s.add(_corpus())
     ex = explore(s, out=str(tmp_path / "pack"))
 
@@ -248,7 +248,7 @@ def test_generate_multihop(tmp_path):
         return [_json.dumps({"question": "which alpha relates to which beta?",
                              "facts": ["fact a", "fact b"]})]
 
-    s = sac.Session("memory", dim=32, generator=gen)
+    s = sac.Session("memory", dim=32, generator=gen, embedder=sac.HashEmbedder(dim=32))
     # docs that share keywords so keyword-neighbors form chains
     s.add([{"id": f"d{i}", "text": f"alpha beta gamma topic {i} shared keywords device fpga"}
            for i in range(30)])

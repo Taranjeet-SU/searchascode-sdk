@@ -143,3 +143,63 @@ def test_facet_and_count_distinct(session):
 def test_stats(session):
     st = session.store.stats("year")
     assert st["min"] == 2023 and st["max"] == 2024 and st["count"] == 3
+
+
+# --------------------------------------------------------------------------- #
+# Audit fixes verified against a live cluster (issues.md SDK-C2 / C3 / C4)      #
+# --------------------------------------------------------------------------- #
+def test_eq_filter_on_string_metadata_matches(session):
+    """SDK-C3: `term` on a dynamically-mapped string field is analyzed-vs-keyword and
+    matched nothing, so $eq on string metadata failed CLOSED (zero hits, no error)."""
+    s = session
+    # A multi-word, capitalised value: the standard analyzer lowercases and splits it, so a
+    # `term` query on the bare (text) field can never match it. A single lowercase token like
+    # "hardware" round-trips unchanged and would pass even against the unfixed adapter.
+    s.add([{"id": "sc1", "text": "alpha doc", "metadata": {"category": "Network Hardware"}},
+           {"id": "sc2", "text": "beta doc", "metadata": {"category": "System Software"}}])
+    s.store.client.indices.refresh(index=INDEX)
+    hits = s.search("doc", top_k=10, mode="keyword", filter={"category": "Network Hardware"})
+    ids = [h.id for h in hits]
+    assert "sc1" in ids, "string $eq filter returned nothing (SDK-C3 regression)"
+    assert "sc2" not in ids, "filter did not exclude the non-matching document"
+
+
+def test_or_filter_is_translated_not_silently_dropped(session):
+    """SDK-C2: $and/$or/$not were skipped, so the search ran UNFILTERED and returned more
+    results than requested, while filters.validate() accepted the operator."""
+    s = session
+    s.add([{"id": "or1", "text": "gamma doc", "metadata": {"category": "hardware"}},
+           {"id": "or2", "text": "gamma doc", "metadata": {"category": "software"}},
+           {"id": "or3", "text": "gamma doc", "metadata": {"category": "firmware"}}])
+    s.store.client.indices.refresh(index=INDEX)
+    hits = s.search("gamma", top_k=10, mode="keyword",
+                    filter={"$or": [{"category": "hardware"}, {"category": "software"}]})
+    ids = set(h.id for h in hits)
+    assert {"or1", "or2"} <= ids
+    assert "or3" not in ids, "$or filter was ignored — the query ran unfiltered (SDK-C2)"
+
+
+def test_unsupported_filter_operator_raises_instead_of_running_unfiltered(session):
+    from search_as_code.errors import InvalidFilterError
+    with pytest.raises(InvalidFilterError):
+        session.store._to_filter({"$nor": [{"category": "hardware"}]})
+
+
+def test_sample_is_reproducible_so_the_corpus_fingerprint_is_stable(session):
+    """SDK-C4: an unseeded random_score made corpus_fingerprint differ on every call, so
+    fingerprint_changed() was always True and explore re-ran every stage every run."""
+    from search_as_code.explore.engine import corpus_fingerprint
+    s = session
+    s.add([{"id": f"fp{i}", "text": f"fingerprint document number {i}"} for i in range(30)])
+    s.store.client.indices.refresh(index=INDEX)
+    first = [d.id for d in s.store.sample(8)]
+    second = [d.id for d in s.store.sample(8)]
+    assert first == second, "sample() is not reproducible — resume/drift detection is broken"
+    assert corpus_fingerprint(s.store) == corpus_fingerprint(s.store)
+
+
+def test_ensure_index_refuses_a_conflicting_dimension(session):
+    from search_as_code.errors import DimensionMismatchError
+    store = session.store
+    with pytest.raises(DimensionMismatchError):
+        store.ensure_index(store.dim + 7)
