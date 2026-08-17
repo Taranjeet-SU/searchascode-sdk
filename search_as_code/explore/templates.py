@@ -62,12 +62,19 @@ class StrategyContext:
         self.top_k = top_k
         self._c: dict = {}
         self._rr_lock = rerank_lock            # serialize GPU reranker across worker threads
+        self.degraded: dict = {}               # {"<pool>:<ExcType>": n} — see _memo (LEG-5)
 
     def _memo(self, key, fn) -> ResultSet:
         if key not in self._c:
             try:
                 self._c[key] = fn() or ResultSet()
-            except Exception:
+            except Exception as e:
+                # Keep the fallback, but COUNT it. A crashing template used to be recorded
+                # as "did not solve", so labeling could not distinguish "this strategy lost"
+                # from "this strategy errored" — which is how SDK-C5/C6 stayed invisible
+                # (LEG-5). ``ctx.degraded`` is surfaced in the labeling metadata.
+                self.degraded[f"{key}:{type(e).__name__}"] = \
+                    self.degraded.get(f"{key}:{type(e).__name__}", 0) + 1
                 self._c[key] = ResultSet()
         return self._c[key]
 

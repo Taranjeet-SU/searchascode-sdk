@@ -12,6 +12,7 @@ cosine if an embedder is given, else lexical overlap.
 from __future__ import annotations
 
 import json
+import threading
 import time
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -42,12 +43,19 @@ def _as_embed(embedder) -> Optional[Callable]:
 class AgentMemory:
     """In-session working memory + cross-session long-term memory with semantic recall."""
 
-    def __init__(self, path: Optional[str] = None, embedder=None, working_cap: int = 50):
+    def __init__(self, path: Optional[str] = None, embedder=None, working_cap: int = 50,
+                 longterm_cap: int = 2000):
         self.path = Path(path) if path else None
         self._embed = _as_embed(embedder)
         self.working: list[MemoryItem] = []
         self.longterm: list[MemoryItem] = []
         self.working_cap = working_cap
+        # Long-term memory used to grow without bound (SDK-C8). Oldest items are dropped
+        # past the cap; set longterm_cap=0 to disable.
+        self.longterm_cap = longterm_cap
+        # remember() is called from the 8 worker threads of agentic_solve /
+        # run_explore_pipeline, whose comment already claimed this object was thread-safe.
+        self._lock = threading.RLock()
         if self.path and self.path.exists():
             self.load()
 
@@ -71,17 +79,43 @@ class AgentMemory:
 
     # ---- cross-session (long-term) -----------------------------------------
     def remember(self, content: str, kind: str = "fact", **meta) -> MemoryItem:
-        """Persist a durable fact/experience to long-term memory (embedded if possible)."""
+        """Persist a durable fact/experience to long-term memory (embedded if possible).
+
+        Appends one line to the file instead of rewriting all of it. ``save()`` used to
+        truncate and re-serialise every item on every call — O(n^2) I/O over a run — with no
+        lock, despite the call sites describing the shared instance as thread-safe (SDK-C8).
+        """
         item = MemoryItem(content=content, kind=kind, meta=meta)
         if self._embed:
             try:
                 item.vec = list(np.asarray(self._embed([content])[0], dtype=np.float32))
             except Exception:
                 item.vec = None
-        self.longterm.append(item)
-        if self.path:
-            self.save()
+        with self._lock:
+            # Dedup: the same fact re-learned should not accumulate copies.
+            if any(m.content == content and m.kind == kind for m in self.longterm):
+                return item
+            self.longterm.append(item)
+            over_cap = self.longterm_cap and len(self.longterm) > self.longterm_cap
+            if over_cap:
+                self.longterm = self.longterm[-self.longterm_cap:]
+            if self.path:
+                if over_cap:
+                    self.save()            # compaction needs a full rewrite
+                else:
+                    self._append(item)     # O(1) — the common path
         return item
+
+    def _append(self, item: "MemoryItem") -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        with self.path.open("a") as f:
+            f.write(json.dumps(self._as_row(item)) + "\n")
+
+    @staticmethod
+    def _as_row(m: "MemoryItem") -> dict:
+        d = asdict(m)
+        d["vec"] = list(map(float, m.vec)) if m.vec is not None else None
+        return d
 
     def recall(self, query: str, k: int = 5, kind: Optional[str] = None) -> list[MemoryItem]:
         """Recall the k most relevant long-term items for a query (semantic, else lexical)."""
@@ -120,11 +154,10 @@ class AgentMemory:
         if not self.path:
             return
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        with self.path.open("w") as f:
-            for m in self.longterm:
-                d = asdict(m)
-                d["vec"] = list(map(float, m.vec)) if m.vec is not None else None
-                f.write(json.dumps(d) + "\n")
+        with self._lock:
+            with self.path.open("w") as f:
+                for m in self.longterm:
+                    f.write(json.dumps(self._as_row(m)) + "\n")
 
     def load(self) -> None:
         self.longterm = []

@@ -153,7 +153,18 @@ def test_templates_and_router_fit(tmp_path):
     assert m["n"] == len(labeled)
     assert 0.0 <= m["oracle_coverage"] <= 1.0
     assert m["n_templates"] == 16
-    assert set(m["template_hit_rate@k"]) == set(TEMPLATE_NAMES)
+    # SDK-A1: with label_llm=False / label_rerank=False most templates would degrade to a
+    # duplicate of light_dense / light_hybrid, so they are reported as NOT EVALUATED rather
+    # than scored (which used to hand light_dense every tie on cost, by construction).
+    from search_as_code.explore.templates import available_templates
+    usable = set(available_templates(use_llm=False, use_rerank=False))
+    unusable = set(TEMPLATE_NAMES) - usable
+    assert usable < set(TEMPLATE_NAMES), "labeling without an LLM/reranker is not the full space"
+    # evaluated is a subset of available (cascade stops at the first solving cost group)…
+    assert set(m["template_hit_rate@k"]) <= usable
+    # …and no degenerate template is ever scored, nor counted as a miss.
+    assert not (set(m["template_hit_rate@k"]) & unusable)
+    assert unusable <= set(m["templates_not_evaluated"])
     assert pack_has(ex, "router_meta.json")
     if m.get("cv_accuracy") is not None:
         assert 0.0 <= m["cv_accuracy"] <= 1.0

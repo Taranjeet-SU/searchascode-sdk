@@ -104,6 +104,8 @@ class RouterDataset:
     y: list
     queries: list
     meta: dict = field(default_factory=dict)
+    rows: list = field(default_factory=list)   # the full label rows (incl. per-template hits),
+                                               # so realized_recall() needs no retrieval re-run
 
     def __len__(self):
         return len(self.y)
@@ -151,25 +153,30 @@ def build_dataset(explorer, *, n=5000, rephrases=2, k=10, P=25, label_llm=False,
             ctx = StrategyContext(session, item["query"], P_pool=P, emb=emb, use_llm=label_llm,
                                   use_rerank=label_rerank, top_k=k, rerank_lock=rr_lock)
             best, hits = label_via_templates(ctx, set(golds), k=k, all_golds=all_golds)
-            return j, featurize(item["query"], emb).astype(np.float32), best, hits
+            # carry the per-query fallback counts so a degraded run is visible in the
+            # dataset instead of looking like a legitimate miss (LEG-5)
+            return (j, featurize(item["query"], emb).astype(np.float32), best, hits,
+                    dict(ctx.degraded))
 
         rows = [None] * len(batch)
         if workers > 1:
             with ThreadPoolExecutor(max_workers=workers) as ex:
                 for fut in as_completed([ex.submit(_label, j) for j in range(len(batch))]):
-                    j, feat, best, hits = fut.result()
-                    rows[j] = (feat, best, hits)
+                    j, feat, best, hits, degraded = fut.result()
+                    rows[j] = (feat, best, hits, degraded)
         else:
             for j in range(len(batch)):
-                _, feat, best, hits = _label(j)
-                rows[j] = (feat, best, hits)
+                _, feat, best, hits, degraded = _label(j)
+                rows[j] = (feat, best, hits, degraded)
 
         feats = np.stack([r[0] for r in rows])
         labs = [{"query": batch[j]["query"],
                  "gold_id": (batch[j].get("gold_ids") or [batch[j].get("gold_id")])[0],
                  "gold_ids": batch[j].get("gold_ids") or [batch[j]["gold_id"]],
                  "dataset": batch[j].get("dataset", ""),
-                 "best": rows[j][1], "hits": rows[j][2]} for j in range(len(batch))]
+                 "best": rows[j][1], "hits": rows[j][2],
+                 **({"degraded": rows[j][3]} if rows[j][3] else {})}
+                for j in range(len(batch))]
         _atomic_write_bytes(sdir / f"feat_{bi:05d}.npy", lambda f: np.save(f, feats))
         _atomic_write_text(sdir / f"lab_{bi:05d}.jsonl",
                            "\n".join(json.dumps(x) for x in labs) + "\n")
@@ -220,8 +227,14 @@ def load_dataset(pack) -> RouterDataset:
     # policy (cheapest template that solves) — decoupled from the expensive labeling pass.
     y = [best_from_hits(r.get("hits") or {}) for r in labs]
     any_hit = Counter()
+    degraded_reasons: Counter = Counter()
+    n_degraded = 0
     n_evaluated: Counter = Counter()      # unavailable templates (hits[t] is None) are not misses
     for r in labs:
+        d = r.get("degraded") or {}
+        if d:
+            n_degraded += 1
+            degraded_reasons.update(d)
         for t, h in (r.get("hits") or {}).items():
             if h is None:                 # not evaluated under these capabilities (SDK-A1)
                 continue
@@ -232,8 +245,17 @@ def load_dataset(pack) -> RouterDataset:
             "oracle_coverage": round(solved / len(y), 4) if y else 0.0,
             "n_templates": len(TEMPLATE_NAMES),
             "label_distribution": dict(Counter(lab for lab in y if lab != "none")),
-            "template_hit_rate@k": {t: round(any_hit[t] / len(y), 4) for t in TEMPLATE_NAMES} if y else {}}
-    return RouterDataset(X=X, y=y, queries=[r["query"] for r in labs], meta=meta)
+            # Rate over the queries where the template was actually EVALUATED — dividing by
+            # len(y) counted an unavailable template as missing every query (SDK-A1).
+            "template_hit_rate@k": {t: round(any_hit[t] / n_evaluated[t], 4)
+                                    for t in TEMPLATE_NAMES if n_evaluated.get(t)},
+            "templates_not_evaluated": [t for t in TEMPLATE_NAMES if not n_evaluated.get(t)],
+            # LEG-5: fallbacks are counted, not silent. A non-trivial rate means the numbers
+            # below are measuring crashes, not strategy quality.
+            "degraded_queries": n_degraded,
+            "degraded_frac": round(n_degraded / len(y), 4) if y else 0.0,
+            "degraded_reasons": dict(degraded_reasons.most_common(10))}
+    return RouterDataset(X=X, y=y, queries=[r["query"] for r in labs], meta=meta, rows=labs)
 
 
 def unsolved(pack) -> list[dict]:
@@ -513,8 +535,61 @@ def train_router_model(dataset: RouterDataset, model_spec="hist_gb", cv=5, **mod
                "train_accuracy": float((model.predict(Xs) == ys).mean()),
                "best_single_template_acc": round(best_single, 4),
                "router_lift_over_fixed": (round(cv_acc - best_single, 4) if cv_acc else None),
-               "solved_label_distribution": dict(per)}
+               "solved_label_distribution": dict(per),
+               # See realized_recall(): cv_accuracy is a CLASSIFICATION metric and
+               # open_problems.md #3 documents it as a misleading one for routing.
+               "primary_metric": "realized_recall (call explore.realized_recall(); "
+                                 "cv_accuracy is diagnostic only)"}
+    rr = realized_recall(dataset, model)
+    if rr:
+        metrics["realized_recall"] = rr
     return model, metrics
+
+
+def realized_recall(dataset: RouterDataset, model, k: int | None = None) -> dict:
+    """The metric the repo's own correction demands, computed in the SDK (SDK-A2).
+
+    ``open_problems.md`` #3 states that CV classification accuracy is a misleading routing
+    metric — it penalises a correct-but-not-cheapest pick — and that "all headline numbers now
+    use the realized task metric". But the shipped trainer still returned ``cv_accuracy`` /
+    ``router_lift_over_fixed`` as its headline and there was **no realized-recall evaluator
+    anywhere in the SDK**; the correction lived only in the experiment write-ups.
+
+    This computes, from the stored per-template hits (no retrieval re-run):
+
+    ``routed``      fraction of queries solved by the template the ROUTER picks
+    ``always_<t>``  fraction solved by each always-one-template baseline
+    ``best_fixed``  the strongest of those baselines — what routing must beat
+    ``oracle``      fraction solved by *any* available template (the ceiling)
+    ``lift``        routed - best_fixed, the number that actually matters
+    """
+    hits_rows = [r.get("hits") or {} for r in dataset.rows]
+    if not hits_rows or model is None:
+        return {}
+    try:
+        preds = model.predict(dataset.X)
+    except Exception:
+        return {}
+
+    def _solved(row: dict, template: str) -> int:
+        return 1 if row.get(template) else 0
+
+    n = len(hits_rows)
+    routed = sum(_solved(row, str(p)) for row, p in zip(hits_rows, preds)) / n
+    names = [t for t in TEMPLATE_NAMES if any(r.get(t) is not None for r in hits_rows)]
+    always = {t: sum(_solved(r, t) for r in hits_rows) / n for t in names}
+    best_fixed_t = max(always, key=lambda t: always[t]) if always else None
+    best_fixed = always.get(best_fixed_t, 0.0) if best_fixed_t else 0.0
+    oracle = sum(1 for r in hits_rows if any(r.get(t) for t in names)) / n
+    return {"n": n, "k": k,
+            "routed": round(routed, 4),
+            "best_fixed_template": best_fixed_t,
+            "best_fixed": round(best_fixed, 4),
+            "lift_over_best_fixed": round(routed - best_fixed, 4),
+            "oracle": round(oracle, 4),
+            "headroom_captured": (round((routed - best_fixed) / (oracle - best_fixed), 4)
+                                  if oracle > best_fixed else None),
+            "always": {t: round(v, 4) for t, v in sorted(always.items(), key=lambda kv: -kv[1])}}
 
 
 # --------------------------------------------------------------------------- #

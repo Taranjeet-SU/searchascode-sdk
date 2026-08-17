@@ -60,10 +60,57 @@ class ResultSet(list):
     Every primitive returns a ``ResultSet`` so agent code can fluently compose
     ``store.search(...).dedup().top(5).to_evidence()`` without dragging the raw
     payloads back through the model context.
+
+    ``.info`` carries per-primitive side signals (``consensus``'s agreement/votes,
+    ``degraded`` fallback reasons). It is **propagated across chained calls**: signals used
+    to be attached as ad-hoc attributes, and top/dedup/where construct a NEW ResultSet, so
+    they vanished the moment agent code chained anything (SDK-C13).
     """
 
+    #: side signals; see class docstring. Chained calls carry this forward.
+    info: dict
+
+    def __init__(self, *args, info: Optional[dict] = None, **kwargs):
+        super().__init__(*args, **kwargs)
+        self.info = dict(info or {})
+
+    def _derive(self, hits) -> "ResultSet":
+        """A new ResultSet from ``hits`` that keeps this one's side signals."""
+        return ResultSet(hits, info=self.info)
+
+    # Documented consensus() signals, read from .info so they survive chaining while the
+    # attribute spelling the prompt surface teaches (`cons.agreement`) keeps working.
+    @property
+    def agreement(self) -> float:
+        return float(self.info.get("agreement", 0.0))
+
+    @property
+    def votes(self) -> dict:
+        return dict(self.info.get("votes", {}))
+
+    @property
+    def n_lists(self) -> int:
+        return int(self.info.get("n_lists", 0))
+
+    @property
+    def degraded(self) -> dict:
+        """``{reason: count}`` of silent fallbacks taken to produce this result (LEG-5)."""
+        return dict(self.info.get("degraded", {}))
+
+    def mark_degraded(self, reason: str, n: int = 1) -> "ResultSet":
+        """Record that a strategy fell back instead of running as intended.
+
+        The audit's finding was that measurement could not distinguish "this strategy lost"
+        from "this strategy crashed", because ~49 bare `except Exception` blocks in the SDK
+        swallow and continue. Keep the fallback, but COUNT it (LEG-5).
+        """
+        d = dict(self.info.get("degraded", {}))
+        d[reason] = d.get(reason, 0) + n
+        self.info["degraded"] = d
+        return self
+
     def top(self, k: int) -> "ResultSet":
-        return ResultSet(sorted(self, key=lambda h: h.score, reverse=True)[:k])
+        return self._derive(sorted(self, key=lambda h: h.score, reverse=True)[:k])
 
     def ids(self) -> list[str]:
         return [h.id for h in self]
@@ -72,7 +119,7 @@ class ResultSet(list):
         return [h.text or "" for h in self]
 
     def where(self, predicate: Callable[[Hit], bool]) -> "ResultSet":
-        return ResultSet(h for h in self if predicate(h))
+        return self._derive(h for h in self if predicate(h))
 
     def dedup(self, key: Optional[Callable[[Hit], Any]] = None) -> "ResultSet":
         """Keep the highest-scoring hit per key (defaults to hit id)."""
@@ -82,7 +129,7 @@ class ResultSet(list):
             k = keyfn(h)
             if k not in best or h.score > best[k].score:
                 best[k] = h
-        return ResultSet(best.values()).top(len(best))
+        return self._derive(best.values()).top(len(best))
 
     def to_evidence(
         self,
