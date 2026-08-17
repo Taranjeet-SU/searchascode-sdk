@@ -11,6 +11,7 @@ import numpy as np
 
 from .router import TemplateRouter, featurize, label_via_templates, train_router
 from .templates import TEMPLATE_NAMES, StrategyContext
+from .._genutil import gen_lines
 
 
 def _rephrase(session, query: str, n: int) -> list[str]:
@@ -22,10 +23,11 @@ def _rephrase(session, query: str, n: int) -> list[str]:
               f"\n\nQUERY: {query}")
     try:
         out = session.generator(prompt)
-        txt = out[0] if isinstance(out, list) else str(out)
     except Exception:
         return []
-    lines = [ln.strip("-•* ").strip() for ln in txt.splitlines() if ln.strip()]
+    # gen_lines, not out[0]: indexing a line-splitting generator yielded ONE paraphrase
+    # regardless of n, which shrank and de-diversified the router training set (GEN-1).
+    lines = gen_lines(out)
     return [ln for ln in lines if ln.lower() != query.lower()][:n]
 
 

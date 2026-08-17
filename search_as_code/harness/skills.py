@@ -19,6 +19,8 @@ from typing import Callable, Optional
 
 import numpy as np
 
+from .._genutil import gen_lines
+
 from .triage import extract_codes
 
 
@@ -94,11 +96,10 @@ def _decompose_fielded(session, query, top_k=10, **_):
         try:
             out = gen("Break this question into the distinct factual sub-questions needed to answer "
                       "it — each targets a DIFFERENT entity/document. One per line, 2-6.\n\nQ: " + query)
-            txt = out[0] if isinstance(out, list) else str(out)
-            subs = [re.sub(r"^[-*\d.\s]+", "", ln).strip() for ln in txt.splitlines() if ln.strip()][:6]
+            subs = gen_lines(out, max_items=6, min_len=3)
         except Exception:
             pass
-    subs = [s for s in subs if len(s) > 3] or [query]
+    subs = subs or [query]
     qf = getattr(session.store, "query_fielded", None)
     pools = []
     for s in subs + [query]:
@@ -144,11 +145,10 @@ def _decompose_arsenal(session, query, top_k=10, **_):
         try:
             out = gen("Break this question into the distinct factual sub-questions needed to answer "
                       "it — each targets a DIFFERENT entity/document. One per line, 2-6.\n\nQ: " + query)
-            txt = out[0] if isinstance(out, list) else str(out)
-            subs = [re.sub(r"^[-*\d.\s]+", "", ln).strip() for ln in txt.splitlines() if ln.strip()][:6]
+            subs = gen_lines(out, max_items=6, min_len=3)
         except Exception:
             pass
-    subs = [s for s in subs if len(s) > 3] or [query]
+    subs = subs or [query]
     qf = getattr(session.store, "query_fielded", None)
     pools = []
     for x in subs + [query]:

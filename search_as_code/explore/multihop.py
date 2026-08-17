@@ -24,6 +24,8 @@ import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Optional
 
+from .._genutil import gen_text
+
 _PROMPT = """You are given {n} documents. Write ONE question that can be answered ONLY by using \
 ALL {n} documents together — no subset should be sufficient. Chain the facts across them \
 (bridge / comparison / aggregation).
@@ -78,7 +80,7 @@ def _gen(generator, chain):
     prompt = _PROMPT.format(n=len(chain), blocks=blocks)
     try:
         out = generator(prompt)
-        txt = out[0] if isinstance(out, list) else str(out)
+        txt = gen_text(out)
     except Exception:
         return None
     m = re.search(r"\{.*\}", txt, re.DOTALL)

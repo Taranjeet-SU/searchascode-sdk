@@ -13,6 +13,7 @@ from __future__ import annotations
 import re
 from typing import Callable
 
+from .._genutil import gen_lines
 from .context import StepResult
 
 
@@ -59,9 +60,7 @@ def decompose_query(query: str, generator=None, max_subs: int = 4) -> list:
             prompt = (f"Split this multi-hop question into the distinct factual sub-questions needed "
                       f"to answer it (each targets a DIFFERENT document). One per line, {max_subs} max.\n\nQ: {query}")
             out = generator(prompt)
-            txt = out[0] if isinstance(out, list) else str(out)
-            subs = [re.sub(r"^[-*\d.\s]+", "", ln).strip() for ln in txt.splitlines() if ln.strip()]
-            subs = [s for s in subs if len(s) > 3][:max_subs]
+            subs = gen_lines(out, max_items=max_subs, min_len=3)
             if len(subs) >= 2:
                 return subs
         except Exception:

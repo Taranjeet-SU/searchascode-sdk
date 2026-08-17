@@ -16,6 +16,7 @@ from collections import Counter
 import numpy as np
 
 from .engine import ExploreContext, Stage  # noqa: F401  (re-exported for convenience)
+from .._genutil import gen_text
 
 
 # --------------------------------------------------------------------------- #
@@ -161,7 +162,7 @@ def _llm_profile(ctx: ExploreContext, schema: dict, texts: list[str]) -> str:
     )
     try:
         out = ctx.generator(prompt)
-        return out[0] if isinstance(out, list) else str(out)
+        return gen_text(out)  # whole profile, not line 1 (GEN-1)
     except Exception as e:  # pragma: no cover
         return f"(llm profile unavailable: {e})"
 
