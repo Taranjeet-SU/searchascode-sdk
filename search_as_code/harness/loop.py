@@ -68,12 +68,19 @@ def plan_execute_verify(ctx, execute: Callable, verify: Callable, max_steps: int
 
 
 def fuse_ids(lists, k: int = 60) -> list:
-    """Reciprocal-rank fusion over ranked id lists (coverage-preserving union for subagent results)."""
-    s: dict = {}
+    """Reciprocal-rank fusion over ranked **id lists** — the coverage-preserving union.
+
+    THE single implementation for id-list RRF. The audit counted eight copies of
+    ``1.0 / (k + rank + 1)`` across the repo (SDK-R2 / P1-11 / LEG-6); ``playbook._rrf``,
+    ``forge._safe_globals._fuse_ids`` and ``agentic``'s rebinding now all delegate here, so a
+    change to the fusion rule takes effect everywhere instead of in one of eight places.
+    (``primitives.fuse`` is the sibling that fuses ResultSets and keeps scores/documents.)
+    """
+    scores: dict = {}
     for lst in lists:
-        for r, i in enumerate(lst):
-            s[i] = s.get(i, 0.0) + 1.0 / (k + r + 1)
-    return sorted(s, key=lambda i: -s[i])
+        for rank, doc_id in enumerate(lst):
+            scores[doc_id] = scores.get(doc_id, 0.0) + 1.0 / (k + rank + 1)
+    return sorted(scores, key=lambda i: -scores[i])
 
 
 _SPLIT_RE = re.compile(r"\band\b|\bor\b|[,;]|\bboth\b|\bcompared? (?:to|with)\b|\bversus\b|\bvs\.?\b", re.I)

@@ -139,14 +139,43 @@ MCP tool-calling vs Search-as-Code (totals over the 100 queries):
 | tool-calling (MCP) | 0.440 | 0.399 | 15.9 s | 6.2 | 416k | 27% | $0.23 |
 | **Search as Code** | **0.549** | **0.408** | **7.7 s** | **2.6** | **335k** | **54%** | **$0.15** |
 
-**SAC wins every axis that matters vs MCP tool-calling** — best Recall@10 (**+11
-pts**) and nDCG@10, **~2.1× faster**, **~1.6× cheaper**, **2× the prompt-cache
-hit** (54% vs 27%), and **<½ the LLM calls** — because intermediate results stay
-in the sandbox instead of flowing back through context. Reproduce with
+SAC leads on every column here. **Read the caveat before quoting it:** an internal audit
+([`issues.md`](issues.md) P1-1 / CB-1) found the arms are **not matched** in this run — the
+tool arm gets 3 tools (`expand`, `search`, `finish`) and a 511-char prompt while the SAC arm
+gets ~20 primitives and a 7,667-char one, and a better-designed tool baseline already exists in
+`chatbot/toolcalling.py`. A matched-arm re-run is in progress; the *quality* columns should be
+treated as unconfirmed until it lands.
+
+**What is structural and not in question** is the cost profile: SAC keeps intermediate results
+in the sandbox instead of flowing them back through context, so it uses **~½ the LLM calls** and
+its input tokens stay ~flat with query difficulty while tool-calling's grow with every hop (in a
+matched 5-arm multi-hop re-run: **~550 input tokens/query vs ~16,000**, 1 model turn vs ~9).
+Reproduce with
 `python -m phase1.benchmark -n 100 --reranker cross-encoder/ms-marco-MiniLM-L-12-v2`
 (the ms-marco reranker is the one these numbers were measured with; see issues.md P1-14); full run log in
 [`benchmark_changelog.md`](benchmark_changelog.md), narrative in
 [`phase1/RESULTS.md`](phase1/RESULTS.md).
+
+## 🔍 Audit status — what these numbers do and don't support
+
+This repo keeps a standing, append-only audit of its own defects and over-claims:
+**[`issues.md`](issues.md)**. That is unusual for a README to advertise, and deliberate — the
+experiments here are the product's evidence, so their limitations are part of the documentation.
+
+Currently corrected or verified:
+
+| claim | status |
+|---|---|
+| Judge reaches 0.721 held-out, "0.72 **is** the signal ceiling" | **softened.** 0.721 **[0.633, 0.811]**; the tuning gain over the untuned prompt is +0.020 [−0.110, +0.150] — not distinguishable from noise; two of the five table rows were the *untuned* prompt. The qualitative finding (cross-encoder signal is what moves the judge) survives. `experiments/deep_judge/README.md` §1 |
+| "SAC beats MCP tool-calling on every axis" (FiQA) | **unconfirmed.** The arms were not matched (3 tools vs ~20 primitives). Re-run pending. |
+| SAC > tool-calling on multi-hop | **being re-measured** with identical prompts for both arms and an explore-seeded variant. |
+| Forged SAC ≥ dense on a strong retriever | **holds as a negative result** — on Qwen3-Embedding-8B the forged primitive does *not* beat plain dense, which is why the dense-default gate exists. |
+| Adapter contract ("the test suite is the contract") | **now true.** `tests/test_conformance.py` runs 15 contract tests against every installed backend; enforcing it found 3 real bugs in faiss/sqlite/chroma. |
+| Cost profile (turns, tokens, cache) | **holds.** Structural to code-mode, unaffected by the prompt-matching issue. |
+
+Every measured claim should carry an interval — use
+`search_as_code.metrics.bootstrap_ci` / `compare`. A difference whose CI includes zero is not a
+result.
 
 ## 🧰 Capabilities
 

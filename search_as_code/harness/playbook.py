@@ -17,6 +17,7 @@ from __future__ import annotations
 import numpy as np
 
 from . import diagnostic_judge as dj
+from .loop import fuse_ids
 from .os_query import author_os_query
 from .rag_techniques import SkillLookup
 
@@ -24,11 +25,8 @@ CE_WEAK = 0.0   # a sub-fact whose best candidate cross-encoder score is below t
 
 
 def _rrf(lists, k=60):
-    s: dict = {}
-    for lst in lists:
-        for r, i in enumerate(lst):
-            s[i] = s.get(i, 0.0) + 1.0 / (k + r + 1)
-    return sorted(s, key=lambda i: -s[i])
+    """Delegates to the one id-list RRF implementation (SDK-R2)."""
+    return fuse_ids(lists, k=k)
 
 
 def _reserve(sf_lists, k=10):

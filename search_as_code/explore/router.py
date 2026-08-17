@@ -162,28 +162,3 @@ def format_route_plan(plan: list[str]) -> str:
     return (f"Learned strategy plan for THIS query (router-ranked, cheapest-effective first): "
             f"{steps}. Execute as a cascade — start with the first; escalate to the next only if "
             f"the result looks weak. What each does: {detail}.")
-
-
-def train_router(X: np.ndarray, y: np.ndarray, seed: int = 0) -> dict:
-    """Train HistGradientBoosting (XGB-style) with CV. Returns model + metrics."""
-    from collections import Counter
-
-    from sklearn.ensemble import HistGradientBoostingClassifier
-    from sklearn.model_selection import cross_val_score
-
-    counts = Counter(y)
-    clf = HistGradientBoostingClassifier(max_iter=300, learning_rate=0.08,
-                                         max_depth=6, random_state=seed)
-    # CV needs >=2 per class; fold count bounded by the rarest class
-    min_class = min(counts.values()) if counts else 0
-    folds = max(2, min(5, min_class))
-    cv_acc = None
-    if len(counts) >= 2 and min_class >= 2:
-        scores = cross_val_score(clf, X, y, cv=folds, scoring="accuracy")
-        cv_acc = (float(scores.mean()), float(scores.std()))
-    clf.fit(X, y)
-    return {"model": clf, "classes": sorted(counts),
-            "label_counts": dict(counts), "cv_folds": folds,
-            "cv_accuracy": cv_acc[0] if cv_acc else None,
-            "cv_std": cv_acc[1] if cv_acc else None,
-            "train_accuracy": float((clf.predict(X) == y).mean())}

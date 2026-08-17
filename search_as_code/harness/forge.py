@@ -85,12 +85,8 @@ def _safe_globals():
         return importlib.import_module(name)
     allowed["__import__"] = _imp
 
-    def _fuse_ids(lists, k=60):                    # RRF over id lists (so authored code is self-contained)
-        s: dict = {}
-        for lst in lists:
-            for r, i in enumerate(list(lst)):
-                s[i] = s.get(i, 0.0) + 1.0 / (k + r + 1)
-        return sorted(s, key=lambda i: -s[i])
+    def _fuse_ids(lists, k=60):                    # RRF over id lists, for authored code
+        return fuse_ids([list(x) for x in lists], k=k)   # one implementation (SDK-R2)
 
     def _rerank(session, query, ids, top_k=10):    # cross-encoder rerank an id list
         docs = session.store.get(list(ids)[:60])

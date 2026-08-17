@@ -1,17 +1,13 @@
-"""Router fitting: collect/generate labeled queries -> label against the 20 templates ->
-train the classifier -> metrics. Backs :meth:`Explorer.fit`.
+"""Query collection and batch embedding for the router dataset.
+
+Despite the module name, the labeling/training pipeline lives in ``training.py``; this module
+holds the shared helpers it imports (``_collect_queries``, ``_batch_embed``, ``_rephrase``).
+See the note at the bottom for what was removed and why (issues.md SDK-R1).
 """
 
 from __future__ import annotations
 
-import time
-from collections import Counter
-
-import numpy as np
-
 from .._genutil import gen_lines
-from .router import TemplateRouter, featurize, label_via_templates, train_router
-from .templates import TEMPLATE_NAMES, StrategyContext
 
 
 def _rephrase(session, query: str, n: int) -> list[str]:
@@ -86,101 +82,11 @@ def _batch_embed(session, texts, bs=64):
     return out
 
 
-def fit_router(explorer, *, queries=None, n=5000, rephrases=2, k=10, P=25,
-               label_llm=False, label_rerank=False, workers=1, progress_every=100) -> dict:
-    import threading
-    from concurrent.futures import ThreadPoolExecutor, as_completed
-
-    session, pack = explorer.session, explorer.pack
-    t0 = time.time()
-    data = _collect_queries(explorer, queries, n, rephrases, gen_llm=label_llm)
-    if not data:
-        raise RuntimeError("no queries to fit on (provide queries= or ensure the store samples)")
-    pack.write_jsonl("router_queries.jsonl", data)   # persist so we can relabel w/o regenerating
-
-    # embed all queries up front in batches — far cheaper than one-at-a-time, and the
-    # vector is reused for both the dense pool and the feature row.
-    embs = _batch_embed(session, [it["query"] for it in data], bs=64)
-    emb_dim = len(embs[0]) if embs else 0
-
-    rr_lock = threading.Lock()       # serialize the GPU reranker across worker threads
-    done = [0]
-    prog_lock = threading.Lock()
-
-    def _label_one(i):
-        item = data[i]
-        q, gold, emb = item["query"], item["gold_id"], embs[i]
-        ctx = StrategyContext(session, q, P_pool=P, emb=emb, use_llm=label_llm,
-                              use_rerank=label_rerank, top_k=k, rerank_lock=rr_lock)
-        best, hits = label_via_templates(ctx, gold, k=k)
-        if progress_every:
-            with prog_lock:
-                done[0] += 1
-                if done[0] % progress_every == 0:
-                    print(f"[fit] labeled {done[0]}/{len(data)}  "
-                          f"({done[0] / (time.time() - t0):.1f} q/s)", flush=True)
-        return i, featurize(q, emb), best, hits
-
-    results: list = [None] * len(data)
-    if workers > 1:
-        with ThreadPoolExecutor(max_workers=workers) as ex:
-            for fut in as_completed([ex.submit(_label_one, i) for i in range(len(data))]):
-                i, feat, best, hits = fut.result()
-                results[i] = (feat, best, hits)
-    else:
-        for i in range(len(data)):
-            _, feat, best, hits = _label_one(i)
-            results[i] = (feat, best, hits)
-
-    rows, X, y = [], [], []
-    per_template: Counter = Counter()
-    any_hit: Counter = Counter()          # how often each template retrieves gold (oracle view)
-    solved = 0
-    for i, (feat, best, hits) in enumerate(results):
-        for name, h in hits.items():
-            any_hit[name] += h
-        X.append(feat)
-        y.append(best)
-        if best != "none":
-            solved += 1
-            per_template[best] += 1
-        rows.append({"query": data[i]["query"], "gold_id": data[i]["gold_id"], "best": best})
-
-    pack.write_jsonl("router_labels.jsonl", rows)
-
-    # train on solved queries only (a query no template answers has no valid target)
-    idx = [j for j, lab in enumerate(y) if lab != "none"]
-    metrics = {
-        "n_labeled": len(data), "solved": solved,
-        "oracle_coverage": round(solved / len(data), 4),
-        "n_templates": len(TEMPLATE_NAMES),
-        "label_distribution": dict(per_template),
-        "template_hit_rate@k": {t: round(any_hit[t] / len(data), 4) for t in TEMPLATE_NAMES},
-        "seconds": round(time.time() - t0, 1),
-    }
-    if len(idx) >= 10 and len(per_template) >= 2:
-        Xs = np.array([X[j] for j in idx], dtype=np.float32)
-        ys = np.array([y[j] for j in idx])
-        res = train_router(Xs, ys)
-        best_single = max(per_template.values()) / solved      # "always pick the best fixed template"
-        metrics.update({
-            "cv_accuracy": res["cv_accuracy"], "cv_std": res["cv_std"],
-            "cv_folds": res["cv_folds"], "train_accuracy": res["train_accuracy"],
-            "best_single_template_acc": round(best_single, 4),
-            "router_lift_over_fixed": (round(res["cv_accuracy"] - best_single, 4)
-                                       if res["cv_accuracy"] is not None else None),
-        })
-        router = TemplateRouter(res["model"], res["classes"], emb_dim=emb_dim, metrics=metrics)
-        router.save(pack.path("router.pkl"))
-        explorer.router = router
-    else:
-        metrics["note"] = "too few solved/labeled queries or classes to train a router"
-
-    pack.write_json("router_meta.json", metrics)
-    pack.record_stage("router", "ok" if "cv_accuracy" in metrics else "rejected",
-                      seconds=metrics["seconds"], summary={
-                          "n": len(data), "solved": solved,
-                          "cv_acc": metrics.get("cv_accuracy"),
-                          "vs_fixed": metrics.get("router_lift_over_fixed")},
-                      artifacts=["router.pkl", "router_labels.jsonl", "router_meta.json"])
-    return metrics
+# NOTE: ``fit_router()`` used to live here — a second, complete copy of the labeling +
+# training pipeline that duplicated ``training.build_dataset`` + ``training.train_router_model``
+# and wrote the same artifacts, but was **referenced nowhere**: not by ``Explorer.fit()`` (which
+# calls dataset() + train()), not by ``explore/__init__.py``, not by any test or experiment. It
+# also trained with DIFFERENT hyperparameters than the live path (max_iter=300, lr=0.08 vs
+# 400/0.07), so the repo carried two divergent trainers, one of them unreachable. Deleted along
+# with its only consumer, ``router.train_router`` (issues.md SDK-R1). The helpers above are the
+# part that is genuinely shared — ``training.py`` imports them.
