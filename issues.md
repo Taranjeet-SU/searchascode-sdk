@@ -1482,6 +1482,71 @@ Extends P4-3 with the exact count. `.gitignore` only covered `phase4/run_altera*
 sweep. **FIXED** 2026-08-17 `bf4ed25`; `scripts/check_no_customer_artifacts.py --check-tree` is now
 the enforcing control and is green.
 
+#### 🟥 DJ-4 `[C]` The SDK ships a judge prompt that is NOT the tuned one its comment claims, and re-running reproduces the untuned score
+`search_as_code/harness/diagnostic_judge.py:18` described `DIAGNOSTIC_PROMPT` as the "round-7
+critic revision; held-out balanced-acc 0.721". Two checks say otherwise:
+```bash
+python3 -m experiments.deep_judge.validate_judge --split test   # fresh run of the SHIPPED judge
+```
+1. The shipped prompt is **2,964 chars** vs the adopted `best_prompt_ce_same.txt` at **2,992**
+   (99.5% similar, not identical).
+2. Re-running the shipped judge on the held-out 100 reproduces the **round-0** confusion matrix
+   *exactly* — `tp=37 tn=33 fp=14 fn=16`, balanced accuracy **0.700 [0.613, 0.789]** — where
+   round 7 recorded `tp=37 tn=35 fp=12 fn=16` / 0.721.
+Either the tuned revision was never actually shipped, or the 2-example difference is noise —
+and DJ-2 already showed the whole claimed gain **is** those 2 examples. Either way the docstring
+asserted a number the shipped artifact does not produce. **FIXED** 2026-08-17 (docstring
+corrected to the measured value + interval); which of the two explanations holds is still open.
+
+#### 🟥 DJ-5 `[A]` The LLM judge does not beat a plain logistic model on the same signals
+Same run. Reference points measured alongside the judge:
+
+| | balanced accuracy |
+|---|---|
+| always-PASS baseline | 0.500 |
+| **shipped LLM judge** | **0.700 [0.613, 0.789]** |
+| logistic regression on the same features, 5-fold | **0.722 ± 0.039** |
+
+The judge clearly beats the trivial baseline, but a nine-feature LogReg over the coverage/score
+signals it is *shown* does at least as well **without any LLM call**. So "the judge mimics the
+oracle at the signal ceiling" is better stated as: *the ceiling is reachable by a cheap
+classifier, and the LLM is not adding accuracy over the features it reads.* This does not make
+the component useless — its value is the structured **diagnosis** (`DIAGNOSIS` / `TECHNIQUE` /
+`NEXT_QUERY`) that steers the next hop, which a classifier does not produce — but the PASS/FAIL
+accuracy framing should be dropped, and a LogReg gate is the obvious cheaper stop-controller to
+A/B against. Raw: `experiments/deep_judge/judge_validation_test.json`.
+
+#### 🟥 P2-1-RESULT `[A]` The learned-profile lift does not reproduce — leak-free OR in-sample
+Re-ran P2-1 properly (mine on `train`, evaluate on a disjoint `test`, deltas with paired
+bootstrap CIs) on both FiQA and HotpotQA. **Every delta is zero or within noise on both splits.**
+On the HotpotQA held-out split all four deltas are exactly `+0.0000`. The CHANGELOG's
+"+2.7 pts all_found from learned synonyms" is **not reproduced**, and since the lift is absent
+*in-sample* too, contamination is not the whole explanation — the mined profile appears inert
+under this evaluation. Contributing observation: on HotpotQA/test the normalizer changed **0 of
+150** queries. Full write-up: [`experiments/learned_profile_leakfree.md`](experiments/learned_profile_leakfree.md).
+Fix landed: `phase2/splits.py` + both passes are split-aware and print intervals. **The claim
+should be struck from `CHANGELOG.md` and `MULTI_DATASET_REPORT.md`** unless someone reproduces it
+under a stated protocol. `align_prompts.calibrate_judge` has the same leakage shape and is still
+unaudited.
+
+#### 🟧 EX-3 `[C]` `SynthesizeStage` reported `ok` after generating zero queries, then `validate` crashed
+`explore/stages.py` — `_gen_queries` swallows a parse/API failure and returns `[]` per document,
+so a generator whose output cannot be parsed produced **0 queries while the stage still recorded
+`ok`**; the next stage then died with the confusing `RuntimeError: no synth queries to validate
+on`. Same family as SDK-A5 (a `validate()` gate nothing implemented) plus LEG-5 (a silent
+fallback recorded as a result). Hit while writing `examples/03_explore_first.py`.
+**FIXED** 2026-08-17 — `SynthesizeStage.validate()` rejects an empty/short output with the real
+cause, so the failure surfaces at the stage that caused it.
+
+#### 🟧 EX-4 `[C]` The README's headline workflow was not runnable from an install
+The "explore first — the default workflow" section pointed only at
+`experiments/deep_judge/run_explore_pipeline.py`, which `pyproject.toml` does not ship, and the
+`agentic_solve` / `DiagnosticJudge` / `HarnessForge` entry points it leads with were not exported
+at the top level — you had to know the submodule path. So a `pip install` user could not run or
+easily import the documented headline workflow. **FIXED** 2026-08-17: entry points exported from
+`search_as_code`, plus `examples/03_explore_first.py` and `examples/04_harness_judge_forge.py`
+(zero-setup, no API key, executed by CI) and a README "Learning the pieces" table.
+
 #### 🟨 DOC-10 `[C]` Two public docs linked to files that were untracked, so the links break on clone
 Found by the new `scripts/check_doc_links.py --public`. `README.md` linked to `STRUCTURE.md` and
 `open_problems.md`; `open_problems.md` linked to `experiments/explore_learning/README.md`,

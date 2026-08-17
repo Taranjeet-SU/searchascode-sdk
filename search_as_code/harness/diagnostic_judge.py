@@ -6,20 +6,37 @@ signal — plus bi-encoder cosine, lexical overlap, and the score cliff), and fo
 sub-fact it diagnoses WHY and prescribes the next retrieval technique. The PASS/FAIL mimics a gold oracle
 without seeing gold; the diagnosis is what makes the next hop targeted.
 
-Empirically the judge's oracle-agreement (0.72 balanced-acc, held-out) sits at the *signal* ceiling: a
-supervised model on the same features tops out there, and neither self-critique nor an independent
-32B critic beats it — the residual error is snippet-level (can't verify the exact gold vs a distractor),
-not a reasoning limit. See ``experiments/deep_judge`` for the derivation.
+**Use it for the diagnosis, not for the PASS/FAIL accuracy.** Measured on the frozen oracle set
+(n=100 held out, ``experiments/deep_judge/validate_judge.py``):
+
+===============================================  ==========================
+always-PASS baseline                              0.500 balanced accuracy
+this judge                                        0.700 [0.613, 0.789]
+logistic regression on the same 9 signals         0.722 +/- 0.039 (no LLM)
+===============================================  ==========================
+
+So the judge beats the trivial baseline but does **not** beat a cheap classifier over the signals
+it is shown — an earlier version of this docstring claimed 0.721 and "sits at the signal ceiling",
+which the data does not support (``issues.md`` DJ-2/DJ-4/DJ-5). What the classifier cannot do is
+produce the structured ``DIAGNOSIS`` / ``TECHNIQUE`` / ``NEXT_QUERY`` that makes the next hop
+targeted, and that is where §2 of the experiment write-up shows a real effect. If you only need a
+stop signal, benchmark a LogReg gate against this first. See ``experiments/deep_judge``.
 """
 from __future__ import annotations
 
 import re
 
-# Tuned default (round-7 critic revision). Held-out balanced accuracy 0.721 [0.633, 0.811] at
-# n=100 — the interval matters: the gain over the UNTUNED prompt is +0.020 [-0.110, +0.150], i.e.
-# not distinguishable from noise, and the "0.72 is the signal ceiling" claim this figure was used
-# to support is consistent with the data rather than demonstrated by it. See issues.md DJ-1/2/3
-# and experiments/deep_judge/judge_reanalysis.json. Calibrated ce thresholds.
+# MEASURED, not asserted: re-running THIS prompt on the frozen held-out 100 gives balanced
+# accuracy 0.700 [0.613, 0.789] (experiments/deep_judge/validate_judge.py ->
+# judge_validation_test.json). Notes before you quote a number from it:
+#   * the docstring here used to claim 0.721 ("round-7 critic revision"); the shipped text is
+#     99.5% but not 100% identical to the adopted revision, and a fresh run reproduces the
+#     UNTUNED round-0 confusion matrix exactly (issues.md DJ-4);
+#   * the tuning gain over the untuned prompt is +0.020 [-0.110, +0.150] — noise (DJ-2);
+#   * a 9-feature logistic regression on the same coverage/score signals scores 0.722 +/- 0.039
+#     with NO llm call, so this component's value is its structured DIAGNOSIS / TECHNIQUE /
+#     NEXT_QUERY output that steers the next hop, not its PASS/FAIL accuracy (DJ-5).
+# Calibrated ce thresholds.
 DIAGNOSTIC_PROMPT = """You are the STOP/CONTINUE controller for a MULTI-HOP retrieval agent. A multi-hop \
 question requires SEVERAL distinct documents—one per sub-fact. Your task is to decide whether the CURRENT \
 result set already contains a sufficiently strong document for EVERY sub-fact (VERDICT = PASS, stop) or \

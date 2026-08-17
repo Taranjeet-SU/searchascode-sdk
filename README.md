@@ -63,13 +63,29 @@ pip install -e '.[dev]'          # editable + test/lint/type tooling (pytest, ru
 
 ```bash
 python -c "import search_as_code as sac; print(sac.available())"   # ['chroma', 'faiss', 'memory', 'opensearch', ...]
-python examples/demo.py                    # in-memory demo, zero setup, no API key
-python examples/opensearch_quickstart.py   # needs .[opensearch] + a running OpenSearch
+python examples/01_quickstart.py           # in-memory demo, zero setup, no API key
+python examples/03_explore_first.py        # the explore-first workflow, end to end, offline
+python examples/04_harness_judge_forge.py  # triage -> skills -> harness -> judge -> forge
 python -m pytest -q                        # 199 in-memory unit tests; +23 OpenSearch integration
 ```
 
-The base install ships a dependency-free embedder + in-memory backend, so the
-demo and unit tests run with **zero setup**.
+The base install ships a dependency-free embedder + in-memory backend, so **every example above
+runs with zero setup and no API key** — they use a small scripted generator in place of an LLM.
+CI executes them, so they cannot rot.
+
+### Learning the pieces
+
+| you want to understand | run this | then read |
+|---|---|---|
+| the primitive API + sandbox | [`examples/01_quickstart.py`](examples/01_quickstart.py) | [`docs/PRIMITIVES.md`](docs/PRIMITIVES.md) |
+| a real backend | [`examples/02_opensearch.py`](examples/02_opensearch.py) | [`docs/DATABASES.md`](docs/DATABASES.md) |
+| **explore** — discovering the strategy for a corpus | [`examples/03_explore_first.py`](examples/03_explore_first.py) | [`docs/EXPLORE.md`](docs/EXPLORE.md) · [`docs/INTROSPECTION.md`](docs/INTROSPECTION.md) |
+| **the harness, the deep judge, the forge** | [`examples/04_harness_judge_forge.py`](examples/04_harness_judge_forge.py) | [`docs/HARNESS.md`](docs/HARNESS.md) |
+| what the numbers actually support | — | [`issues.md`](issues.md) · [`open_problems.md`](open_problems.md) |
+
+Every headline entry point is importable from the top level — `sac.agentic_solve`,
+`sac.explore`, `sac.Harness`, `sac.DiagnosticJudge`, `sac.HarnessForge`, `sac.triage`,
+`sac.bootstrap_ci`.
 
 ## 🧠 Explore first — the default workflow
 

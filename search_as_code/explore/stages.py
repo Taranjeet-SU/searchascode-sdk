@@ -220,6 +220,26 @@ class SynthesizeStage(Stage):
         return {"queries": len(rows), "from_docs": min(len(sample), max_docs),
                 "by_difficulty": dict(Counter(x["difficulty"] for x in rows))}
 
+    def validate(self, ctx: ExploreContext, summary: dict) -> tuple[bool, str]:
+        """A stage that produced NOTHING must not be recorded as ``ok``.
+
+        ``_gen_queries`` swallows a parse/API failure and returns ``[]`` per document, so a
+        generator whose output cannot be parsed yielded zero queries while this stage still
+        reported success — and the next stage then died with the confusing
+        "no synth queries to validate on". Same shape as SDK-A5 (a validate() gate nothing
+        implemented) plus LEG-5 (a silent fallback recorded as a result). Rejecting here makes
+        the real cause visible at the stage that caused it.
+        """
+        n = int(summary.get("queries", 0))
+        if n == 0:
+            return False, ("generated 0 queries — the generator's output could not be parsed as "
+                           "the requested JSON list (check the generator, or set "
+                           "config['synth_per_doc'])")
+        want = int(ctx.cfg("synth_min_queries", 1))
+        if n < want:
+            return False, f"generated only {n} queries, below synth_min_queries={want}"
+        return True, f"{n} grounded queries from {summary.get('from_docs')} documents"
+
 
 def _gen_queries(ctx: ExploreContext, text: str, per_doc: int):
     if not text.strip():

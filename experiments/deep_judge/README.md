@@ -50,6 +50,32 @@ judge's PASS/FAIL agreement with the oracle (balanced accuracy on a held-out 100
   bi-encoder cosine is saturated and the cross-encoder signal is what moves the judge — survives, and
   that is the part the deep-SAC line actually rests on.
 
+### Fresh validation of the SHIPPED judge (2026-08-17)
+
+The table above re-derives the *tuning logs*. [`validate_judge.py`](validate_judge.py) does the
+complementary thing — it runs `search_as_code.harness.DiagnosticJudge`, the prompt actually in
+the SDK, over the frozen oracle set and adds the two reference points the original write-up
+lacked → [`judge_validation_test.json`](judge_validation_test.json):
+
+| | held-out balanced accuracy (n=100) |
+|---|---|
+| always-PASS baseline | 0.500 |
+| **shipped `DiagnosticJudge`** | **0.700 [0.613, 0.789]** · false-accept 0.298 · false-reject 0.302 |
+| logistic regression on the same 9 signals, 5-fold | **0.722 ± 0.039** — *no LLM call* |
+
+Two things follow, and both are corrections against us:
+
+- **The shipped prompt reproduces the UNTUNED score.** Its confusion matrix (`tp=37 tn=33 fp=14
+  fn=16`) is round 0's, exactly; round 7 was `tp=37 tn=35 fp=12 fn=16`. The shipped text is 99.5%
+  — not 100% — identical to the adopted revision. Since DJ-2 already showed the entire claimed
+  gain *is* those two examples, the practical reading is the same either way (issues.md DJ-4).
+- **The LLM is not adding accuracy over the signals it reads** (DJ-5). A cheap classifier matches
+  or beats it. The honest framing of this component is therefore *not* "an LLM judge that mimics
+  the oracle", but "a **diagnostic** controller": its value is `DIAGNOSIS` / `TECHNIQUE` /
+  `NEXT_QUERY` — the per-sub-fact prescription that drives the next hop, which §2's numbers do
+  support and which a classifier cannot produce. A LogReg stop-gate is the obvious cheaper
+  baseline to A/B the PASS/FAIL half against.
+
 Findings, honestly:
 - The bi-encoder cosine is **saturated** (PASS min-sim 0.86 vs FAIL 0.81) — the judge can't separate
   covered from missing, and no critic fixes it. Adding a **cross-encoder** per-sub-fact score (PASS +1.5

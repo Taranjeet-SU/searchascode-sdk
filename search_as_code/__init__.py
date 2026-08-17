@@ -39,7 +39,18 @@ from .explore import (
     TemplateRouter,
     explore,
 )
-from .harness import AgentMemory, Harness, SkillRegistry, triage
+from .harness import (
+    AgentMemory,
+    DiagnosticJudge,
+    Harness,
+    HarnessForge,
+    HarnessStore,
+    SkillLookup,
+    SkillRegistry,
+    agentic_solve,
+    diagnostic_solve,
+    triage,
+)
 from .metrics import (
     all_golds_at_k,
     bootstrap_ci,
@@ -91,6 +102,10 @@ __all__ = [
     # exploration / onboarding
     "explore", "ProfilePack", "Explorer", "TemplateRouter", "TEMPLATE_NAMES", "TEMPLATE_DOCS",
     "Harness", "AgentMemory", "SkillRegistry", "triage",
+    # the harness entry points the README leads with — previously you had to know
+    # the submodule path to reach them
+    "agentic_solve", "diagnostic_solve", "DiagnosticJudge",
+    "HarnessForge", "HarnessStore", "SkillLookup",
     # metrics (with uncertainty — see metrics.compare / bootstrap_ci)
     "recall_at_k", "all_golds_at_k", "ndcg_at_k", "bootstrap_ci", "compare", "format_ci",
     # primitives
