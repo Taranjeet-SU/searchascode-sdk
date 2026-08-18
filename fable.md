@@ -25,14 +25,27 @@ construction**, not by narrative.
 
 ### The five commitments (from the review, agreed as the immediate work)
 
-1. **Restore the dense-default gate to HEAD** (FRG-1) — ✅ committed `a8b74a8` on
-   `fix/dense-default-gate` (also stops forging from the forced first hop — part of FRG-2);
-   needs merge to `main`.
-2. **Re-validate the judge properly** (DJ-6..9) — group-split, tune-only calibration,
-   production-identical rendering, beat a tuned `min_ce` threshold or drop the LLM from the gate.
-3. **Fix the pseudo-score feed** (DJ-10) — `agentic.py:214`, `playbook.py:153`.
-4. **Unit-test `primitives.py`** (TEST-5) — the layer the product is named after has ~5 tests.
-5. **Forge artifacts get provenance + a real acceptance bar** (FRG-3/4).
+1. **Restore the dense-default gate to HEAD** (FRG-1) — ✅ merged to `main` (PR #7).
+2. **Re-validate the judge properly** (DJ-6..9) — ◐ protocol fixed 2026-08-18 (`84365d5`):
+   query-grouped split (overlap 52→0), grouped bootstrap, GroupKFold LogReg, shipped renderer.
+   No-LLM references already measured: **min-CE threshold fit on tune scores 0.738 on test —
+   above the shipped LLM judge's 0.700** (LogReg tune→test 0.749). Remaining: re-run the LLM
+   judge itself + few-shot tuning — blocked on an OpenAI API key.
+3. **Fix the pseudo-score feed** (DJ-10) — ✅ `60858a1`: both call sites feed sigmoid'd
+   whole-query CE scores via `dj.candidate_scores`.
+4. **Unit-test `primitives.py`** (TEST-5) — ✅ `60858a1`: 33 tests; caught-class bugs
+   SDK-C15/16/17 fixed in the same commit; `py.typed` ships; pip wheel smoke passes.
+5. **Forge artifacts get provenance + a real acceptance bar** (FRG-3/4) — ☐ next up (WS3).
+
+### Numbers so far (2026-08-18, branch `feat/fable-ws1`)
+
+The no-LLM floors are measured — [`experiments/fable_baselines/README.md`](experiments/fable_baselines/README.md):
+**hybrid ≥ dense on every corpus and the gap widens with hop depth** (HotpotQA 4-hop +0.12
+recall, significant; SU 4-hop +0.11), **whole-query CE rerank hurts multi-hop at every depth**
+(the P1-10 control), and **full-text BM25 still loses to dense on BrowseComp** (bounds BC-2).
+Design consequence adopted below: the gate becomes **best-baseline-default** — the forged
+primitive must beat max(dense, hybrid) on held queries, and the fallback it emits is that
+baseline, not dense unconditionally. SAC/tool/explore arms and the judge re-run need an API key.
 
 ---
 
@@ -232,10 +245,11 @@ retrieval artifacts.*
   treatment: superseding a rule retires the old one from the injected block (contradictory-rules
   bug, FRG-4).
 - **Acceptance gate in the SDK** (FRG-1/3): `HarnessForge.accept(primitive)` runs it on ≥30 held
-  queries against the dense baseline and adopts only on CI-clearing improvement; otherwise emits
-  the dense-default primitive. `min_recall=0.0` and the `0.9×dense` bar die. The gate result is
-  part of provenance. One integration test forges→rejects→falls-back so no merge can drop it
-  silently again.
+  queries against the **best no-LLM baseline — max(dense, hybrid), per the fable_baselines
+  finding that hybrid beats dense on every corpus with widening hop-depth gaps** — and adopts
+  only on CI-clearing improvement; otherwise emits that baseline as the fallback primitive.
+  `min_recall=0.0` and the `0.9×dense` bar die. The gate result is part of provenance. One
+  integration test forges→rejects→falls-back so no merge can drop it silently again.
 - **Attribution + structure honesty** (FRG-2): capture per-hop `{code, ids, marginal_recall}`
   (the `capture` hook exists, unused); credit the hop whose pool contained the golds; classify
   structure by AST (does the winning code fan out?) not regex; author prompt becomes
