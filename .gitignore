@@ -50,3 +50,5 @@ phase4/
 !phase4/__init__.py
 !phase4/answer_gen.py
 !phase4/metrics.py
+experiments/fable_baselines/baselines_su.json
+experiments/fable_baselines/baselines_browsecomp.json

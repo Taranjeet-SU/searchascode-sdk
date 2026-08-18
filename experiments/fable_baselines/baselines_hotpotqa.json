@@ -1,0 +1,151 @@
+{
+  "2hop": {
+    "dense": {
+      "recall@10": 0.935,
+      "all_golds@10": 0.87,
+      "n": 100
+    },
+    "bm25": {
+      "recall@10": 0.945,
+      "all_golds@10": 0.91,
+      "n": 100,
+      "recall_delta_vs_dense": {
+        "delta": 0.01,
+        "lo": -0.04,
+        "hi": 0.055,
+        "significant": false,
+        "n": 100,
+        "paired": true
+      }
+    },
+    "hybrid": {
+      "recall@10": 0.97,
+      "all_golds@10": 0.94,
+      "n": 100,
+      "recall_delta_vs_dense": {
+        "delta": 0.035,
+        "lo": 0.01,
+        "hi": 0.065,
+        "significant": true,
+        "n": 100,
+        "paired": true
+      }
+    },
+    "dense_rerank": {
+      "recall@10": 0.935,
+      "all_golds@10": 0.88,
+      "n": 100,
+      "recall_delta_vs_dense": {
+        "delta": 0.0,
+        "lo": -0.03,
+        "hi": 0.025,
+        "significant": false,
+        "n": 100,
+        "paired": true
+      }
+    }
+  },
+  "3hop": {
+    "dense": {
+      "recall@10": 0.7867,
+      "all_golds@10": 0.6,
+      "n": 100
+    },
+    "bm25": {
+      "recall@10": 0.8867,
+      "all_golds@10": 0.73,
+      "n": 100,
+      "recall_delta_vs_dense": {
+        "delta": 0.1,
+        "lo": 0.0467,
+        "hi": 0.16,
+        "significant": true,
+        "n": 100,
+        "paired": true
+      }
+    },
+    "hybrid": {
+      "recall@10": 0.91,
+      "all_golds@10": 0.79,
+      "n": 100,
+      "recall_delta_vs_dense": {
+        "delta": 0.1233,
+        "lo": 0.08,
+        "hi": 0.1733,
+        "significant": true,
+        "n": 100,
+        "paired": true
+      }
+    },
+    "dense_rerank": {
+      "recall@10": 0.7633,
+      "all_golds@10": 0.54,
+      "n": 100,
+      "recall_delta_vs_dense": {
+        "delta": -0.0233,
+        "lo": -0.0633,
+        "hi": 0.0133,
+        "significant": false,
+        "n": 100,
+        "paired": true
+      }
+    }
+  },
+  "4hop": {
+    "dense": {
+      "recall@10": 0.665,
+      "all_golds@10": 0.28,
+      "n": 100
+    },
+    "bm25": {
+      "recall@10": 0.7525,
+      "all_golds@10": 0.42,
+      "n": 100,
+      "recall_delta_vs_dense": {
+        "delta": 0.0875,
+        "lo": 0.03,
+        "hi": 0.1475,
+        "significant": true,
+        "n": 100,
+        "paired": true
+      }
+    },
+    "hybrid": {
+      "recall@10": 0.785,
+      "all_golds@10": 0.46,
+      "n": 100,
+      "recall_delta_vs_dense": {
+        "delta": 0.12,
+        "lo": 0.0825,
+        "hi": 0.16,
+        "significant": true,
+        "n": 100,
+        "paired": true
+      }
+    },
+    "dense_rerank": {
+      "recall@10": 0.6175,
+      "all_golds@10": 0.23,
+      "n": 100,
+      "recall_delta_vs_dense": {
+        "delta": -0.0475,
+        "lo": -0.085,
+        "hi": -0.0075,
+        "significant": true,
+        "n": 100,
+        "paired": true
+      }
+    }
+  },
+  "_meta": {
+    "embedder": "thenlper/gte-base",
+    "reranker": "cross-encoder ms-marco MiniLM",
+    "pool": 50,
+    "k": 10,
+    "date": "2026-08-18",
+    "caveats": [
+      "no-LLM baseline arms only; SAC/tool arms need an API key",
+      "SU aggregates only; docs are internal (DS-2)"
+    ]
+  }
+}
