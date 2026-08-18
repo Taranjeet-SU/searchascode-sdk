@@ -273,6 +273,29 @@ class HarnessForge:
         self.store.save()
         return name
 
+    def run_subagent(self, name: str, session, query: str, top_k: int = 10) -> list:
+        """Execute a forged subagent's PLAN: run each named skill in order, RRF-fuse the pools.
+
+        The audit found subagents were created, saved, loaded — and consulted by no runtime
+        path (FRG-3: dead artifacts). This is that path. Unknown/failed skills are skipped
+        (they count in the returned ResultSet-shaped id list only by absence — the plan's
+        remaining skills still run)."""
+        sub = self.store.subagents.get(name)
+        if sub is None:
+            raise KeyError(f"no forged subagent named '{name}'")
+        pools = []
+        for skill_name in sub.plan:
+            sk = self.registry.get(skill_name)
+            if sk is None:
+                continue
+            try:
+                ids = sk.run(session, query, top_k=max(top_k, 20))
+                if ids:
+                    pools.append(list(ids))
+            except Exception:
+                continue
+        return fuse_ids(pools)[:top_k] if pools else []
+
     def refine_prompt(self, rule: str, supersedes: Optional[str] = None) -> None:
         """Append an evidence-backed rule. ``supersedes``: a substring — any existing rule
         containing it is RETIRED (archived), so the injected block can't accumulate the

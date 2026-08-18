@@ -109,16 +109,19 @@ def main():
     print(f"[pipeline] corpus={corpus} train={len(train)} val={len(val)} test={len(test)} "
           f"max_hops={max_hops} workers={workers}", flush=True)
 
-    def solve_one(r, judge_stop):
+    def solve_one(r, judge_stop, capture=None):
         per_q = AgentMemory()                         # fresh cross-HOP memory (clean, per query)
         with mlock:
             wins = shared.recall(r["query"], k=3, kind="skill_win")           # cross-query recall (seed)
         for w in wins:
             per_q.remember(w.content, kind="skill_win", **(w.meta or {}))
         seeded = len(wins)
+        # EXPLORE runs with a structure-NEUTRAL author prompt (FRG-2): with the production
+        # "whole" prior, "structure-emergent" was dictated by the prompt, not discovered.
         res = agentic_solve(session, r["query"], gold=r["gold_ids"], generator=gen, judge=judge,
                             skill_lookup=skill, reranker=rr, embedder=embed, judge_stop=judge_stop,
-                            max_hops=max_hops, memory=per_q)
+                            max_hops=max_hops, memory=per_q, capture=capture,
+                            structure_prior="neutral")
         with mlock:
             for m in per_q.longterm[seeded:]:         # harvest NEW skill-wins into the shared store
                 shared.remember(m.content, kind="skill_win", **(m.meta or {}))
@@ -129,19 +132,16 @@ def main():
     slock = threading.Lock()
 
     def explore_one(idx, r):
-        res = solve_one(r, False)
+        cap: list = []
+        res = solve_one(r, False, capture=cap)
         codes = res.get("codes") or []
-        # Hop 1 is FORCED to a raw OpenSearch DSL query by the os_first guarantee
-        # (agentic.py:186) — it is the deliberately-naive opening move, not the strategy that
-        # solved the query. Reading the exemplar from codes[0] taught the forge to reproduce
-        # that opening move, and the synthesized primitive scored 0.000 on held queries every
-        # time (issues.md EXP-6). Structure is still read from hop 1 (that IS the structural
-        # choice); the CODE exemplar comes from the last hop, the one in play when coverage
-        # was reached.
-        struct_code = codes[0] if codes else ""
-        best = codes[-1] if codes else ""
-        d = bool(re.search(r"re\.split|split\(|decompose|for .* in .*(parts|sub)",
-                           (struct_code or "").lower()))
+        # WINNING-HOP attribution (FRG-2): credit the code + structure of the hop that
+        # actually REACHED the final coverage — not hop 1 (the forced raw-OS probe, EXP-6)
+        # and not blindly the last hop. Structure comes from the AST classifier on that hop.
+        final_got = max((c.get("got", 0) for c in cap), default=0)
+        win_row = next((c for c in cap if c.get("got", 0) == final_got and final_got > 0), None)
+        best = (win_row or {}).get("code") or (codes[-1] if codes else "")
+        d = ((win_row or {}).get("structure") == "decompose")
         with slock:
             ex_rec.append(res["all_recall"]); nonlocal_decomp[0] += int(d)
             if res["all_recall"] and res["all_recall"] > 0:
@@ -180,11 +180,24 @@ def main():
     if ok:
         forge.create_code_primitive(name, f"explored on {corpus}: structure-preserving reusable retriever", code)
     struct = "whole-query" if decomp < len(train) / 2 else "decompose"
+    # Derive the skill's retrievers from what the WINNING code actually called (FRG-3) —
+    # the old two-branch ternary flattened whatever was discovered into a hardcoded bag.
+    calls = " ".join(w["code"] for w in winning)
+    retrievers = [r for r, pat in (("dense", "mode='dense'"), ("keyword", "mode='keyword'"),
+                                   ("hybrid", "mode='hybrid'"), ("hyde", "hyde"),
+                                   ("exact", "_search("), ("decompose", "decompose"))
+                  if pat in calls] or ["dense"]
+    if "rerank(" in calls:
+        retrievers.append("rerank")
     forge.create_skill(f"{corpus}_explored_skill", f"explored {struct} strategy for {corpus}",
-                       (["hybrid", "rerank"] if struct == "whole-query" else ["decompose", "hyde", "rerank"]), combine="fuse")
+                       retrievers, combine="fuse",
+                       provenance={"derived_from": f"{len(winning)} winning strategies",
+                                   "call_mix": retrievers})
     forge.create_subagent(f"{corpus}_explored_agent", f"solve via the explored {struct} primitive",
                           plan=[name] if ok else [f"{corpus}_explored_skill"])
-    forge.refine_prompt(f"[{corpus}] discovered structure = {struct} (decomposed {decomp}/{len(train)} in exploration)")
+    # Supersede prior structure verdicts instead of accumulating contradictions (FRG-4).
+    forge.refine_prompt(f"[{corpus}] discovered structure = {struct} (decomposed {decomp}/{len(train)} "
+                        f"in exploration)", supersedes=f"[{corpus}] discovered structure")
     fstore.save()
     print(f"[stage4] forged primitive accepted={ok} · discovered structure={struct} · "
           f"artifacts: code_primitives={list(fstore.code_primitives)} skills={list(fstore.skills)} subagents={list(fstore.subagents)}", flush=True)

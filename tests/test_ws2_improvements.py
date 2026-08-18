@@ -143,3 +143,57 @@ def test_llm_map_batches_and_survives_failures():
     assert out[0].startswith("OK:alpha"[:8]) and out[2].startswith("OK:gamma"[:8])
     assert out[1] == ""                                  # failed item yields "", batch survives
     assert P.llm_map([], "x", complete) == []
+
+
+# ---------------------------------------- FRG-2/3: attribution + subagent runtime
+def test_classify_structure_ast():
+    from search_as_code.harness.agentic import classify_structure
+    whole = "def run(session, query, top_k):\n    return session.search(query, top_k=top_k, mode='dense').ids()"
+    loop = ("def run(session, query, top_k):\n"
+            "    pools = [session.search(s, top_k=10).ids() for s in query.split(' and ')]\n"
+            "    return fuse_ids(pools)[:top_k]")
+    manual = ("def run(session, query, top_k):\n"
+              "    a = session.search('festival location seattle', top_k=10).ids()\n"
+              "    b = session.search('festival dates 1969', top_k=10).ids()\n"
+              "    c = session.search('organizer name', top_k=10).ids()\n"
+              "    return fuse_ids([a, b, c])[:top_k]")
+    assert classify_structure(whole) == "whole"
+    assert classify_structure(loop) == "decompose"
+    assert classify_structure(manual) == "decompose"     # the case the old regex missed
+
+
+def test_neutral_prior_removes_the_whole_query_default():
+    from search_as_code.harness.agentic import build_author_system
+    s = sac.Session("memory"); s.add([{"id": "1", "text": "x"}])
+    whole = build_author_system(s)                        # production default
+    neutral = build_author_system(s, structure_prior="neutral")
+    assert "Do NOT decompose" in whole or "keep the query WHOLE" in whole
+    assert "Do NOT decompose" not in neutral
+    assert "equally valid" in neutral
+
+
+def test_capture_carries_got_and_structure():
+    from search_as_code.harness.agentic import agentic_solve
+    s = _session()
+    cap = []
+    emb = s.embedder.embed
+    agentic_solve(s, "topic", gold=["0"], generator=_StubGen(), judge=_FailJudge(),
+                  judge_stop=False, embedder=emb, reranker=lambda q, ts: [0.0] * len(ts),
+                  max_hops=2, capture=cap)
+    assert cap and all("got" in c and c["structure"] in ("whole", "decompose") for c in cap)
+
+
+def test_run_subagent_executes_the_plan():
+    from search_as_code.harness.forge import HarnessForge, HarnessStore
+    from search_as_code.harness.skills import SkillRegistry
+    s = sac.Session("memory")
+    s.add([{"id": "g", "text": "the target document about festivals"},
+           {"id": "d", "text": "unrelated cooking text"}])
+    forge = HarnessForge(HarnessStore(), SkillRegistry())
+    forge.create_skill("s_dense", "dense", ["dense"])
+    forge.create_subagent("agent_x", "test", plan=["s_dense", "no_such_skill"])
+    ids = forge.run_subagent("agent_x", s, "festivals target", top_k=2)
+    assert "g" in ids                                     # ran the plan, skipped the unknown skill
+    import pytest
+    with pytest.raises(KeyError):
+        forge.run_subagent("missing_agent", s, "q")
