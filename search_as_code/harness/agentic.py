@@ -226,7 +226,11 @@ def agentic_solve(session, query, *, gold=None, max_hops=10, generator=None, jud
                      f"EXACT constraint (year/date/phrase/proper-name), ESCALATE — author a raw "
                      f"session.store._search bool/match_phrase over `text` on those literal terms and fuse with "
                      f"dense. Keep the query WHOLE unless it genuinely needs several different documents.")
-        memory.observe(f"hop{hop}: {diagnosis}  -> retrieved {len(ids)} (covered {got}/{len(goldset) or '?'})",
+        # DJ-11: the true gold-coverage count must NOT reach the prompt in judge-stop
+        # ("no-oracle") mode — findings are recalled into the strategist prompt every hop,
+        # so writing `covered got/len` leaked the oracle into the arm that claims not to see it.
+        cov_note = f" (covered {got}/{len(goldset)})" if (goldset and not judge_stop) else ""
+        memory.observe(f"hop{hop}: {diagnosis}  -> retrieved {len(ids)}{cov_note}",
                        kind="finding")               # cross-hop memory write
         prior = "\n".join(f"{i}: {t[:80]}" for i, t in zip(cids[:5], ctexts[:5]))
 
