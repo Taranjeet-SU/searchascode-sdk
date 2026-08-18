@@ -129,8 +129,18 @@ def main():
 
     def explore_one(idx, r):
         res = solve_one(r, False)
-        best = res["codes"][0] if res["codes"] else ""   # FIRST hop = the initial structural choice
-        d = bool(re.search(r"re\.split|split\(|decompose|for .* in .*(parts|sub)", (best or "").lower()))
+        codes = res.get("codes") or []
+        # Hop 1 is FORCED to a raw OpenSearch DSL query by the os_first guarantee
+        # (agentic.py:186) — it is the deliberately-naive opening move, not the strategy that
+        # solved the query. Reading the exemplar from codes[0] taught the forge to reproduce
+        # that opening move, and the synthesized primitive scored 0.000 on held queries every
+        # time (issues.md EXP-6). Structure is still read from hop 1 (that IS the structural
+        # choice); the CODE exemplar comes from the last hop, the one in play when coverage
+        # was reached.
+        struct_code = codes[0] if codes else ""
+        best = codes[-1] if codes else ""
+        d = bool(re.search(r"re\.split|split\(|decompose|for .* in .*(parts|sub)",
+                           (struct_code or "").lower()))
         with slock:
             ex_rec.append(res["all_recall"]); nonlocal_decomp[0] += int(d)
             if res["all_recall"] and res["all_recall"] > 0:
@@ -178,43 +188,70 @@ def main():
     print(f"[stage4] forged primitive accepted={ok} · discovered structure={struct} · "
           f"artifacts: code_primitives={list(fstore.code_primitives)} skills={list(fstore.skills)} subagents={list(fstore.subagents)}", flush=True)
 
-    # STAGE 5 — validate forged primitive on TRAINING (replicate)
-    prim = reg.get(name)
-    tr_rec = []
-    if prim:
-        for r in train:
+    # STAGE 4b — THE DENSE-DEFAULT GATE.
+    # README: "adopts the forged primitive only if it BEATS plain dense on held queries;
+    # otherwise it emits session.search(mode='dense'). So SAC never underperforms dense."
+    # That gate did not exist (issues.md EXP-5): when the forge was rejected, `reg.get(name)`
+    # returned None, stages 5 and 7 silently skipped every query, and `np.mean(...) if x else 0`
+    # printed **0.000** — reporting "no primitive was produced" as "the primitive retrieved
+    # nothing", which is the pipeline's headline number.
+    def _dense_ids(q, k=20):
+        try:
+            return session.search(q, top_k=k, mode="dense").ids()
+        except Exception:
+            return []
+
+    dense_held = [_recall(r["gold_ids"], _dense_ids(r["query"]))[0] for r in held_list]
+    dense_mean = float(np.mean(dense_held)) if dense_held else 0.0
+    beats_dense = bool(ok and held_mean > dense_mean)
+    selected = "forged" if beats_dense else "dense"
+    print(f"[stage4b] dense-default gate: forged={held_mean:.3f} vs dense={dense_mean:.3f} "
+          f"on {len(held_list)} held -> SELECTED **{selected}**", flush=True)
+
+    prim = reg.get(name) if beats_dense else None
+
+    def _run_selected(q, k=20):
+        """What the pipeline actually deploys: the forged primitive, or dense if the gate
+        rejected it. Never returns [] just because nothing was forged."""
+        if prim is not None:
             try:
-                ids = prim.run(session, r["query"], top_k=20)
+                return prim.run(session, q, top_k=k)
             except Exception:
-                ids = []
-            tr_rec.append(_recall(r["gold_ids"], ids)[0])
-    print(f"[stage5] forged primitive on TRAIN recall@20={np.mean(tr_rec) if tr_rec else 0:.3f} "
+                return _dense_ids(q, k)
+        return _dense_ids(q, k)
+
+    # STAGE 5 — validate the SELECTED strategy on TRAINING (replicate)
+    tr_rec = [_recall(r["gold_ids"], _run_selected(r["query"]))[0] for r in train]
+    print(f"[stage5] {selected} strategy on TRAIN recall@20={np.mean(tr_rec) if tr_rec else 0:.3f} "
           f"(exploration was {np.mean(ex_rec):.3f})", flush=True)
 
-    # STAGE 7 — run on TEST with the new primitive
+    # STAGE 7 — run on TEST with the SELECTED strategy (forged, or dense per the gate)
     te10, te20 = [], []
-    if prim:
-        for r in test:
-            try:
-                ids = prim.run(session, r["query"], top_k=20)
-            except Exception:
-                ids = []
-            r20, r10 = _recall(r["gold_ids"], ids)
-            te20.append(r20); te10.append(r10)
+    for r in test:
+        r20, r10 = _recall(r["gold_ids"], _run_selected(r["query"]))
+        te20.append(r20); te10.append(r10)
     out = {"corpus": corpus, "max_hops": max_hops,
            "stage1_explore_recall@20": round(float(np.mean(ex_rec)), 3), "decomposed": f"{decomp}/{len(train)}",
            "discovered_structure": struct,
            "stage3_validate_judgestop@20": round(float(np.mean(vj)), 3), "stage3_oraclestop@20": round(float(np.mean(vo)), 3),
-           "stage5_forge_on_train@20": round(float(np.mean(tr_rec)) if tr_rec else 0, 3),
-           "stage7_test_recall@10": round(float(np.mean(te10)) if te10 else 0, 3),
-           "stage7_test_recall@20": round(float(np.mean(te20)) if te20 else 0, 3),
+           # `selected` says WHICH strategy these numbers describe. Reporting a bare 0 when
+           # nothing was forged conflated "no primitive" with "primitive retrieved nothing".
+           "selected_strategy": selected,
+           "gate_forged_on_held@20": round(held_mean, 3),
+           "gate_dense_on_held@20": round(dense_mean, 3),
+           "forge_accepted": bool(ok),
+           "stage5_train@20": round(float(np.mean(tr_rec)), 3) if tr_rec else None,
+           "stage7_test_recall@10": round(float(np.mean(te10)), 3) if te10 else None,
+           "stage7_test_recall@20": round(float(np.mean(te20)), 3) if te20 else None,
            "artifacts": {"code_primitives": list(fstore.code_primitives), "skills": list(fstore.skills),
                          "subagents": list(fstore.subagents), "rules": fstore.learnings},
            "forged_code": code if ok else None}
     (HERE / f"explore_pipeline_{corpus}.json").write_text(json.dumps(out, indent=2))
     print(f"\n===== [{corpus}] explore pipeline =====")
     for k in ("discovered_structure", "stage1_explore_recall@20", "stage3_validate_judgestop@20",
-              "stage3_oraclestop@20", "stage5_forge_on_train@20", "stage7_test_recall@10", "stage7_test_recall@20"):
+              "stage3_oraclestop@20", "selected_strategy", "gate_forged_on_held@20",
+                 "gate_dense_on_held@20", "forge_accepted", "stage5_train@20",
+                 "stage7_test_recall@10", "stage7_test_recall@20"):
         print(f"  {k}: {out[k]}")
     print(f"  artifacts: {out['artifacts']}")
 
