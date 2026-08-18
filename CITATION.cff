@@ -1,0 +1,20 @@
+cff-version: 1.2.0
+message: "If you use this software or its results, please cite it as below."
+title: "search-as-code: an agentic retrieval harness with one primitive API over any vector database"
+abstract: >-
+  Search-as-Code is a code-mode retrieval harness: instead of calling a fixed search endpoint,
+  the LLM writes a short Python program against a unified primitive API, executed in a sandbox
+  with intermediate state kept out of the model context. The same program runs over any vector
+  database. The repository also contains the controlled experiments behind the claims, and an
+  audit log of their limitations.
+type: software
+authors:
+  - name: "search-as-code contributors"
+repository-code: "https://github.com/oro-jackson/searchascode-sdk"
+license: Apache-2.0
+keywords:
+  - retrieval-augmented generation
+  - agentic retrieval
+  - code mode
+  - vector search
+  - information retrieval

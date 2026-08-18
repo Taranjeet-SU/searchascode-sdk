@@ -1,0 +1,132 @@
+"""search-as-code — one API, any vector database.
+
+A unified "search as code" agentic harness: agents write portable Python against
+a single primitive API, executed in a sandbox with intermediate state kept out
+of the model context, regardless of which vector DB is underneath.
+
+Quickstart:
+
+    import search_as_code as sac
+
+    s = sac.Session("memory")                       # any backend, same call
+    s.add([{"id": "1", "text": "hello world"}])
+    hits = s.search("hello", top_k=3)
+    print(hits.to_evidence())
+"""
+
+from .adapters import MemoryStore, VectorStore, available, connect, register
+from .embeddings import Embedder, HashEmbedder, as_embedder, get_embedder
+from .errors import (
+    BackendError,
+    BackendNotFoundError,
+    ConfigurationError,
+    DimensionMismatchError,
+    EmbeddingError,
+    ExtractorRequiredError,
+    GeneratorRequiredError,
+    InvalidArgumentError,
+    InvalidEmbedderError,
+    InvalidFilterError,
+    InvalidModeError,
+    MissingDependencyError,
+    SacError,
+)
+from .explore import (
+    TEMPLATE_DOCS,
+    TEMPLATE_NAMES,
+    Explorer,
+    ProfilePack,
+    TemplateRouter,
+    explore,
+)
+from .harness import (
+    AgentMemory,
+    DiagnosticJudge,
+    Harness,
+    HarnessForge,
+    HarnessStore,
+    SkillLookup,
+    SkillRegistry,
+    agentic_solve,
+    diagnostic_solve,
+    triage,
+)
+from .metrics import (
+    all_golds_at_k,
+    bootstrap_ci,
+    compare,
+    format_ci,
+    ndcg_at_k,
+    recall_at_k,
+)
+from .primitives import (
+    abstain,
+    auto_filter,
+    confidence,
+    consensus,
+    content_type,
+    decompose,
+    dedup,
+    diversity_quota,
+    expand,
+    extract,
+    fan_out,
+    freshness,
+    fuse,
+    max_similarity,
+    mmr,
+    normalize_query,
+    normalize_scores,
+    quality_filter,
+    rare_terms,
+    relative_score_fusion,
+    rephrase,
+    rerank,
+    result_diversity,
+    rrf,
+    score_cliff,
+    score_cutoff,
+    topics,
+)
+from .rerankers import CrossEncoderReranker, QwenReranker
+from .sandbox import ExecResult, LocalExecutor, Sandbox
+from .session import Session, route
+from .surface import SAC_SYSTEM  # the LLM-facing prompt surface ships with the wheel (DOC-1/SDK-R8)
+from .types import Capabilities, Document, Hit, ResultSet
+
+__version__ = "0.1.0"
+
+__all__ = [
+    # data model
+    "Document", "Hit", "ResultSet", "Capabilities",
+    # backends
+    "connect", "register", "available", "VectorStore", "MemoryStore",
+    # embeddings
+    "Embedder", "HashEmbedder", "as_embedder", "get_embedder",
+    # harness
+    "Session", "route", "Sandbox", "LocalExecutor", "ExecResult",
+    # exploration / onboarding
+    "explore", "ProfilePack", "Explorer", "TemplateRouter", "TEMPLATE_NAMES", "TEMPLATE_DOCS",
+    "Harness", "AgentMemory", "SkillRegistry", "triage",
+    # the harness entry points the README leads with — previously you had to know
+    # the submodule path to reach them
+    "agentic_solve", "diagnostic_solve", "DiagnosticJudge",
+    "HarnessForge", "HarnessStore", "SkillLookup",
+    # metrics (with uncertainty — see metrics.compare / bootstrap_ci)
+    "recall_at_k", "all_golds_at_k", "ndcg_at_k", "bootstrap_ci", "compare", "format_ci",
+    # primitives
+    "fan_out", "fuse", "dedup", "rerank", "freshness", "extract",
+    "mmr", "expand", "decompose", "rephrase", "rrf", "topics", "auto_filter", "score_cutoff",
+    "normalize_scores", "relative_score_fusion", "diversity_quota", "confidence", "abstain",
+    "normalize_query", "rare_terms", "quality_filter",
+    "consensus", "score_cliff", "result_diversity", "max_similarity", "content_type",
+    # the LLM-facing prompt surface
+    "SAC_SYSTEM",
+    # rerankers
+    "CrossEncoderReranker", "QwenReranker",
+    # errors
+    "SacError", "ConfigurationError", "BackendNotFoundError", "MissingDependencyError",
+    "InvalidArgumentError", "InvalidModeError", "InvalidFilterError",
+    "DimensionMismatchError", "InvalidEmbedderError", "GeneratorRequiredError",
+    "ExtractorRequiredError", "EmbeddingError", "BackendError",
+]
