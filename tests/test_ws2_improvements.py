@@ -102,3 +102,44 @@ def test_max_subfacts_caps_the_decomposition():
                   embedder=emb, reranker=lambda q, ts: [0.0] * len(ts),
                   max_hops=3, max_subfacts=2)
     assert captured and all(len(sf) <= 2 for sf in captured)
+
+
+# --------------------------------------------- coverage_fuse + llm_map (WS5)
+def _hit(id, score):
+    from search_as_code.types import Document, Hit
+    return Hit(id=id, score=score, document=Document(id=id, text=f"t {id}"))
+
+
+def test_coverage_fuse_reserves_every_subquestion_a_slot():
+    from search_as_code.types import ResultSet
+    import search_as_code.primitives as P
+    # THE multi-gold failure mode: sub-questions A and C retrieve overlapping docs whose RRF
+    # contributions ACCUMULATE (2 lists each), so sub-question B's lone gold (1 list) can
+    # never reach plain-RRF top-3 — exactly how a dominant aspect crowds out a needed doc.
+    a = ResultSet([_hit(f"a{i}", 1.0 - i * 0.01) for i in range(10)])
+    c = ResultSet([_hit(f"a{i}", 0.9 - i * 0.01) for i in range(10)])   # same docs as a
+    b = ResultSet([_hit("b_gold", 0.2)])
+    assert "b_gold" not in P.fuse([a, c, b]).top(3).ids()   # plain RRF drops it
+    fused = P.coverage_fuse([a, c, b], top_k=3)
+    assert "b_gold" in fused.ids()                          # coverage_fuse reserves its slot
+
+
+def test_coverage_fuse_dedups_reserved_and_respects_top_k():
+    from search_as_code.types import ResultSet
+    import search_as_code.primitives as P
+    a = ResultSet([_hit("x", 1.0), _hit("y", 0.9)])
+    b = ResultSet([_hit("x", 0.8)])                      # same top hit as a
+    out = P.coverage_fuse([a, b], top_k=2)
+    assert out.ids()[0] == "x" and len(out) == 2
+
+
+def test_llm_map_batches_and_survives_failures():
+    import search_as_code.primitives as P
+    def complete(prompt):
+        if "boom" in prompt:
+            raise RuntimeError("sub-LM failed")
+        return "OK:" + prompt.rsplit("ITEM:\n", 1)[1][:5]
+    out = P.llm_map(["alpha", "boom", "gamma"], "Tag it.", complete, concurrency=2)
+    assert out[0].startswith("OK:alpha"[:8]) and out[2].startswith("OK:gamma"[:8])
+    assert out[1] == ""                                  # failed item yields "", batch survives
+    assert P.llm_map([], "x", complete) == []

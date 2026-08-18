@@ -65,6 +65,7 @@ from .primitives import (
     confidence,
     consensus,
     content_type,
+    coverage_fuse,
     decompose,
     dedup,
     diversity_quota,
@@ -73,6 +74,7 @@ from .primitives import (
     fan_out,
     freshness,
     fuse,
+    llm_map,
     max_similarity,
     mmr,
     normalize_query,
@@ -120,6 +122,7 @@ __all__ = [
     "normalize_scores", "relative_score_fusion", "diversity_quota", "confidence", "abstain",
     "normalize_query", "rare_terms", "quality_filter",
     "consensus", "score_cliff", "result_diversity", "max_similarity", "content_type",
+    "coverage_fuse", "llm_map",
     # the LLM-facing prompt surface
     "SAC_SYSTEM",
     # rerankers
