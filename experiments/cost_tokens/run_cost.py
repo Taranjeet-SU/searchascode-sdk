@@ -133,10 +133,22 @@ def main():
                 and len(per[r["tag"]]) < n and (per[r["tag"]].append(r) or True)]
         rows = [r for tag in sorted(per) for r in per[tag]]
     chat = agents.lc_chat()
+
+    # Crash-proof + resumable: per-query rows flush to the JSONL as they complete, and prior
+    # rows are reloaded on restart (learned the hard way — a spend-limit 429 killed a run at
+    # 250/300 with nothing persisted; the LEG-5 lesson applied to this script's own output).
+    pq_path = HERE / f"cost_{corpus}_perquery.jsonl"
+    records = []
+    if pq_path.exists():
+        records = [json.loads(ln) for ln in pq_path.open() if ln.strip()]
+        have = {r["qid"] for r in records}
+        rows = [r for r in rows if r["qid"] not in have]
+        print(f"[cost] resuming: {len(records)} rows already done, {len(rows)} to go", flush=True)
+    pq_file = pq_path.open("a")
     print(f"[cost] corpus={corpus} n={len(rows)} workers={workers} budget={budget}", flush=True)
 
     lock = threading.Lock()
-    records, done, t0 = [], 0, time.time()
+    done, t0 = 0, time.time()
 
     def one(r):
         nonlocal done
@@ -177,6 +189,8 @@ def main():
 
         with lock:
             records.append(res)
+            pq_file.write(json.dumps(res) + "\n")
+            pq_file.flush()
             done += 1
             if done % 10 == 0:
                 print(f"[cost] {done}/{len(rows)} ({time.time()-t0:.0f}s)", flush=True)
@@ -210,9 +224,7 @@ def main():
 
     stem = HERE / f"cost_{corpus}"
     stem.with_suffix(".json").write_text(json.dumps(out, indent=2))
-    with open(f"{stem}_perquery.jsonl", "w") as f:
-        for r in records:
-            f.write(json.dumps(r) + "\n")
+    pq_file.close()                                   # rows were flushed incrementally
 
     print(f"\n===== {corpus} cost (n={len(records)}, budget={budget}) =====")
     print(f"  {'arm':6s} {'r@10':>6s} {'lat_s':>7s} {'turns':>6s} {'srch':>5s} "
