@@ -1976,3 +1976,17 @@ found. Observed on qid 331 (dense 1.00, sac_product 0.00, judge FAILed to the 5-
 **FIXED** 2026-08-18 — weighted RRF: the vetted baseline pool gets weight 2.0 vs 1.0 for
 escalation pools, so escalation can add coverage but cannot evict what the gate already
 vetted. The judge's BrowseComp false-FAIL rate itself remains the WS2 item.
+
+#### 🟨 LOG-1 `[C]` Two sections share the number `## 17.`, breaking the append-only log's addressing
+`issues.md:1648` (`## 17. Found by an external review pass (2026-08-18) …`) and `issues.md:1891`
+(`## 17. Reproducing explore + forge on `main` (2026-08-18)`) were appended independently on the
+same day and collide:
+```bash
+grep -nE '^## 17\.' issues.md    # -> two hits
+```
+Harmless to content, but the log is referenced by section number throughout (`§7`, `§13`, `§14`
+supersede one another), so a duplicate makes "see §17" ambiguous and will keep drifting as more
+sections land. The append-only rule forbids renumbering an existing section, so the fix is
+forward-only: **the next section is §19**, and cross-references should cite the entry tag
+(`EXP-5`, `DJ-14`) rather than the section number. Recording it so the collision is deliberate
+and documented rather than silently confusing.
