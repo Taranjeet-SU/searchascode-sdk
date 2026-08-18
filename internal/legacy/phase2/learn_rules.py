@@ -32,11 +32,11 @@ Choose the SINGLE most useful, generalizable rule. Prefer alias/glossary/synonym
 
 
 def mine(dataset: str, n: int, max_cases: int, split: str = "train"):
-    from phase2 import beir
+    from internal.legacy.phase2 import beir
     q, qr, index = beir.eval_data(dataset)
     # Mine on the TRAIN split only. This used to take the first n of the same ordered
     # dict that impact_eval evaluates on, leaking 80% of the eval set (P2-1).
-    from phase2.splits import pick
+    from internal.legacy.phase2.splits import pick
     qids = pick(qr, split, n=None)[:n] if split != "all" else \
         [x for x in qr if any(v > 0 for v in qr[x].values())][:n]
     print(f"[mine] dataset={dataset} split={split} n_qids={len(qids)}", flush=True)
