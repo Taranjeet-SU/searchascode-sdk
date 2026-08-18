@@ -32,9 +32,13 @@ N = common.N_QUERY_VARIANTS
 
 
 def lc_chat(model: str = common.LLM_MODEL, temperature: float = 0.0):
+    import os
+
     from langchain_openai import ChatOpenAI
 
-    return ChatOpenAI(model=model, temperature=temperature)
+    base = os.environ.get("OPENAI_BASE_URL")         # e.g. a local ollama endpoint
+    kw = {"base_url": base} if base else {}
+    return ChatOpenAI(model=model, temperature=temperature, **kw)
 
 
 def _account(usage: Usage, msg) -> None:

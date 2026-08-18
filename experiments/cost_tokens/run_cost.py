@@ -173,7 +173,9 @@ def main():
     # Crash-proof + resumable: per-query rows flush to the JSONL as they complete, and prior
     # rows are reloaded on restart (learned the hard way — a spend-limit 429 killed a run at
     # 250/300 with nothing persisted; the LEG-5 lesson applied to this script's own output).
-    pq_path = HERE / f"cost_{corpus}_perquery.jsonl"
+    import os
+    tag = os.environ.get("SAC_COST_TAG", "")          # e.g. "_qwen3-8b" — keeps models' rows apart
+    pq_path = HERE / f"cost_{corpus}{tag}_perquery.jsonl"
     records = []
     if pq_path.exists():
         by_qid = {}
@@ -296,7 +298,8 @@ def main():
                 out["by_tag"].setdefault(tag, {})[a] = {
                     m: round(sum(r[a][m] for r in sub) / len(sub), 4) for m in metrics}
 
-    stem = HERE / f"cost_{corpus}"
+    out["config"]["llm_model"] = common.LLM_MODEL
+    stem = HERE / f"cost_{corpus}{tag}"
     stem.with_suffix(".json").write_text(json.dumps(out, indent=2))
     pq_file.close()                                   # rows were flushed incrementally
 

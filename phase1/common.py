@@ -26,7 +26,9 @@ EMB_MODEL = "thenlper/gte-base"   # 768-d, matches the taxonomy stack
 DIM = 768
 INDEX = "fiqa"
 OS_HOST = {"host": "127.0.0.1", "port": 9200}
-LLM_MODEL = "gpt-4.1-mini"
+# SAC_LLM_MODEL overrides the generator model (e.g. a local ollama model like "qwen3:8b",
+# paired with OPENAI_BASE_URL=http://localhost:11434/v1 OPENAI_API_KEY=ollama).
+LLM_MODEL = os.environ.get("SAC_LLM_MODEL", "gpt-4.1-mini")
 
 # Fairness knob: both SAC and tool-calling reformulate the query into exactly this
 # many formulations (original + N-1 rephrasings), so query expansion is controlled.

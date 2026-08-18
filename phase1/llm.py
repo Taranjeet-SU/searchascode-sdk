@@ -65,9 +65,15 @@ class LLM:
         return resp
 
     def complete(self, prompt: str, system: str | None = None) -> str:
+        if self.model.startswith("qwen3"):
+            prompt = prompt + " /no_think"           # Qwen3 soft switch: no <think> preamble
         msgs = ([{"role": "system", "content": system}] if system else []) + \
                [{"role": "user", "content": prompt}]
-        return self.chat(msgs).choices[0].message.content or ""
+        text = self.chat(msgs).choices[0].message.content or ""
+        if "<think>" in text:                        # strip any residual reasoning block
+            import re as _re
+            text = _re.sub(r"<think>.*?</think>\s*", "", text, flags=_re.DOTALL)
+        return text
 
     def as_generator(self):
         """Adapt to the SDK's ``generate(prompt) -> list[str]`` contract
