@@ -46,6 +46,7 @@ are unavailable (mark them `unavailable`, not `miss`).
 default in the shipped SDK**: `docs/EXPLORE.md`'s own quickstart is `explorer.fit(n=5000)` with no
 flags, which silently labels a degenerate template space. The two failure modes look identical in
 the output (`light_dense` dominates), so a user cannot tell which one they hit.
+**FIXED** (pre-2026-08-18, annotated 2026-08-18) — availability gating: unavailable templates are recorded as unavailable, not labeled (`explore/templates.py:275-296`).
 
 #### 🟥 SDK-A2 `[A]` The router still reports the metric the repo says it abandoned
 `open_problems.md` #3 states CV classification accuracy is a misleading routing metric and that "all
@@ -54,6 +55,7 @@ headline numbers now use the realized task metric". But the shipped training sub
 (`explore/training.py:476-483`), and `Explorer.train()` records `cv_acc` / `vs_fixed` into the pack
 manifest (`explore/engine.py:200-205`). There is **no realized-recall evaluator anywhere in the
 SDK** — the correction lives only in the experiment write-ups.
+**FIXED** (pre-2026-08-18, annotated 2026-08-18) — `realized_recall` evaluator + `primary_metric` note (`explore/training.py:544-595`). Residue: `engine.py:207-212` manifest still records `cv_acc`; `docs/EXPLORE.md` still headlines it (see §17 OPM-1).
 
 #### 🟥 SDK-A3 `[A]` The "self-improving harness" has no real reward, so it learns from noise
 `default_verify` accepts any non-empty id list with score `1.0` (`harness/loop.py:19-21`). Three
@@ -74,6 +76,7 @@ BrowseComp shape — is classified `multi_hop` → `decompose_arsenal` → `dept
 path. That is exactly the structure `experiments/deep_judge/README.md` §5 shows is *wrong* for
 conjunctive corpora (decompose 0.025 vs dense 0.079 recall@10). `agentic_solve` fixed this for the
 authored-strategy path; `Harness`/`triage` still hardcodes it.
+**FIXED** (pre-2026-08-18, annotated 2026-08-18) — strong/weak multi-hints + entity counting (`harness/triage.py:31-47,:96-108`).
 
 #### 🟧 SDK-A5 `[A]` "Validate-before-keep" is documented as an invariant but never implemented
 `explore/engine.py:61-64` defines `Stage.validate()` and the module docstring makes rejecting
@@ -111,6 +114,7 @@ if not k.startswith("_") and k not in _ALLOWED and not isinstance(k, str):
 JSON object keys are always `str`, so `not isinstance(k, str)` is always `False` and the whole
 condition can never fire. Only the `_BANNED` set is actually enforced — the docstring's promise
 ("only read-only query clauses are allowed") is not met. Fix: drop the `isinstance` clause.
+**FIXED** (pre-2026-08-18, annotated 2026-08-18) — allowlist condition corrected; documented at `os_query.py:83`.
 
 #### 🟥 SDK-C2 `[C]` The OpenSearch adapter silently drops `$and` / `$or` / `$not` filters
 `adapters/opensearch.py:143-144` skips any key starting with `$` (`# nested and/or omitted in
@@ -118,12 +122,14 @@ reference adapter`), while `filters.validate()` **accepts** those operators and 
 promises boundary validation so that "server-side adapters that would otherwise silently drop bad
 operators fail fast". Net effect: `search(filter={"$or": [...]})` runs **unfiltered** and returns
 more results than requested, with no error. Either translate them or raise.
+**FIXED** (pre-2026-08-18, annotated 2026-08-18) — `$and`/`$or`/`$not` translated to bool clauses (`adapters/opensearch.py:203-229`); unsupported operators raise.
 
 #### 🟥 SDK-C3 `[C]` `$eq` filters on string metadata match nothing on OpenSearch
 `_to_filter` emits `{"term": {field: val}}` (`adapters/opensearch.py:147`). Dynamically-mapped
 string metadata is indexed as `text` + a `.keyword` sub-field, so a `term` query on the bare field
 does not match. Equality filters therefore fail *closed* (zero hits) on the backend the whole repo
 runs on.
+**FIXED** (pre-2026-08-18, annotated 2026-08-18) — `_term_field` routes string equality to the `.keyword` sub-field (`adapters/opensearch.py:171`).
 
 #### 🟥 SDK-C4 `[C]` Random `sample()` makes the corpus fingerprint change every run, defeating resume/drift
 `corpus_fingerprint` hashes `store.sample(12)` and calls it "deterministic-ish"
@@ -132,6 +138,7 @@ runs on.
 every invocation → `fingerprint_changed()` is always True → `run_pipeline` re-runs **every stage
 every time**, and resumability only works on `MemoryStore` (whose `sample` is deterministic
 first-n — see SDK-C10). Fix: seed the random_score, or fingerprint on `count` + a sorted-id sample.
+**FIXED** (pre-2026-08-18, annotated 2026-08-18) — seeded `random_score` sample (`adapters/opensearch.py:49,:67`, the P4-4 port).
 
 #### 🟥 SDK-C5 `[C]` The 4-way failure taxonomy is structurally broken on OpenSearch
 `classify_failure` computes semantic similarity from `d.vector` of docs returned by `store.get()`
@@ -141,6 +148,7 @@ first-n — see SDK-C10). Fix: seed the random_score, or fingerprint on `count` 
 also low) or `synonym_metadata`. `rank_collision` requires `best_lex >= lex_lo`, so the taxonomy
 that commit 953daf9 shipped as a headline is mislabelling every OpenSearch query. Fix: re-embed the
 gold text (as `duplication_scan` already does) instead of reading `d.vector`.
+**FIXED** (pre-2026-08-18, annotated 2026-08-18) — gold text re-embedded instead of reading stripped `d.vector` (`explore/training.py:421-425`).
 
 #### 🟧 SDK-C6 `[C]` `templates.regex()` can never hit on OpenSearch
 `explore/templates.py:121-127` passes `re.escape(code)` to `mode="regex"`. `query_regex` runs a
@@ -154,6 +162,7 @@ check-then-load (`rerankers.py:24-31`, `:61-75`). `agentic_solve`/`run_explore_p
 worker threads sharing one reranker, so N threads can enter `_ensure` concurrently and each load a
 copy of the model. This is a plausible root cause of the CHANGELOG's standing gotcha ("Qwen
 reranker OOMs with >2 workers"). Fix: a `threading.Lock` around `_ensure`.
+**FIXED** (pre-2026-08-18, annotated 2026-08-18) — `threading.Lock` around `_ensure` in both rerankers (`rerankers.py:24,:68`).
 
 #### 🟧 SDK-C8 `[C]` `AgentMemory.remember()` rewrites the whole file per call and is not thread-safe
 `harness/memory.py:81-84` appends then calls `save()`, which truncates and rewrites every item →
@@ -184,6 +193,7 @@ per call — O(N · tokens) per keyword search, no index, no caching. `explore/m
 `predict()` and `route_plan()` return `"all_rerank"` when `self.model is None`
 (`explore/router.py:101`, `:111`). `TEMPLATE_NAMES` contains no such entry, so the value KeyErrors
 in `run_template` — the unfitted-router path is untested and broken. (Nearest real name: `deep_all`.)
+**FIXED** (pre-2026-08-18, annotated 2026-08-18) — unfitted fallback is the real template `deep_all` (`explore/router.py:45`).
 
 #### 🟨 SDK-C13 `[C]` `consensus()`'s extra signals are lost on the next chained call
 `primitives.consensus` attaches `.agreement`, `.votes`, `.n_lists` to the returned `ResultSet`
@@ -330,6 +340,7 @@ the SAC half of the test silently disappears rather than failing loudly.
 `pyproject.toml:70-71`). `test_units.py:test_emulates_missing_modes_on_dense_only_backend` uses a
 hand-rolled fake instead. Bugs like SDK-C2/C3 (OpenSearch filter translation) are invisible because
 `test_opensearch.py:77` only checks simple equality on a numeric field.
+**FIXED** (pre-2026-08-18, annotated 2026-08-18) — `tests/test_conformance.py` parametrized over installed backends, in CI. Coverage gap for qdrant/pgvector/nmslib/milvus tracked in §17 TEST-5.
 
 #### 🟧 TEST-4 `[C]` The suite structurally cannot see the resume/drift bug
 `tests/test_explore.py:272 test_fingerprint_detects_drift` runs on `MemoryStore`, whose `sample()`
@@ -347,6 +358,7 @@ is deterministic first-n. On the OpenSearch adapter the same fingerprint is rand
   and OpenSearch is the backend every experiment uses.
 - No extras exist for `faiss`, `sqlite`, `nmslib`, `milvus`, yet `adapters.available()` and the
   README badge advertise them as backends.
+**FIXED** (pre-2026-08-18, annotated 2026-08-18) — `learn`/`learn-xgb` extras added; `opensearch-py` in `all`; `transformers>=4.40,<5` bound.
 
 #### 🟧 CI-1 `[A]` CI lints and type-checks only `search_as_code/`
 `.github/workflows/ci.yml` runs `ruff check search_as_code` and `mypy search_as_code`. Everything
@@ -383,6 +395,7 @@ the wheel**. A `pip install search-as-code` user gets the primitives with no pro
 decision rules, and no chaining recipes — the part the docs call the mechanism. `SAC_SYSTEM` is
 7,667 chars of exactly the guidance the SDK needs to be usable as documented and it lives in the
 internal harness (`grep -rn SAC_SYSTEM` → `phase1/` only).
+**FIXED** (pre-2026-08-18, annotated 2026-08-18) — the surface moved into the package as `search_as_code/surface.py`; 2026-08-18: also exported as `sac.SAC_SYSTEM` and verified present in the wheel.
 
 #### 🟧 DOC-2 `[C]` `docs/CACHING.md` documents an affordance that does not exist
 It claims progressive disclosure works via "a `help(primitive)` / `list_primitives` affordance the
@@ -600,6 +613,7 @@ explore.fit._rephrase(session, "q", n=3)       # -> ['What year was Film A relea
 **Fix:** make the consumers accept both shapes — `txt = "\n".join(out) if isinstance(out, list) else str(out)`
 (which `explore/stages.py:235` already does correctly for `_gen_queries`) — or give `Session` a
 `complete()`-style single-string generator slot alongside the list one.
+**FIXED** (pre-2026-08-18, annotated 2026-08-18) — shared `_genutil.py` helper; consumers accept both generator shapes (see `session.py:141`).
 
 #### 🟧 GEN-2 `[C]` The same promotion introduced the bug the experiment version doesn't have
 `experiments/multi_hop_synth_queries/generate.py:89-96` calls `llm.complete()` (raw string) and
@@ -939,6 +953,7 @@ session, it embeds a local username and session UUID, and **`bc_common.py` is on
 (GOV-1). For anyone else the file is unrunnable, and one `/tmp` cleanup makes the 830-query
 BrowseComp line unreproducible here too. Move the qrels into the experiment directory (or an env var
 with a clear error).
+**FIXED** 2026-08-18 — qrels re-fetched from texttron/BrowseComp-Plus into `experiments/browsecomp/data/qrel_golds.txt` (2,407 lines) and `bc_common.py` repointed; sanity: 830 queries, 2.9 golds/query, dense gte-base R@10 0.0705 (~published 0.0624, harness-subset difference).
 
 #### 🟧 BC-2 `[A]` The BrowseComp keyword/hybrid arms index 6 % of each document
 `bc_common.py:19-22`: `KW_CHARS = 2000` — "BrowseComp-Plus docs are long (~33KB avg). A pure-Python
@@ -1678,6 +1693,7 @@ regardless of query: top3_ratio=0.611, cliff=0.5 — so the prompt rule "cliff >
 those same signals had real spread (top3_ratio mean 0.906, 119–164 distinct values). The judge was
 validated on informative signals and deployed on degenerate ones — a plausible cause of in-loop
 `stop_correct` 0.467–0.567 sitting far below the offline 0.700.
+**FIXED** 2026-08-18 `60858a1` — both call sites now feed `dj.candidate_scores` (sigmoid of whole-query CE logits) instead of 1/(rank+1).
 
 #### 🟥 DJ-11 `[A]` Stage 3's "validate WITHOUT the oracle" leaks gold coverage into the prompt, and the two arms share memory
 `run_explore_pipeline.py:118` passes `gold=r["gold_ids"]` with `judge_stop=True`; inside the loop
@@ -1705,6 +1721,7 @@ lines apart; `run_explore_pipeline.py:6` and `:103` still say "tuned to the ~0.7
 own `explore_pipeline_browsecomp.json` (judge-stop 0.054 vs oracle 0.119 = 45%). Also: the
 "supervised ceiling 0.725" row in `deep_judge/README.md:24` has **no producing artifact** anywhere
 in the repo.
+**FIXED** 2026-08-18 `60858a1` — README pipeline steps 2-3 and run_explore_pipeline.py:6/:103 restated to the measured 0.700 [0.613, 0.789] + honest judge-vs-oracle gaps. The unsourced 'supervised ceiling 0.725' row still stands in deep_judge/README.md.
 
 #### 🟨 DJ-14 `[C]` The fresh validation renders a different input format than the shipped judge, and the critic saw an inverted verdict
 `validate_judge.py:49-57` defines its own user-message format, differing from the production
@@ -1783,18 +1800,21 @@ live session); `CodePrimitive.to_skill` swallows every exception and returns `[]
 `primitives.py:342-344` returns hits with **original** scores; `ResultSet.top()` re-sorts by score
 (`types.py:113`). Verified: MMR order ['aligned_lowscore','offaxis_highscore'] → after `.top(2)`
 reversed. `surface.py:49` teaches exactly this chain to the model.
+**FIXED** 2026-08-18 `60858a1` — mmr writes the strictly-decreasing MMR objective back as the score; `tests/test_primitives.py::test_mmr_order_survives_top`.
 
 #### 🟧 SDK-C16 `[C]` The SDK-C13 `.info` fix is half-done: signals still die on the exact path the prompt teaches
 `types.py:64-67` claims side signals propagate across chained calls, but only `_derive`-based
 methods (`top`/`where`/`dedup`) carry them; `rerank`, `fuse`, `normalize_scores` construct fresh
 ResultSets and drop them. Verified: `consensus().agreement` = 1.0 → after `rerank()` = 0.0.
 `surface.py:215-216` instructs the model to remember `cons.agreement` and then `sac.rerank(...)`.
+**FIXED** 2026-08-18 `60858a1` — `.info` now survives fuse/relative_score_fusion/consensus (merged, degraded summed) and rerank/normalize_scores/score_cutoff/diversity_quota/freshness/mmr (passed through); test `test_info_survives_every_chaining_primitive`.
 
 #### 🟧 SDK-C17 `[C]` `normalize_scores` maps singleton/tied lists to 0.0, collapsing `relative_score_fusion`
 `primitives.py:113` (`rng = (hi-lo) or 1.0`) gives a single-hit list score 0.0, so
 `relative_score_fusion` of two singleton lists returns everything tied at 0.0 — total ranking
 collapse in a primitive documented as "often beats RRF" (`primitives.py:121-123`). Map singletons
 to 1.0 (or preserve rank by epsilon).
+**FIXED** 2026-08-18 `60858a1` — singleton/all-tied lists normalize to 1.0; regression test on relative_score_fusion of singletons.
 
 #### 🟧 SDK-C18 `[A]` Keyword/regex emulation is not behavior-preserving, and `hybrid` exists four times with two pool sizes
 `Session._regex` (`session.py:457-467`) **embeds the regex pattern as a dense query** and scans only
@@ -1819,6 +1839,7 @@ in hop 1 poisons all later hops; `surface.py:19,:157` promise `query` in scope b
 `_build_namespace` never injects it (`phase1/agents.py:165` patches the private `box._globals` from
 outside); 9 of 26 primitives are missing from the namespace while `expand`/`decompose` are injected
 with an arity the model can't call (`sandbox.py:76-77` — `expand(query)` → TypeError).
+**PARTIALLY FIXED** 2026-08-18 `60858a1` — timeout (per-thread trace hook), stdout cap, per-run rebinding of injected names, `query` injection, full primitive set with generator-bound expand/decompose; the misleading escape test replaced with honest robustness tests. Still open: real isolation backend (by design), C-level-call overrun.
 
 #### 🟨 SDK-R8 `[R]` Dead audit-fix APIs and unread capability fields
 `ResultSet.mark_degraded`/`.degraded` (`types.py:96-110`) — the LEG-5 fix — have **zero callers**
@@ -1843,6 +1864,7 @@ despite the mypy CI gate. `tests/test_diagnostic_playbook.py` loads a real model
 the wheel does not ship.
 
 ### open_problems.md — staleness audit (the file has never been substantively edited)
+**PARTIALLY FIXED** 2026-08-18 `60858a1` — `tests/test_primitives.py` (33 tests) covers the whole primitives layer; `py.typed` ships (PEP 561). Still open: conformance for qdrant/pgvector/nmslib/milvus; the hanging playbook test.
 
 #### 🟨 OPM-1 `[A]` open_problems.md status lines predate the 08-13→08-18 work; three of eight are now wrong or misleading
 The file's only commit is `bf4ed25` (tracking/de-linking). Current reality per item: **#3** is DONE
