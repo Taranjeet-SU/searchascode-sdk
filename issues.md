@@ -1627,3 +1627,289 @@ Two compounding faults, both worth fixing rather than just noting:
    smoke import catches it.
 **FIXED** 2026-08-18 on `fix/post-merge-paths`. Cross-references MRG-1, which this entry shows
 was not actually fixed by the commit that claimed it.
+
+---
+
+## 17. Found by an external review pass (2026-08-18) — judge validity, forge/loop integrity, primitives correctness
+
+Four parallel review sweeps (SDK primitives, deep judge, explore→forge, open_problems staleness)
+over HEAD `3bec64f`. Everything below is new — not restatements of §1–§16. Reproduction commands
+were run where stated.
+
+### Deep judge — the corrected numbers are themselves not clean
+
+#### 🟥 DJ-6 `[A]` The tune/test split leaks at the query level: 52 of ~76 test queries were also tuned on
+`experiments/deep_judge/validate_judge.py:34-46` (same in `tune_judge.py:53-70`) shuffles the 200
+examples stratified **by label only**. Each query contributes two examples (shallow top-5 + deep
+top-10) with the same question, sub-facts and gold — so tune and test share **52 queries** (measured:
+76 distinct per split, overlap 52). Every "held-out" number in `deep_judge/README.md` §1, including
+the corrected 0.700 [0.613, 0.789], is partially in-sample. The bootstrap also resamples examples
+i.i.d., ignoring the 2-per-query clustering, so the ±0.09 intervals are *narrower* than the truth.
+Fix: split by query id (GroupShuffleSplit), bootstrap by query.
+
+#### 🟥 DJ-7 `[A]` The shipped prompt's CE thresholds were calibrated on all 200 examples — test half included
+`experiments/deep_judge/augment_ce.py:37-42` computes min-CE separability over the **full** eval set
+(PASS 1.50 vs FAIL −4.04, reproduced), and `search_as_code/harness/diagnostic_judge.py:39-54` bakes
+exactly those cut points (0.1 / −0.5 / −1.5) into the prompt ("# Calibrated ce thresholds."). The
+"held-out 100" therefore scores a rule whose parameters saw it. Recalibrate on the tune half only.
+
+#### 🟥 DJ-8 `[C]` The DJ-5 LogReg headline 0.722 ± 0.039 is a row-ordering artifact; grouped CV says it *ties* the judge
+`validate_judge.py:143` feeds `tune + test` (a list blocked by split and label) to
+`cross_val_score(..., cv=5)`, which uses **unshuffled** StratifiedKFold. Re-running the identical
+code: tune+test order → 0.7219 ± 0.0390 (matches the published number exactly); natural file order →
+0.7052 ± 0.0750. Under `GroupKFold` by query (fixing the shallow/deep pairing leak) → **0.699 ±
+0.067**. So the honest DJ-5 statement is "a cheap classifier **ties** the judge", not beats it — and
+a fold-std is being displayed next to a bootstrap 95% CI as if comparable.
+
+#### 🟥 DJ-9 `[A]` The judge is behaviorally a one-feature threshold — and the shipped threshold is mis-set
+The shipped judge's TEST confusion matrix (`judge_validation_test.json`: tp=37 tn=33 fp=14 fn=16)
+is **identical** to the rule the prompt literally states, `min_i ce_i > 0.1`, applied directly to the
+same 100 examples (bal-acc 0.700, same matrix). Sliding that one threshold: −0.5 → 0.719, −1.0 →
+0.738, **−1.5 → 0.785** (+0.085, larger than every effect §1 of the README discusses; test-tuned, so
+an upper bound — but the direction stands). The LLM adds no PASS/FAIL accuracy over the single
+feature it is told to threshold, and the threshold it ships is far from optimal. A tuned `min_ce`
+gate is the baseline this component must beat; on present evidence it does not.
+
+#### 🟥 DJ-10 `[C]` Production feeds the judge 1/(rank+1) pseudo-scores, making 3 of its 9 signals constant and pinning `buried` on
+`harness/agentic.py:214` and `harness/playbook.py:153` construct candidates with
+`score = 1.0/(rank+1)`. `score_signals` (`diagnostic_judge.py:92-102`) on that input is constant
+regardless of query: top3_ratio=0.611, cliff=0.5 — so the prompt rule "cliff > 0.3 or top3_ratio
+< 0.85 ⇒ buried" (`diagnostic_judge.py:67`) fires on **every hop, forever**. In the validation set
+those same signals had real spread (top3_ratio mean 0.906, 119–164 distinct values). The judge was
+validated on informative signals and deployed on degenerate ones — a plausible cause of in-loop
+`stop_correct` 0.467–0.567 sitting far below the offline 0.700.
+
+#### 🟥 DJ-11 `[A]` Stage 3's "validate WITHOUT the oracle" leaks gold coverage into the prompt, and the two arms share memory
+`run_explore_pipeline.py:118` passes `gold=r["gold_ids"]` with `judge_stop=True`; inside the loop
+`agentic.py:228` writes `"... (covered {got}/{len(goldset)})"` to memory as a finding, and
+`agentic.py:104,:179` feeds findings back into the strategist prompt — so the true gold-coverage
+count is in-prompt every hop of the "no-oracle" arm, biasing judge-stop **upward** (the honest 45%
+oracle-recovery on BrowseComp is an upper bound). Both arms also run concurrently over the same
+rows while writing cross-query `skill_win`s into one shared `AgentMemory`
+(`run_explore_pipeline.py:106,:121-123,:152-158`), so they are not independent. (Plain
+`agentic_solve(..., gold=None)` is unaffected — this is experiment-protocol only.)
+
+#### 🟧 DJ-12 `[A]` "The value is the DIAGNOSIS, not PASS/FAIL" is asserted in five places and tested in none
+Stated at `diagnostic_judge.py:9,:20-23,:37-38`, `deep_judge/README.md:72-77`, `README.md:188`,
+all pointing at §2 (n=30, no CIs, sign flips: HotpotQA global 0.467 vs diagnostic 0.433, SU 0.333
+vs 0.533). The comparison is confounded: the diagnostic arm also gets a different assembly
+(`allocate_reserve`, `run_playbook.py:150-153`) which the README separately credits for the
+multi-hop fix. The one arm that isolates targeting (`widen`, same reserve assembly, untargeted —
+`run_playbook.py:172-179`) ran only at n=12 and shows **diagnostic = global** (`playbook_4hop.json`:
+0.333 vs 0.333). The load-bearing claim for keeping the LLM in the loop is currently untested.
+
+#### 🟧 DJ-13 `[C]` The 0.72-ceiling retraction did not propagate: three tree locations still assert it, and README contradicts itself
+`README.md:113` ("validated to the ~0.72 signal ceiling") vs `README.md:188` (the correction), 75
+lines apart; `run_explore_pipeline.py:6` and `:103` still say "tuned to the ~0.72 signal ceiling".
+`README.md:114` ("confirm its recall matches the oracle-stopped run") is contradicted by the repo's
+own `explore_pipeline_browsecomp.json` (judge-stop 0.054 vs oracle 0.119 = 45%). Also: the
+"supervised ceiling 0.725" row in `deep_judge/README.md:24` has **no producing artifact** anywhere
+in the repo.
+
+#### 🟨 DJ-14 `[C]` The fresh validation renders a different input format than the shipped judge, and the critic saw an inverted verdict
+`validate_judge.py:49-57` defines its own user-message format, differing from the production
+renderer (`diagnostic_judge.py:121-131`) and the tuning renderer (`judge_core.py:52-65`) — so it
+validates the shipped system prompt against a non-shipped input format. Separately
+`tune_judge.py:94` renders `judge said VERDICT={e['oracle_pass'] and 'FAIL' or 'PASS'}` — inverted —
+two lines above the correct `ORACLE TRUTH:` line, so the critic LLM tuned against self-contradictory
+transcripts.
+
+#### 🟨 DJ-15 `[C]` DJ-4 resolved: the tuned round-7 prompt was simply never shipped
+Diff of `diagnostic_judge.py`'s prompt vs `best_prompt_ce_same.txt`: 2,964 vs 2,992 chars, exactly
+two line differences (a typographic apostrophe; a missing clause "or support borderline cases").
+Reproducing round-0's confusion matrix is therefore expected, not mysterious. Closes DJ-4's open
+question; per DJ-2 the 2-example difference is noise either way.
+
+### Explore→forge — the loop does not close, and its honesty mechanism fell out of the tree
+
+#### 🟥 FRG-1 `[A]` The dense-default gate is absent from HEAD; the README asserts a guarantee no code enforces
+Commit `e0b1d89` added the gate (`DENSE_CODE` / `stage4_selected` / `dense_held` in
+`run_explore_pipeline.py`), and `git merge-base --is-ancestor e0b1d89 HEAD` confirms ancestry — but
+`grep -n "dense_held\|DENSE_CODE\|stage4_selected" experiments/deep_judge/run_explore_pipeline.py`
+on HEAD `3bec64f` → no hits: the deep-sac→main merge restored the older lineage's copy (MRG-4/MRG-5
+class, previously unlogged instance). HEAD's stage 4 accepts on `mean > 0.0`
+(`run_explore_pipeline.py:73`). Meanwhile `README.md:139-142` ("So SAC never underperforms dense"),
+`README.md:194`, and `qwen8b_sac/README.md:73-83` present the gate as standing, and the v2/v3
+qwen8b artifacts are not reproducible from HEAD. A restoration is in progress on
+`fix/dense-default-gate` (uncommitted at review time).
+
+#### 🟥 FRG-2 `[A]` "Structure-emergent" is largely predetermined by the harness, and structure is attributed to the wrong hop
+Three compounding causes: (1) `os_first=True` (default, `agentic.py:144`) forces hop 1 to raw-OS
+DSL with a deterministic fallback (`agentic.py:186,:73-100`), and the structure classifier reads
+**`codes[0]` only** (`run_explore_pipeline.py:133`) via a regex for `re.split|split(|decompose` — so
+on any OpenSearch corpus "whole-query" is near-guaranteed regardless of what won
+(`qwen8b_sac/explore_pipeline_browsecomp_qwen8b_v3.json`: `"decomposed": "0/50"`); (2) recall may
+come from hop 4 while hop 1's code gets the credit; (3) `AUTHOR_SYSTEM` itself instructs "DEFAULT =
+DENSE … keep the query WHOLE … Do NOT decompose by default" (`agentic.py:40,:53-57`) — the prompt
+dictates the structure the pipeline reports as discovered. The `decomposed=` flag (`agentic.py:235`)
+also only tests for `re.split`/`split(` and mislabels manual decomposition. The one genuinely
+emergent contrast in `deep_judge/README.md:192-200` is n=3 vs n=5. Fix: classify from the winning
+hop, under a structure-neutral author prompt.
+
+#### 🟧 FRG-3 `[C]` Forge acceptance bars are vacuous-to-thin, the forged "skill" is not derived from the winning code, and the subagent is never executed
+`forge_from_exploration`'s `min_recall` defaults to **0.0** (`run_explore_pipeline.py:51,:73`); the
+SDK path accepts on one held query with ≥1 gold found (`forge.py:279-285`); the only dense-relative
+bar accepts up to 10% *worse* than dense (`reforge_and_full.py:82`, `>= 0.9 * dense_held`). The
+forged `LearnedSkill` is picked from two **hardcoded** retriever lists by a boolean
+(`run_explore_pipeline.py:172-173`) — the discovered structure is flattened into an unordered bag of
+RRF pools where "rerank" is a peer pool, not a final stage (`forge.py:50-62`, `skills.py:198-204`).
+`LearnedSubagent` is created, saved, loaded — and consulted by **no runtime path**.
+
+#### 🟧 FRG-4 `[C]` Forge artifacts carry no provenance, and `learnings.md` feeds the loop contradictory instructions
+`HarnessStore.save` (`forge.py:183-190`) records no timestamp, held-set metric, corpus fingerprint,
+source strategies, or version; `create_skill` silently overwrites by name (`forge.py:215-222`).
+`learnings.md` dedups exact strings only (`forge.py:242-246`), so
+`forge_store_browsecomp_explored/learnings.md` simultaneously asserts "structure = decompose (1/2)",
+"decompose (6/6)" and "whole-query (39/274)", and `learnings_block` injects the last 12 rules into
+prompts (`forge.py:195-197`). The artifacts on disk are already mutually inconsistent:
+`explore_pipeline_browsecomp.json` records `forged_code: null` / stage5 = stage7 = 0 (the pipeline's
+forge **failed**) while the store beside it holds a primitive written later by `reforge_and_full.py`
+— and `deep_judge/README.md:236-241` narrates stage 4 as if the pipeline forged it, disclosing the
+substitution only in a footnote.
+
+#### 🟧 FRG-5 `[C]` The multi-hop "unseeded" control is contaminated, and forge execution swallows errors at load and at run
+`eval_fair.py:191-193` puts `forged` in `TOOL_SCHEMAS` unconditionally — described to the model as
+"the primitive sac.explore FORGED on this corpus" — and for unseeded arms it silently degrades to
+hybrid (`eval_fair.py:97-98`), so baselines are told a forged primitive exists and get an extra
+retrieval mode. `HarnessForge.__init__` `exec`s every persisted primitive at construction
+(`forge.py:209-213`) in a porous namespace (`forge.py:68-101`: `getattr`, an `__import__` shim, the
+live session); `CodePrimitive.to_skill` swallows every exception and returns `[]`
+(`forge.py:121-128`), as do pipeline stages 5/7 (`run_explore_pipeline.py:186-189,:198-201`) — so
+"broken primitive" and "primitive found nothing" record the same number (LEG-5's shape, again).
+
+### Primitives layer — correctness defects invisible because the layer has almost no tests
+
+#### 🟧 SDK-C15 `[C]` `mmr` never writes MMR scores back, so `.top()` silently undoes the diversification
+`primitives.py:342-344` returns hits with **original** scores; `ResultSet.top()` re-sorts by score
+(`types.py:113`). Verified: MMR order ['aligned_lowscore','offaxis_highscore'] → after `.top(2)`
+reversed. `surface.py:49` teaches exactly this chain to the model.
+
+#### 🟧 SDK-C16 `[C]` The SDK-C13 `.info` fix is half-done: signals still die on the exact path the prompt teaches
+`types.py:64-67` claims side signals propagate across chained calls, but only `_derive`-based
+methods (`top`/`where`/`dedup`) carry them; `rerank`, `fuse`, `normalize_scores` construct fresh
+ResultSets and drop them. Verified: `consensus().agreement` = 1.0 → after `rerank()` = 0.0.
+`surface.py:215-216` instructs the model to remember `cons.agreement` and then `sac.rerank(...)`.
+
+#### 🟧 SDK-C17 `[C]` `normalize_scores` maps singleton/tied lists to 0.0, collapsing `relative_score_fusion`
+`primitives.py:113` (`rng = (hi-lo) or 1.0`) gives a single-hit list score 0.0, so
+`relative_score_fusion` of two singleton lists returns everything tied at 0.0 — total ranking
+collapse in a primitive documented as "often beats RRF" (`primitives.py:121-123`). Map singletons
+to 1.0 (or preserve rank by epsilon).
+
+#### 🟧 SDK-C18 `[A]` Keyword/regex emulation is not behavior-preserving, and `hybrid` exists four times with two pool sizes
+`Session._regex` (`session.py:457-467`) **embeds the regex pattern as a dense query** and scans only
+the top max(top_k·20, 200) dense hits — a doc matching at dense rank 5,000 is invisible; regex's
+contract is exhaustive exact match. `Session._keyword` (`session.py:442-447`) emulates BM25 with
+`|q∩d|/|q|` overlap (no IDF, no length norm) over a dense pool. `hybrid` is implemented in
+`memory.py:148-153`, `faiss_store.py:113-117`, `nmslib_store.py:92-96` (byte-identical, top_k·4)
+and a fourth time in `session.py:449-455` with **top_k·3** — so native and emulated hybrid provably
+return different sets, against the README's "`mode="hybrid"` behaves the same everywhere". Also:
+`adapters/memory.py:151`, `faiss_store.py:116`, `nmslib_store.py:95` import `primitives.fuse`
+upward with a "avoid cycle" deferred import — the adapter layer reaching into the layer above it.
+
+#### 🟧 SDK-C19 `[C]` The sandbox test asserts an escape is blocked that falls to a one-liner; no timeout/output cap; namespace poisoning persists across hops
+`tests/test_units.py:105-112` asserts open/import are blocked, but
+`Document.__init__.__globals__['__builtins__']` returns full builtins and
+`().__class__.__base__.__subclasses__()` walks out (both verified ok=True) — the classes injected at
+`sandbox.py:66-68` hand back `__globals__`. `sandbox.py:8-10` honestly disclaims the boundary; the
+test manufactures false confidence in the disclaimed property. Robustness independent of security:
+no timeout/memory/recursion/output cap (`sandbox.py:96-97`; truncation is cosmetic, `:41`); the
+namespace is built once and only `evidence` is reset per run (`sandbox.py:60,:93`) so `fuse = None`
+in hop 1 poisons all later hops; `surface.py:19,:157` promise `query` in scope but
+`_build_namespace` never injects it (`phase1/agents.py:165` patches the private `box._globals` from
+outside); 9 of 26 primitives are missing from the namespace while `expand`/`decompose` are injected
+with an arity the model can't call (`sandbox.py:76-77` — `expand(query)` → TypeError).
+
+#### 🟨 SDK-R8 `[R]` Dead audit-fix APIs and unread capability fields
+`ResultSet.mark_degraded`/`.degraded` (`types.py:96-110`) — the LEG-5 fix — have **zero callers**
+repo-wide while the 61 bare `except Exception` sites it was built for still swallow silently, and
+the same idea is separately implemented on `ctx.degraded` (`explore/templates.py:66,:76-78`).
+`Capabilities.multi_vector` is never read; `native_rerank` is set by 7 adapters and consumed by
+nobody; `max_top_k` is guarded (`session.py:44`) but **no adapter sets it** — OpenSearch's hard
+10,000 `max_result_window` therefore surfaces as a raw backend error instead of the typed one.
+`quality_filter` has zero callsites. `surface.py`'s own docstring says it was moved into the package
+so pip users get the prompt surface, but `__init__.py` never imports it — `sac.SAC_SYSTEM` →
+AttributeError.
+
+#### 🟧 TEST-5 `[C]` 21 of 26 primitives have zero tests; conformance covers 5 of 9 adapters despite its own docstring; no `py.typed`
+Grep of every primitive name across `tests/`: only freshness/mmr/fuse/extract/decompose/dedup appear;
+zero tests for consensus, score_cutoff, normalize_scores, relative_score_fusion, diversity_quota,
+confidence, abstain, rerank, fan_out and 12 more — which is why SDK-C15/C16/C17 survived the audit
+sweep. `test_conformance.py:6-7` cites nmslib/milvus "zero tests" as motivation but `BACKENDS`
+(`:66-72`) covers only memory/sqlite/faiss/chroma/opensearch — qdrant, pgvector, nmslib, milvus
+still have none. `search_as_code/py.typed` does not exist, so the wheel ships no type information
+despite the mypy CI gate. `tests/test_diagnostic_playbook.py` loads a real model in `_make()`
+(`:43-56`) and hangs >60 s in the default suite; it and `test_genutil.py` import `phase1`, which
+the wheel does not ship.
+
+### open_problems.md — staleness audit (the file has never been substantively edited)
+
+#### 🟨 OPM-1 `[A]` open_problems.md status lines predate the 08-13→08-18 work; three of eight are now wrong or misleading
+The file's only commit is `bf4ed25` (tracking/de-linking). Current reality per item: **#3** is DONE
+in the trainer (`training.py:544-595`, realized_recall + headroom — supersedes SDK-A2) but
+`explore/engine.py:207-212` still writes only `cv_acc`/`vs_fixed` into the pack manifest and
+`docs/EXPLORE.md:40,:61-62` still headline CV accuracy; **#6** is half-obsolete — the DiagnosticJudge
+*is* the built, validated stop (judge-vs-oracle measured on three corpora), and the proposed
+value-gate was **measured** (DJ-5's LogReg) but never built into the loop; **#2** — triage
+(`triage.py:61,:108`) is a rule-based **2-value** depth (single|multi), not the proposed 3-class
+router, and no experiment evaluates it (cost saved / recall vs always-deep unmeasured); **#1/#8** —
+class rebalancing and the orthogonal-template redesign were never run (no
+`class_weight|focal|rebalanc` outside `validate_judge.py:117`), though the SDK-A1 availability-gate
+fix removed one mechanical confound; agentic_solve supersedes the template router on the recommended
+path while `docs/EXPLORE.md` still sends users to the 16-way router with no cross-reference; **#5**
+— agentic_solve's pool accumulation (`agentic.py:196-198`) removes the overwrite mechanism but no
+deep-vs-one-shot ablation was re-run, and P1-2's asymmetry caveat applies to the old monotone
+numbers; **#4** holds and is still the shipped default (`playbook.py:32-39`); **#7** improved
+modestly (BrowseComp all-golds 0.029→0.048 at gte-base) but the lever is retriever strength, and
+FRG-1 currently unenforces the forged==dense guarantee. Fix: add dated status annotations per item
+(append-style, like this file), and cross-link `docs/EXPLORE.md` ↔ `agentic_solve`.
+
+---
+
+## 17. Reproducing explore + forge on `main` (2026-08-18)
+
+Ran the documented default pipeline end to end on HotpotQA to confirm `main` works:
+`python -m experiments.deep_judge.run_explore_pipeline hotpot 8 6 12 4 4`.
+Exploration reproduced (recall@20 0.875–0.969 across runs), but the forge and the reported
+headline did not.
+
+#### 🟥 EXP-5 `[A]` The README's "dense-default gate" guarantee is not implemented anywhere
+`README.md:139` states: *"a **dense-default selection gate** adopts the forged primitive only if
+it beats plain dense on held queries; otherwise it emits `session.search(mode='dense')`. So SAC
+never underperforms dense."*
+```bash
+grep -rn "dense-default\|dense_default" --include='*.py' search_as_code/ experiments/   # -> no matches
+```
+There is no such gate. In `run_explore_pipeline.py`, `prim = reg.get(name)` is only populated
+when the forge is accepted; on rejection `prim is None`, stages 5 and 7 skip every query, and
+`round(float(np.mean(x)) if x else 0, 3)` reports **0** — so the pipeline's headline was
+`stage7_test_recall@20: 0` when the truth was "no primitive was produced, and nothing fell back
+to dense". First observed run: stage1 explore 0.875, stage7 **0.000**.
+**FIXED** 2026-08-18 — stage 4b implements the gate (forged vs dense on the held set, strict `>`
+so a tie goes to the cheaper arm), `_run_selected()` deploys the winner, and the report now
+carries `selected_strategy` / `gate_forged_on_held@20` / `gate_dense_on_held@20` /
+`forge_accepted`, with `None` rather than `0` when a stage did not run. Post-fix on the same
+inputs: gate `forged=0.000 vs dense=0.850 -> dense`, stage7 recall@10 **0.729** / @20 **0.750**.
+
+#### 🟥 EXP-6 `[A]` The forge was trained on the FORCED first hop, so its primitive scored 0.000 every time
+`run_explore_pipeline.py` captured its exemplar as `best = res["codes"][0]`, commented "FIRST hop
+= the initial structural choice". But `agentic.py:186-187` **forces** hop 1 to a raw OpenSearch
+DSL query whenever `os_first=True` (the default, and one of the three advertised explore
+guarantees). So every exemplar handed to `forge_from_exploration` was the deliberately-naive
+opening move, not the strategy in play when gold coverage was reached. The synthesized primitive
+faithfully reproduced that opening move and returned ~nothing:
+`[stage4] forge validation mean recall@20 over 5 held = 0.000 · accepted=False · code_primitives=[]`.
+Confirmed by construction: feeding `forge_from_exploration` hand-written exemplars of the
+*fused* shape (raw DSL + dense, `fuse_ids`) yields `ok=True, mean_held_recall=1.000` on the same
+corpus and session — the forge itself was never broken, only its training signal.
+**FIXED** 2026-08-18 — structure detection still reads hop 1 (that genuinely is the structural
+choice), but the code exemplar now comes from the last hop. Post-fix:
+`forge validation 0.850 · accepted=True · code_primitives=['hotpot_explored_primitive']`.
+
+#### 🟨 EXP-7 `[C]` `pip install` and the packaging surface verified clean on `main`
+Recorded as a positive so a later change that breaks it is visibly a regression. Wheel builds
+(49 modules), installs into a clean venv, and the README quickstart runs; every declared extra
+resolves (`core / opensearch / qdrant / chroma / faiss / learn / dev / all`); a real
+`pip install 'search-as-code[learn]'` brings sklearn and exposes the top-level entry points
+(`agentic_solve`, `explore`, `Harness`, `DiagnosticJudge`, `HarnessForge`, `triage`,
+`bootstrap_ci`); and `search_as_code/surface.py` is present in the wheel, so DOC-1 stays fixed.
