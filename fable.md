@@ -23,29 +23,60 @@ input tokens, widening with hop depth). Everything else in this plan exists to m
 claims — quality parity with dense, learned per-corpus skills, a trustworthy judge — true **by
 construction**, not by narrative.
 
-### The five commitments (from the review, agreed as the immediate work)
+### The five commitments — ALL FIVE LANDED (2026-08-18, branch `feat/fable-ws1`)
 
-1. **Restore the dense-default gate to HEAD** (FRG-1) — ✅ merged to `main` (PR #7).
-2. **Re-validate the judge properly** (DJ-6..9) — ◐ protocol fixed 2026-08-18 (`84365d5`):
-   query-grouped split (overlap 52→0), grouped bootstrap, GroupKFold LogReg, shipped renderer.
-   No-LLM references already measured: **min-CE threshold fit on tune scores 0.738 on test —
-   above the shipped LLM judge's 0.700** (LogReg tune→test 0.749). Remaining: re-run the LLM
-   judge itself + few-shot tuning — blocked on an OpenAI API key.
-3. **Fix the pseudo-score feed** (DJ-10) — ✅ `60858a1`: both call sites feed sigmoid'd
-   whole-query CE scores via `dj.candidate_scores`.
-4. **Unit-test `primitives.py`** (TEST-5) — ✅ `60858a1`: 33 tests; caught-class bugs
-   SDK-C15/16/17 fixed in the same commit; `py.typed` ships; pip wheel smoke passes.
-5. **Forge artifacts get provenance + a real acceptance bar** (FRG-3/4) — ☐ next up (WS3).
+1. **Restore the dense-default gate** (FRG-1) — ✅ merged to `main` (PR #7).
+2. **Re-validate the judge properly** (DJ-6..9/14) — ✅ `84365d5`+`5fe89da`: query-grouped split
+   (overlap 52→0), grouped bootstrap, shipped renderer, no-LLM references. **Result: the shipped
+   judge scores 0.771 [0.666, 0.870] leak-free** — the published 0.700 was a measurement artifact
+   (private render format + leaky split). No-LLM floors: min-CE-fit-on-tune 0.738, LogReg 0.749 —
+   the judge leads, within CI at n=100. Remaining (WS2): swappable StopGate + few-shot tuning.
+3. **Fix the pseudo-score feed** (DJ-10) — ✅ `60858a1`; plus the DJ-11 oracle-leak fix (`5fe89da`).
+4. **Unit-test `primitives.py`** (TEST-5) — ✅ `60858a1`: 33 tests; SDK-C15/16/17 fixed same
+   commit; `py.typed` ships; pip wheel smoke passes end-to-end.
+5. **Forge provenance + a real acceptance bar** (FRG-3/4) — ✅ `88f9407`:
+   `HarnessForge.accept_code_primitive` (best-baseline gate, in the SDK, with tests), provenance
+   on every artifact, `superseded.jsonl` archiving, contradictory-rule retirement.
 
 ### Numbers so far (2026-08-18, branch `feat/fable-ws1`)
 
-The no-LLM floors are measured — [`experiments/fable_baselines/README.md`](experiments/fable_baselines/README.md):
-**hybrid ≥ dense on every corpus and the gap widens with hop depth** (HotpotQA 4-hop +0.12
-recall, significant; SU 4-hop +0.11), **whole-query CE rerank hurts multi-hop at every depth**
-(the P1-10 control), and **full-text BM25 still loses to dense on BrowseComp** (bounds BC-2).
-Design consequence adopted below: the gate becomes **best-baseline-default** — the forged
-primitive must beat max(dense, hybrid) on held queries, and the fallback it emits is that
-baseline, not dense unconditionally. SAC/tool/explore arms and the judge re-run need an API key.
+**No-LLM floors** ([`experiments/fable_baselines/README.md`](experiments/fable_baselines/README.md)):
+hybrid ≥ dense on every corpus, gap widens with hop depth (HotpotQA 4-hop +0.12 significant;
+SU 4-hop +0.11); whole-query CE rerank hurts multi-hop at every depth (the P1-10 control);
+full-text BM25 still loses to dense on BrowseComp (bounds BC-2). Consequence adopted: the gate
+is **best-baseline-default** (max of dense, hybrid), implemented in the SDK.
+
+**Judge** — 0.771 [0.666, 0.870] leak-free (vs 0.738 threshold / 0.749 LogReg / 0.500 always-PASS).
+
+**First clean explore-pipeline run (HotpotQA 4-doc, DJ-10/11 fixed, gate active, fresh memory):**
+explore recall@20 **0.833** (30 queries, oracle-stop, 29 wins, structure = whole-query) ·
+**judge-stop 0.800 vs oracle-stop 0.775** — the judge-stopped run now genuinely matches the
+oracle-stopped run on this corpus, the claim the README previously couldn't support ·
+gate: forged 0.550 = dense 0.550 on held → **selected dense** (tie goes to baseline, correct) ·
+stage-7 test recall@10/@20 = 0.562 / 0.637. SU + BrowseComp pipelines and the matched 5-arm
+re-run are in flight. Watch item: SU exploration is scoring low mid-run (~0.11@20 vs a 0.95
+dense floor) — suspicion: the raw-OS-first probe assumes an OpenSearch backend and SU runs on
+MemoryStore; if stage 4's gate doesn't fully absorb this, `os_first` must become
+backend-conditional.
+
+### Execution log (what has actually shipped)
+
+| date | commit(s) | what |
+|---|---|---|
+| 08-18 | PR #7 (`a8b74a8`+`4dd2c9f`) | dense-default gate implemented + EXP-5/6/7 logged; issues.md §17 (21 review findings); fable.md |
+| 08-18 | `60858a1` | WS1 batch 1: SDK-C15/16/17 fixed, sandbox timeout/cap/rebind/query/full-primitive-set (SDK-C19), DJ-10, DJ-13, max_hops→10, BC-1 qrels restored, SAC_SYSTEM + 5 primitives exported, py.typed, 33 primitives tests |
+| 08-18 | `ccef949` | issues.md FIXED annotations: 8 closed today + 14 silently-fixed verified (GEN-1/2/3, SDK-C1..C7, C12, SDK-A1/2/4, PKG-1, TEST-3, DOC-1) |
+| 08-18 | `84365d5` | fable_baselines experiment (3 corpora × 4 no-LLM arms, paired CIs) + validate_judge rework (DJ-6/8/9/14 protocol) |
+| 08-18 | `5fe89da` | DJ-11 oracle-leak fix; judge re-validated 0.771 leak-free |
+| 08-18 | `88f9407` | forge provenance + best-baseline acceptance gate in the SDK, with tests (commitment 5) |
+| 08-18 | `3e3cee0` | learnings_standard.md 2026-08-18 entries; open_problems.md dated status on all 8 (OPM-1) |
+| 08-18 | running | explore pipelines hotpot ✅ / su ▶ / browsecomp queued; matched 5-arm re-run queued after (GPU serialization) |
+
+**Still open from the workstreams:** WS2 StopGate + few-shot judge tuning · WS3 pipeline wiring
+to the SDK gate (deferred until the running chain finishes so all corpora share one methodology),
+structure-neutral author prompt, winning-hop attribution, subagent execute-or-delete · WS4
+budget object + session-state clearing · WS5 asymmetric embeddings + `llm_batch` · WS6 matched
+5-arm re-run + FiQA restatement · WS7 all structural items in the table · RLM items 1–2.
 
 ---
 
