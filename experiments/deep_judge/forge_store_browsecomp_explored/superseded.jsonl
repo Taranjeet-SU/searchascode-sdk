@@ -1,0 +1,2 @@
+{"kind": "skill", "archived": "2026-08-18T07:40:46Z", "name": "browsecomp_explored_skill", "when_to_use": "explored whole-query strategy for browsecomp", "retrievers": ["hybrid", "dense", "rerank"], "combine": "fuse", "cost": 1, "origin": "forged", "tags": ["learned"], "provenance": {}}
+{"kind": "subagent", "archived": "2026-08-18T07:40:46Z", "name": "browsecomp_explored_agent", "when_to_use": "solve via the explored whole-query primitive", "plan": ["browsecomp_explored_primitive"], "base_prompt": "", "tags": ["learned"], "provenance": {}}

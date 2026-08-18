@@ -1,1 +1,1 @@
-{"name": "browsecomp_explored_agent", "when_to_use": "solve via the explored whole-query primitive", "plan": ["browsecomp_explored_primitive"], "base_prompt": "", "tags": ["learned"]}
+{"name": "browsecomp_explored_agent", "when_to_use": "solve via the explored whole-query primitive", "plan": ["browsecomp_explored_skill"], "base_prompt": "", "tags": ["learned"], "provenance": {"created": "2026-08-18T07:40:46Z"}}
