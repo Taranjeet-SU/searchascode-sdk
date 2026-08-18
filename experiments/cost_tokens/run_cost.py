@@ -135,17 +135,32 @@ def load_explore_seed(corpus):
         selected = json.loads(pipe_json.read_text()).get("selected_strategy", "")
     except Exception:
         pass
+    # THE GATE'S DECISION IS THE PRODUCT of explore — deliver it, not the store's candidate.
+    # v1 of this loader handed the arms the store's code primitive, which on BrowseComp is the
+    # REJECTED whole-query fusion (gate: forged 0.0 = dense 0.0 -> selected dense). The seeded
+    # arm then ran a recall-diluting fusion on every query and scored 0.169 vs dense 0.265.
+    baseline_code = {
+        "dense": "def run(session, query, top_k):\n    return session.search(query, top_k=top_k, mode='dense').ids()",
+        "hybrid": "def run(session, query, top_k):\n    return session.search(query, top_k=top_k, mode='hybrid').ids()",
+        "keyword": "def run(session, query, top_k):\n    return session.search(query, top_k=top_k, mode='keyword').ids()",
+    }
     prim = next(iter(store.code_primitives.values()), None)
+    if selected in baseline_code:
+        vetted_code, vetted_desc = baseline_code[selected], f"one whole-query {selected} search"
+    elif prim is not None:
+        vetted_code, vetted_desc = prim.code, "the forged strategy"
+    else:
+        return "", None
     guidance = ("\n\nEXPLORE FINDINGS on THIS corpus (from a prior explore->forge run — these OVERRIDE "
                 "the generic strategy above): " + "; ".join(rules)
-                + (f". The held-out acceptance gate selected '{selected}' as the shipped strategy — "
-                   f"the authored alternatives did NOT beat it." if selected else "")
-                + " Prefer ONE whole-query search (the `forged` tool / forged(query) runs the vetted "
-                  "strategy); do NOT decompose unless that clearly fails.")
-    forged_fn = None
-    if prim is not None:
-        sk = CodePrimitive(name=prim.name, when_to_use=prim.when_to_use, code=prim.code).to_skill()
-        forged_fn = lambda session, q, k=20: sk.run(session, q, top_k=k)   # noqa: E731
+                + (f". The held-out acceptance gate selected '{selected}' — authored alternatives "
+                   f"(decomposition, multi-mode fusion) did NOT beat it and DILUTED recall." if selected else "")
+                + f" The vetted strategy is {vetted_desc}: call forged(query) and RETURN it. Do NOT add "
+                  "extra pools, decompose, or fuse by default — escalate with ONE targeted keyword search "
+                  "on exact rare tokens ONLY if the question hinges on a constraint (a year, a name, a "
+                  "part number) that a semantic search demonstrably blurs.")
+    sk = CodePrimitive(name=f"{stem}_gate_selected", when_to_use=vetted_desc, code=vetted_code).to_skill()
+    forged_fn = lambda session, q, k=20: sk.run(session, q, top_k=k)   # noqa: E731
     return guidance, forged_fn
 
 
