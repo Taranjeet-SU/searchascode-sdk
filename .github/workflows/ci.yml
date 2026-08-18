@@ -28,6 +28,39 @@ jobs:
       - name: Unit tests + coverage
         run: pytest --cov --cov-report=term-missing
 
+      - name: Adapter conformance (every installed backend)
+        run: pytest tests/test_conformance.py -q
+
+  # STR-1: the repo-root package layout means pytest imports the WORKING COPY, so nothing
+  # otherwise validates the artifact `pip install search-as-code` actually delivers. That gap
+  # is how DOC-1 happened (the documented prompt surface was missing from the wheel).
+  wheel:
+    name: wheel installs + README quickstart runs
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: pip
+      - name: Build the wheel and smoke-test it in a clean venv
+        run: python scripts/smoke_wheel.py
+
+  # STR-6 / DOC-6: docs are loose markdown with no build, which is why the public README
+  # linked to a file that is not on the remote.
+  docs:
+    name: docs links + repo guard
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+      - name: Relative links resolve (and are tracked)
+        run: python scripts/check_doc_links.py --public
+      - name: No customer/internal artifacts tracked (GOV-1/2/3)
+        run: python scripts/check_no_customer_artifacts.py --check-tree
+
   integration:
     name: opensearch integration
     runs-on: ubuntu-latest

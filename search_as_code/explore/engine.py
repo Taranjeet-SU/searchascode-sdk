@@ -16,6 +16,11 @@ from __future__ import annotations
 
 import abc
 import hashlib
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:  # avoids a runtime import cycle (engine <-> training/router)
+    from .router import TemplateRouter
+    from .training import RouterDataset
 import time
 from dataclasses import dataclass, field
 from typing import Any, Optional
@@ -139,10 +144,10 @@ class Explorer:
         self.session = session
         self.pack = pack
         self.config = config or {}
-        self.router = None
+        self.router: Optional["TemplateRouter"] = None
         self._model_spec = "hist_gb"
         self._model_params: dict = {}
-        self._dataset = None
+        self._dataset: Optional["RouterDataset"] = None
 
     def __getattr__(self, name):        # delegate is_done/read_json/report/... to the pack
         return getattr(self.pack, name)
@@ -156,7 +161,7 @@ class Explorer:
     def fewshot_block(self, per_template: int = 3, max_templates: int = 8) -> str:
         """A ready-to-inject prompt block of learned strategy exemplars for THIS corpus — feed to a
         SAC / deep agent so it chooses a primitive chain from evidence, not a static hint."""
-        from .training import fewshot_exemplars, format_fewshot_block
+        from .training import format_fewshot_block
         return format_fewshot_block(self.exemplars(per_template=per_template), max_templates=max_templates)
 
     def set_model(self, model="hist_gb", **params) -> "Explorer":
@@ -188,11 +193,13 @@ class Explorer:
         if self._dataset is None:
             self._dataset = load_dataset(self.pack)
         params = {**self._model_params, **model_params}
-        model, metrics = train_router_model(self._dataset, self._model_spec, cv=cv, **params)
+        ds = self._dataset
+        assert ds is not None  # set just above
+        model, metrics = train_router_model(ds, self._model_spec, cv=cv, **params)
         if model is not None:
             from .router import TemplateRouter
-            emb_dim = self._dataset.X.shape[1] - 8 if len(self._dataset) else 0
-            router = TemplateRouter(model, classes=sorted(set(self._dataset.y) - {"none"}),
+            emb_dim = ds.X.shape[1] - 8 if len(ds) else 0
+            router = TemplateRouter(model, classes=sorted(set(ds.y) - {"none"}),
                                     emb_dim=emb_dim, metrics=metrics)
             router.save(self.pack.path("router.pkl"))
             self.router = router

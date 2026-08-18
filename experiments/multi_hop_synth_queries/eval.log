@@ -1,0 +1,37 @@
+Warning: You are sending unauthenticated requests to the HF Hub. Please set a HF_TOKEN to enable higher rate limits and faster downloads.
+Loading weights:   0%|          | 0/199 [00:00<?, ?it/s]Loading weights: 100%|██████████| 199/199 [00:00<00:00, 26419.35it/s]
+[eval 2hop] 25/150  dense r@10=0.84/all=0.72 tool r@10=0.88/all=0.80 sac r@10=0.86/all=0.76
+[eval 2hop] 50/150  dense r@10=0.82/all=0.66 tool r@10=0.91/all=0.84 sac r@10=0.91/all=0.84
+[eval 2hop] 75/150  dense r@10=0.82/all=0.65 tool r@10=0.89/all=0.81 sac r@10=0.92/all=0.85
+[eval 2hop] 100/150  dense r@10=0.84/all=0.71 tool r@10=0.90/all=0.81 sac r@10=0.94/all=0.88
+[eval 2hop] 125/150  dense r@10=0.84/all=0.72 tool r@10=0.90/all=0.82 sac r@10=0.94/all=0.88
+[eval 2hop] 150/150  dense r@10=0.84/all=0.71 tool r@10=0.90/all=0.82 sac r@10=0.94/all=0.88
+
+===== 2-hop (n=150) =====
+  dense   recall@10=0.837  all_golds@10=0.707
+  tool    recall@10=0.903  all_golds@10=0.820
+  sac     recall@10=0.937  all_golds@10=0.880
+[eval 3hop] 25/150  dense r@10=0.71/all=0.44 tool r@10=0.75/all=0.48 sac r@10=0.80/all=0.56
+[eval 3hop] 50/150  dense r@10=0.71/all=0.44 tool r@10=0.81/all=0.58 sac r@10=0.81/all=0.54
+[eval 3hop] 75/150  dense r@10=0.70/all=0.43 tool r@10=0.82/all=0.61 sac r@10=0.83/all=0.61
+[eval 3hop] 100/150  dense r@10=0.67/all=0.39 tool r@10=0.79/all=0.57 sac r@10=0.80/all=0.57
+[eval 3hop] 125/150  dense r@10=0.67/all=0.40 tool r@10=0.79/all=0.56 sac r@10=0.79/all=0.54
+[eval 3hop] 150/150  dense r@10=0.68/all=0.41 tool r@10=0.80/all=0.57 sac r@10=0.80/all=0.55
+
+===== 3-hop (n=150) =====
+  dense   recall@10=0.678  all_golds@10=0.407
+  tool    recall@10=0.800  all_golds@10=0.567
+  sac     recall@10=0.802  all_golds@10=0.553
+[eval 4hop] 25/150  dense r@10=0.65/all=0.24 tool r@10=0.72/all=0.32 sac r@10=0.76/all=0.24
+[eval 4hop] 50/150  dense r@10=0.59/all=0.24 tool r@10=0.69/all=0.32 sac r@10=0.76/all=0.32
+[eval 4hop] 75/150  dense r@10=0.60/all=0.28 tool r@10=0.68/all=0.35 sac r@10=0.74/all=0.37
+[eval 4hop] 100/150  dense r@10=0.57/all=0.27 tool r@10=0.67/all=0.31 sac r@10=0.73/all=0.36
+[eval 4hop] 125/150  dense r@10=0.56/all=0.26 tool r@10=0.67/all=0.31 sac r@10=0.73/all=0.37
+[eval 4hop] 150/150  dense r@10=0.59/all=0.27 tool r@10=0.68/all=0.31 sac r@10=0.74/all=0.38
+
+===== 4-hop (n=150) =====
+  dense   recall@10=0.587  all_golds@10=0.273
+  tool    recall@10=0.683  all_golds@10=0.313
+  sac     recall@10=0.742  all_golds@10=0.380
+
+[eval] cost $0.36 | saved recall_benchmark.json

@@ -54,6 +54,27 @@ def _hybrid(session, query, top_k=10, **_):
     return _ids(session.search(query, top_k=top_k, mode="hybrid"), top_k)
 
 
+def _definition(session, query, top_k=10, **_):
+    """A 'what is X' lookup: hybrid pool, then rerank against the DEFINIENDUM alone.
+
+    ``definition_lookup`` and ``hybrid_search`` used to be the very same function object, so a
+    semantic skill lookup could return either at random and the two names carried no distinct
+    behaviour (SDK-R6). A definition question has one focal term; scoring against that term
+    rather than the whole sentence is what makes this a different strategy.
+    """
+    import re as _re
+    m = _re.match(r"^\s*(?:what\s+(?:is|are|does|do)|define|definition of|meaning of|explain)\s+"
+                  r"(?:an?\s+|the\s+)?(.+?)\s*\??$", query, _re.I)
+    focus = (m.group(1) if m else query).strip() or query
+    rs = session.search(query, top_k=max(top_k * 3, 30), mode="hybrid")
+    if not rs:
+        return []
+    try:
+        return _ids(session.rerank(focus, rs, top_k=top_k), top_k)
+    except Exception:
+        return _ids(rs, top_k)
+
+
 def _keyword(session, query, top_k=10, **_):
     return _ids(session.search(query, top_k=top_k, mode="keyword"), top_k)
 
@@ -82,36 +103,55 @@ def _decompose_fuse(session, query, top_k=10, **_):
         return _dense(session, query, top_k)
 
 
+def _subfacts(session, query, max_subs: int = 6) -> list:
+    """The ONE sub-fact decomposition used by every skill in this module.
+
+    There were four decompose implementations behind three different prompts
+    (``primitives.decompose``, ``loop.decompose_query``, and byte-identical inline copies in
+    ``_decompose_fielded`` and ``_decompose_arsenal``), so how many sub-facts a query got
+    depended on which entry point you came through (SDK-R3/R4). This delegates to
+    ``loop.decompose_query``, which also carries the lexical fallback.
+    """
+    from .loop import decompose_query
+    gen = getattr(session, "generator", None)
+    subs = decompose_query(query, gen, max_subs=max_subs) if gen is not None else [query]
+    return [s for s in subs if s and len(s) > 3] or [query]
+
+
+def _decompose_pools(session, query, top_k, *, arsenal: bool):
+    """Per-sub-fact retrieval pools. ``arsenal=False`` -> fielded + dense per sub-fact;
+    ``arsenal=True`` -> hybrid + HyDE + fielded. The two skills differed only by that
+    HyDE pass (SDK-R4)."""
+    from .. import primitives as P
+    subs = _subfacts(session, query)
+    qf = getattr(session.store, "query_fielded", None)
+    wide = max(top_k, 30 if arsenal else 20)
+    pools = []
+    for x in subs + [query]:
+        fns = ([lambda x=x: session.search(x, top_k=wide, mode="hybrid"),
+                lambda x=x: session.hyde_search(x, top_k=wide),
+                lambda x=x: (qf(x, ["title", "text"], top_k=wide) if qf else None)]
+               if arsenal else
+               [lambda x=x: (qf(x, ["title", "text"], top_k=wide) if qf
+                             else session.search(x, top_k=wide, mode="keyword")),
+                lambda x=x: session.search(x, top_k=wide, mode="dense")])
+        for fn in fns:
+            try:
+                rs = fn()
+                if rs:
+                    pools.append(rs)
+            except Exception:
+                pass
+    return _ids(P.fuse(pools), top_k) if pools else _dense(session, query, top_k)
+
+
 def _decompose_fielded(session, query, top_k=10, **_):
     """Multi-hop via per-sub-fact FIELDED match: decompose → query_fielded(sub, [title,text]) + dense
     per sub → fuse. The diagnostic showed multi-hop golds ARE reachable by title/text fielded match;
     this composes that per sub-fact so each entity gets its own strong retrieval, then fuses for
     coverage (the fix for 4-hop queries a question-level dense pass misses)."""
-    from .. import primitives as P
-    gen = getattr(session, "generator", None)
-    subs = []
-    if gen is not None:
-        try:
-            out = gen("Break this question into the distinct factual sub-questions needed to answer "
-                      "it — each targets a DIFFERENT entity/document. One per line, 2-6.\n\nQ: " + query)
-            txt = out[0] if isinstance(out, list) else str(out)
-            subs = [re.sub(r"^[-*\d.\s]+", "", ln).strip() for ln in txt.splitlines() if ln.strip()][:6]
-        except Exception:
-            pass
-    subs = [s for s in subs if len(s) > 3] or [query]
-    qf = getattr(session.store, "query_fielded", None)
-    pools = []
-    for s in subs + [query]:
-        try:
-            pools.append(qf(s, ["title", "text"], top_k=max(top_k, 20)) if qf
-                         else session.search(s, top_k=max(top_k, 20), mode="keyword"))
-        except Exception:
-            pass
-        try:
-            pools.append(session.search(s, top_k=max(top_k, 20), mode="dense"))
-        except Exception:
-            pass
-    return _ids(P.fuse([p for p in pools if p]), top_k) if pools else _dense(session, query, top_k)
+    return _decompose_pools(session, query, top_k, arsenal=False)
+
 
 
 def _arsenal_single(session, query, top_k=10, **_):
@@ -137,31 +177,8 @@ def _decompose_arsenal(session, query, top_k=10, **_):
     """MULTI-HOP (validated): decompose → the full arsenal (hybrid+HyDE+fielded) per sub-fact AND the
     whole query → RRF fuse. Recovers 4-hop golds a dense/keyword decompose misses (HyDE reaches the
     generically-described entity)."""
-    from .. import primitives as P
-    gen = getattr(session, "generator", None)
-    subs = []
-    if gen is not None:
-        try:
-            out = gen("Break this question into the distinct factual sub-questions needed to answer "
-                      "it — each targets a DIFFERENT entity/document. One per line, 2-6.\n\nQ: " + query)
-            txt = out[0] if isinstance(out, list) else str(out)
-            subs = [re.sub(r"^[-*\d.\s]+", "", ln).strip() for ln in txt.splitlines() if ln.strip()][:6]
-        except Exception:
-            pass
-    subs = [s for s in subs if len(s) > 3] or [query]
-    qf = getattr(session.store, "query_fielded", None)
-    pools = []
-    for x in subs + [query]:
-        for fn in (lambda x=x: session.search(x, top_k=max(top_k, 30), mode="hybrid"),
-                   lambda x=x: session.hyde_search(x, top_k=max(top_k, 30)),
-                   lambda x=x: (qf(x, ["title", "text"], top_k=max(top_k, 30)) if qf else None)):
-            try:
-                rs = fn()
-                if rs:
-                    pools.append(rs)
-            except Exception:
-                pass
-    return _ids(P.fuse(pools), top_k) if pools else _dense(session, query, top_k)
+    return _decompose_pools(session, query, top_k, arsenal=True)
+
 
 
 def _hyde(session, query, top_k=10, **_):
@@ -197,7 +214,7 @@ def _diversify(session, query, top_k=10, pool_k=40, **_):
 
 BUILTIN_SKILLS = [
     Skill("dense_lookup", "default semantic search for a single focused question", _dense, ["core"], 0),
-    Skill("definition_lookup", "a 'what is / define X' question with one clear answer", _hybrid, ["core"], 0),
+    Skill("definition_lookup", "a 'what is / define X' question with one clear answer", _definition, ["core"], 1),
     Skill("hybrid_search", "broad/open-ended query; balance semantics + terms", _hybrid, ["core"], 0),
     Skill("keyword_search", "rare exact tokens where embeddings blur", _keyword, ["core"], 0),
     Skill("exact_lookup", "error/status codes, part numbers, IDs — exact match beats semantics", _exact, ["ids"], 1),
@@ -251,7 +268,8 @@ class SkillRegistry:
                 return [skills[i] for i in order]
             except Exception:
                 pass
-        import re
-        _tok = lambda t: set(re.findall(r"[a-z0-9]+", (t or "").lower()))
+        def _tok(t):
+            return set(re.findall(r"[a-z0-9]+", (t or "").lower()))
+
         qtok = _tok(query)
         return sorted(skills, key=lambda s: -len(qtok & _tok(s.when_to_use + " " + " ".join(s.tags))))[:k]

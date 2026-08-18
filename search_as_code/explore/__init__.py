@@ -33,17 +33,17 @@ from .templates import TEMPLATE_COST, TEMPLATE_DOCS, TEMPLATE_NAMES
 from .training import (
     MODEL_REGISTRY,
     RouterDataset,
-    build_dataset,
-    load_dataset,
-    make_model,
     analyze_failures,
+    build_dataset,
     classify_failure,
     duplication_scan,
+    fewshot_exemplars,
+    format_fewshot_block,
+    load_dataset,
+    make_model,
     train_router_model,
     unsolved,
     write_dataset_csv,
-    fewshot_exemplars,
-    format_fewshot_block,
 )
 
 __all__ = [

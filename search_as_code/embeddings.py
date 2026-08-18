@@ -114,18 +114,60 @@ class _TransformersEmbedder:
         self._fix_meta_buffers(conf)
 
     def _fix_meta_buffers(self, conf) -> None:
+        """Re-materialise non-persistent buffers that ``low_cpu_mem_usage`` leaves on meta.
+
+        A non-persistent buffer is not in the checkpoint, so under transformers 5.x it can
+        come back as **uninitialised memory** — which for a rotary ``inv_freq`` means a
+        per-process-random positional encoding and a cross-process recall collapse (the
+        ReasonIR failure written up in experiments/browsecomp/reasonir_encoder.py).
+
+        The previous version only handled ``position_ids`` and, gated on
+        ``hasattr(m, "cos_cached") and hasattr(m, "inv_freq")``, the cos/sin caches. Modern
+        Llama-style RoPE modules expose **inv_freq without cos_cached**, so that guard was
+        False and *nothing* was fixed — ``inv_freq`` itself was never rebuilt (BC-4). It is
+        now recomputed from the config, independently of the cos/sin caches.
+        """
         torch, dev = self._torch, self.device
         maxp = getattr(conf, "max_position_embeddings", 512)
+        base = float(getattr(conf, "rope_theta", None) or 10000.0)
+
+        def _is_unusable(t) -> bool:
+            """Meta tensors, and values that cannot be real frequencies (NaN/inf)."""
+            try:
+                if getattr(t, "is_meta", False) or t.device.type == "meta":
+                    return True
+                return bool((~torch.isfinite(t)).any())
+            except Exception:
+                return True
+
         for m in self.model.modules():
             if hasattr(m, "position_ids"):
                 m.register_buffer("position_ids", torch.arange(maxp, device=dev), persistent=False)
-            if hasattr(m, "cos_cached") and hasattr(m, "inv_freq"):
-                L = int(m.cos_cached.shape[0])
-                t = torch.arange(L, dtype=torch.float32, device=dev)
-                freqs = torch.outer(t, m.inv_freq.float().to(dev))
-                emb = torch.cat((freqs, freqs), dim=-1)
-                m.register_buffer("cos_cached", emb.cos(), persistent=False)
-                m.register_buffer("sin_cached", emb.sin(), persistent=False)
+
+            inv = getattr(m, "inv_freq", None)
+            if inv is not None:
+                if _is_unusable(inv):
+                    # Rebuild the standard RoPE schedule: 1 / base^(2i/d).
+                    dim = int(inv.shape[-1]) * 2
+                    idx = torch.arange(0, dim, 2, dtype=torch.float32, device=dev)[: dim // 2]
+                    inv = 1.0 / (base ** (idx / dim))
+                    m.register_buffer("inv_freq", inv, persistent=False)
+                else:
+                    inv = inv.float().to(dev)
+                    m.register_buffer("inv_freq", inv, persistent=False)
+
+                # Rebuild cos/sin caches whenever they exist — they are derived from inv_freq,
+                # so a rebuilt inv_freq invalidates them.
+                if hasattr(m, "cos_cached"):
+                    try:
+                        L = int(m.cos_cached.shape[0])
+                    except Exception:
+                        L = maxp
+                    t = torch.arange(L, dtype=torch.float32, device=dev)
+                    freqs = torch.outer(t, inv)
+                    emb = torch.cat((freqs, freqs), dim=-1)
+                    m.register_buffer("cos_cached", emb.cos(), persistent=False)
+                    m.register_buffer("sin_cached", emb.sin(), persistent=False)
 
     def embed(self, texts: Sequence[str]) -> list[list[float]]:
         torch = self._torch

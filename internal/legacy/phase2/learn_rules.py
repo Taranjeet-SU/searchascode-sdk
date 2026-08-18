@@ -31,10 +31,15 @@ Output ONLY compact JSON, one of:
 Choose the SINGLE most useful, generalizable rule. Prefer alias/glossary/synonym over route."""
 
 
-def mine(dataset: str, n: int, max_cases: int):
-    from internal.legacy.phase2 import beir
+def mine(dataset: str, n: int, max_cases: int, split: str = "train"):
+    from phase2 import beir
     q, qr, index = beir.eval_data(dataset)
-    qids = [x for x in qr if any(v > 0 for v in qr[x].values())][:n]
+    # Mine on the TRAIN split only. This used to take the first n of the same ordered
+    # dict that impact_eval evaluates on, leaking 80% of the eval set (P2-1).
+    from phase2.splits import pick
+    qids = pick(qr, split, n=None)[:n] if split != "all" else \
+        [x for x in qr if any(v > 0 for v in qr[x].values())][:n]
+    print(f"[mine] dataset={dataset} split={split} n_qids={len(qids)}", flush=True)
     em = SentenceTransformer(common.EMB_MODEL, device="cuda")
     embed = lambda ts: em.encode(list(ts), normalize_embeddings=True, convert_to_numpy=True, show_progress_bar=False).tolist()
     store = sac.connect("opensearch", index=index, dim=common.DIM, hosts=[common.OS_HOST])
@@ -95,5 +100,7 @@ if __name__ == "__main__":
     ap.add_argument("--dataset", default="fiqa")
     ap.add_argument("--n", type=int, default=120)
     ap.add_argument("--max-cases", type=int, default=40)
+    ap.add_argument("--split", default="train", choices=["train", "test", "all"],
+                    help="mine on this split; evaluate on the OTHER one (P2-1)")
     a = ap.parse_args()
-    mine(a.dataset, a.n, a.max_cases)
+    mine(a.dataset, a.n, a.max_cases, a.split)

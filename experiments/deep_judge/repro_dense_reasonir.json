@@ -1,0 +1,16 @@
+{
+  "model": "reasonir/ReasonIR-8B",
+  "index": "browsecomp_reasonir",
+  "n": 830,
+  "task": "Given a web search query, retrieve relevant passages that answer the query",
+  "plain": {
+    "recall@5": 0.1163,
+    "recall@10": 0.1698,
+    "recall@20": 0.2266
+  },
+  "instruct": {
+    "recall@5": 0.1167,
+    "recall@10": 0.1733,
+    "recall@20": 0.2338
+  }
+}

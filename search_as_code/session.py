@@ -17,6 +17,7 @@ from typing import Any, Callable, Optional, Sequence
 
 from . import filters as F
 from . import primitives as P
+from ._genutil import gen_text
 from .adapters.base import VectorStore
 from .adapters.registry import connect
 from .embeddings import Embedder, HashEmbedder, as_embedder
@@ -135,8 +136,10 @@ class Session:
             "and fact-cards, dense/hyde for prose, fielded/phrase for structured fields)."
         )
         try:
-            out = self.generator(prompt)
-            return out[0] if isinstance(out, list) else str(out)
+            out = self.generator(prompt)  # type: ignore[misc]  # guarded by caller (generator is not None)
+            # gen_text, not out[0]: a line-splitting generator adapter would otherwise return
+            # line 1 of a 4-6 line profile — dropping item (3), the recommended primitives (GEN-1).
+            return gen_text(out)
         except Exception as e:  # pragma: no cover - profiling is best-effort
             return f"(llm profile unavailable: {e})"
 
@@ -347,7 +350,9 @@ class Session:
         answer region of embedding space, a DIFFERENT neighborhood than the query."""
         gen = self._require_generator()
         prompt = f"Write a short passage that directly answers this query.\nQuery: {query}"
-        doc = (gen(prompt) or [query])[0]
+        # The WHOLE passage, not its first line: a multi-line or preamble-prefixed completion
+        # would otherwise embed a fragment instead of the hypothetical document (GEN-3).
+        doc = gen_text(gen(prompt), default=query)
         vec = self.embedder.embed([doc])[0]
         return self.store.query_vector(vec, top_k=top_k)
 
@@ -371,6 +376,36 @@ class Session:
         new_q = alpha * qv + beta * dvecs.mean(axis=0)
         new_q = new_q / (np.linalg.norm(new_q) or 1.0)
         return self.store.query_vector(new_q.tolist(), top_k=top_k, flt=flt)
+
+    def answerability(self, query: str, top_k: int = 30) -> dict:
+        """Probe whether the corpus can even answer, cheaply. Embed a hypothetical ANSWER (HyDE)
+        and dense-search it — the top score is the max cosine similarity of any doc to what a real
+        answer looks like. LOW ``max_sim`` ⇒ the answer is probably NOT in the corpus → abstain/stop
+        instead of burning tokens going wider. Needs a generator."""
+        gen = self._require_generator()
+        doc = gen_text(gen(f"Write a short passage that directly answers this query.\nQuery: {query}"),
+                       default=query)  # whole passage, not line 1 (GEN-3)
+        vec = self.embedder.embed([doc])[0]
+        hits = self.store.query_vector(vec, top_k=top_k)
+        top = max((h.score for h in hits), default=0.0)
+        return {"max_sim": round(float(top), 3), "likely_answerable": top >= 0.5}
+
+    def diversity(self, results: ResultSet, top_k: int = 10) -> dict:
+        """Mean pairwise cosine similarity of the top-k hits (re-embeds their text, so it works on
+        backends that don't return stored vectors). HIGH (→1.0) = results collapsed to near-duplicates
+        (the search is stuck / one-source-dominated); LOW = diverse coverage."""
+        import numpy as np
+
+        hits = sorted(results, key=lambda h: h.score, reverse=True)[:top_k]
+        texts = [h.text or "" for h in hits]
+        if len([t for t in texts if t]) < 2:
+            return {"mean_similarity": 0.0, "redundant": False, "n": len(hits)}
+        v = np.asarray(self.embedder.embed(texts), dtype=np.float32)
+        v = v / (np.linalg.norm(v, axis=1, keepdims=True) + 1e-9)
+        sim = v @ v.T
+        iu = np.triu_indices(len(hits), k=1)
+        mean = float(sim[iu].mean())
+        return {"mean_similarity": round(mean, 3), "redundant": mean >= 0.92, "n": len(hits)}
 
     def hydrate(self, results: ResultSet) -> ResultSet:
         """Fetch full documents for hits that only carry ids (e.g. after fusion

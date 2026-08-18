@@ -1,0 +1,1 @@
+{"name": "su_explored_agent", "when_to_use": "solve via the explored whole-query primitive", "plan": ["su_explored_primitive"], "base_prompt": "", "tags": ["learned"]}

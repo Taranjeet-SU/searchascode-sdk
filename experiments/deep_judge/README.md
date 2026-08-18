@@ -6,26 +6,85 @@ using calibrated signals, and for each still-missing sub-fact it **diagnoses why
 next technique** — which the next hop executes. The winning OpenSearch queries the loop discovers are then
 **forged into reusable primitives / skills / subagents**.
 
-## 1. The judge mimics the gold oracle — and it's at the signal ceiling
+## 1. The judge tracks the gold oracle — but the "ceiling" claim is weaker than first reported
+
+> **Corrected 2026-08-17.** The original version of this section reported point estimates with no
+> intervals, and its selection procedure tie-broke on the test split. Re-derived by
+> [`reselect_judge.py`](reselect_judge.py) (selection on TUNE only, ties broken by earliest round,
+> bootstrap 95% CIs from `search_as_code.metrics`) → [`judge_reanalysis.json`](judge_reanalysis.json).
+> The audit entries are `issues.md` DJ-1 / DJ-2 / DJ-3. **No new API calls** — pure re-analysis of the
+> same tuning logs.
 
 Frozen eval set: 100 multi-hop HotpotQA queries × {shallow top-5 hybrid, deep arsenal top-10} = 200
 examples, oracle-labelled (`oracle = all gold ids ⊆ candidate set`), 106 PASS / 94 FAIL. We measure the
 judge's PASS/FAIL agreement with the oracle (balanced accuracy on a held-out 100).
 
-| judge / bound | held-out balanced-acc | false-accept |
+| judge / bound | held-out balanced-acc **[95% CI]** | tuned? |
 |---|---|---|
-| **Supervised ceiling** (LogReg, 5-fold CV, cross-encoder feature) | **0.725** | — |
-| LLM judge v0 — bi-encoder cosine signal (saturated) | 0.585 → ~0.68 | 0.34 |
-| LLM judge — **+ cross-encoder coverage signal** (v1) | 0.70 | 0.30 |
-| LLM judge — v1 + **same-model critic** tuning | **0.721** | 0.255 |
-| LLM judge — v1 + **independent Qwen-32B critic** | 0.70 | 0.298 |
+| **Supervised ceiling** (LogReg, 5-fold CV, cross-encoder feature) | **0.725** *(no CI reported)* | — |
+| LLM judge v0 — bi-encoder cosine signal (saturated) | 0.585 [0.490, 0.685] | **no — round 0** |
+| LLM judge — **+ cross-encoder coverage signal** (v1) | 0.700 [0.610, 0.791] | — |
+| LLM judge — v1 + **same-model critic** tuning | **0.721 [0.633, 0.811]** | yes (round 7) |
+| LLM judge — v1 + **independent Qwen-32B critic** | 0.700 [0.610, 0.791] | **no — round 0** |
+
+**What the intervals change (all three are honest corrections against ourselves):**
+
+- **The tuning gain is not distinguishable from noise (DJ-2).** Same-model critic tuning moves TEST
+  balanced accuracy by **+0.020 [−0.110, +0.150]** over the untuned prompt. On TUNE the adopted gain was
+  +0.011 — *a single example flipping* (tn 36→37, fp 11→10), which is what cleared the code's own 0.01
+  "don't chase eval noise" margin. At n=100 and p≈0.72 the interval is ±0.09, several times the effect.
+  The earlier "0.63 → 0.72" phrasing is not supported.
+- **Two of the five rows are the UNTUNED prompt (DJ-3).** Both `tuning_log_same.md` and
+  `tuning_log_ce_qwen.md` record `## Best (round 0)`. So the "independent Qwen-32B critic → 0.70" row is
+  the *baseline*, not a tuned outcome, and the honest statement is stronger and different: **the
+  independent critic produced no adopted improvement at all.** Likewise the v0 row's "0.585 → ~0.68"
+  had no log entry for the 0.68; it is 0.585.
+- **The selection defect is real but did not change this pick (DJ-1).** `tune_judge.py:146-150` tie-breaks
+  on TEST, which contradicts its own stated intent. Re-selecting on TUNE alone still yields round 7 here,
+  so the 0.721 figure survives — but it was not *arrived at* honestly, and the code must be fixed before
+  the next run, where it may well bite.
+- **"0.72 is the ceiling" is therefore an over-claim as stated.** The LLM judge's CI [0.633, 0.811]
+  overlaps the supervised bound (0.725) so heavily that "the judge is AT the signal ceiling" is not
+  testable at n=100 — it is consistent with the data, not demonstrated by it. Distinguishing a 0.02
+  difference at 95% confidence needs roughly n≈2,000, not 100. The *qualitative* finding — the
+  bi-encoder cosine is saturated and the cross-encoder signal is what moves the judge — survives, and
+  that is the part the deep-SAC line actually rests on.
+
+### Fresh validation of the SHIPPED judge (2026-08-17)
+
+The table above re-derives the *tuning logs*. [`validate_judge.py`](validate_judge.py) does the
+complementary thing — it runs `search_as_code.harness.DiagnosticJudge`, the prompt actually in
+the SDK, over the frozen oracle set and adds the two reference points the original write-up
+lacked → [`judge_validation_test.json`](judge_validation_test.json):
+
+| | held-out balanced accuracy (n=100) |
+|---|---|
+| always-PASS baseline | 0.500 |
+| **shipped `DiagnosticJudge`** | **0.700 [0.613, 0.789]** · false-accept 0.298 · false-reject 0.302 |
+| logistic regression on the same 9 signals, 5-fold | **0.722 ± 0.039** — *no LLM call* |
+
+Two things follow, and both are corrections against us:
+
+- **The shipped prompt reproduces the UNTUNED score.** Its confusion matrix (`tp=37 tn=33 fp=14
+  fn=16`) is round 0's, exactly; round 7 was `tp=37 tn=35 fp=12 fn=16`. The shipped text is 99.5%
+  — not 100% — identical to the adopted revision. Since DJ-2 already showed the entire claimed
+  gain *is* those two examples, the practical reading is the same either way (issues.md DJ-4).
+- **The LLM is not adding accuracy over the signals it reads** (DJ-5). A cheap classifier matches
+  or beats it. The honest framing of this component is therefore *not* "an LLM judge that mimics
+  the oracle", but "a **diagnostic** controller": its value is `DIAGNOSIS` / `TECHNIQUE` /
+  `NEXT_QUERY` — the per-sub-fact prescription that drives the next hop, which §2's numbers do
+  support and which a classifier cannot produce. A LogReg stop-gate is the obvious cheaper
+  baseline to A/B the PASS/FAIL half against.
 
 Findings, honestly:
 - The bi-encoder cosine is **saturated** (PASS min-sim 0.86 vs FAIL 0.81) — the judge can't separate
   covered from missing, and no critic fixes it. Adding a **cross-encoder** per-sub-fact score (PASS +1.5
-  vs FAIL −4.0, a 5.5-pt gap) is what moves the judge from 0.63 → 0.72.
-- 0.72 **is the ceiling**: a supervised model on the same signals tops out there, because snippet-level
-  relevance can't verify whether the *exact* gold doc (vs a near-identical HotpotQA distractor) is present.
+  vs FAIL −4.0, a 5.5-pt gap) is what moves the judge from 0.585 to ~0.70 (a gap that IS larger than the interval, unlike the
+  critic-tuning step above).
+- 0.72 is *consistent with* a signal ceiling: a supervised model on the same signals tops out around
+  there, plausibly because snippet-level relevance can't verify whether the *exact* gold doc (vs a
+  near-identical HotpotQA distractor) is present. **Stated as a proven ceiling this was an over-claim** —
+  see the CI discussion above (DJ-2).
 - **The critic was never the bottleneck.** Same-model self-critique reaches 0.721; an independent
   **Qwen-32B** critic reaches 0.70 — neither beats the signal ceiling. (gpt-4.1/4o are 403 on this project,
   so the independent critic had to be local; Qwen-32B ran 4-bit on the shared GPU.)
@@ -201,6 +260,71 @@ discovered and forged per corpus (decompose for HotpotQA/SU, whole-query for Bro
 - learned rule: *"discovered structure = whole-query (decomposed 39/274 in exploration)"*
 - runners: `run_explore_pipeline.py` (the 7-stage default), `reforge_and_full.py`, `run_forged_on_full.py`;
   results `explore_pipeline_browsecomp.json`, `explore_full_browsecomp.json`.
+
+## 6. Reproduction — strong 8B retrievers on BrowseComp-Plus (Qwen3-Embedding-8B, ReasonIR-8B)
+
+To place our gte-base pipeline against the published BrowseComp-Plus retrievers (arXiv 2508.06600 Table 2),
+we re-embedded the **same 100K-doc corpus** with two 8B retrievers and measured dense recall on all 830 gold
+queries, **matching the paper's protocol**: docs truncated to **512 tokens** ("maximum context length of 512
+tokens across all methods for fair comparison") and encoded plain, cosine kNN with `ef_search=1200` so top-k
+is near-exact. Our golds come from `qrel_golds.txt` → the paper's **Gold Document Retrieval** setting, so we
+compare against that row and at the paper's own operating points (**R@5 / R@100 / R@1000**). The one
+non-obvious knob is the **query instruction**: Qwen3-Embedding prepends `Instruct: Given a web search query,
+retrieve relevant passages that answer the query\nQuery:{q}` on the *query* side only; ReasonIR's card uses an
+empty instruction.
+
+| Retriever (dim) | R@5 | R@100 | R@1000 | vs paper (Gold) |
+|---|---|---|---|---|
+| gte-base (768) — our default, plain | 0.043 | — | — | (weak baseline) |
+| **Qwen3-Embedding-8B** (4096) — instruct | **0.200** | **0.592** | **0.850** | **matches/exceeds** |
+| &nbsp;&nbsp;↳ *paper Qwen3-8B, Gold* | 0.185 | 0.558 | 0.835 | |
+| **ReasonIR-8B** (4096) — instruct | 0.122 | 0.452 | 0.761 | ~3–4 pts low |
+| &nbsp;&nbsp;↳ *paper ReasonIR-8B, Gold* | 0.153 | 0.497 | 0.789 | |
+
+*(830 queries. `repro_dense_extended.json`. An earlier pass reported R@5 0.175 for Qwen3 — that was
+understated by a too-low HNSW `ef_search`; the near-exact re-run gives 0.200, right on the paper's 0.185.)*
+
+**What it says**
+- **Qwen3-Embedding-8B is a 1-to-1 reproduction** — we match/exceed the paper's Gold-doc numbers at all three
+  operating points (R@5 0.200 vs 0.185, R@100 0.592 vs 0.558, R@1000 0.850 vs 0.835).
+- **ReasonIR-8B lands ~3–4 pts below the paper** at every point (80 % → 91 % → 96 % of the paper as k grows —
+  a ranking gap, not a coverage gap). The Qwen3 match validates our engine + protocol (same OpenSearch HNSW,
+  same `ef_search`, same 512-token cap), so the residual is a **ReasonIR-specific encoding difference**: the
+  paper encodes via Tevatron, its HF card only shows an empty-instruction example, and indeed the instruction
+  is a **no-op for us** (instruct 0.122 ≈ plain 0.122) — ReasonIR's intended reasoning-instruction/pooling
+  isn't fully public. Documented honestly rather than papered over.
+- **The retriever is the lever, not the augmentation.** gte-base → Qwen3-8B-instruct lifts Recall@5
+  **0.043 → 0.200 (~4.6×)**; ReasonIR-8B gives 0.122 (~2.8×). Both dwarf anything our forged SAC primitive
+  added on top of gte-base.
+- **The query instruction is half of Qwen3's score** (it was the missing piece in our first pass, not
+  truncation), but **~neutral for ReasonIR** (which the card confirms).
+- **SAC augmentation value is inverse to retriever strength.** On weak gte-base the forged primitive helped
+  (§4/§5); on the strong 8B dense arm the same forge *hurts* (forged R@10 0.114 < dense 0.149,
+  `explore_full_qwen8b.json`) — a strong retriever has less headroom for query-side scaffolding to recover.
+
+**Reproduction gotcha (documented so it doesn't recur).** ReasonIR-8B ships custom Llama modeling code for
+the transformers-4.5x era. On the repo's **transformers 5.6.2** it can be coerced to load, but its rotary
+`inv_freq` (a non-persistent buffer recomputed in `__init__`) materialises as **uninitialised random memory**
+under 5.x meta-device loading → per-process-random positional encoding → a corpus embedded in one process is
+orthogonal to queries encoded in another → **recall collapses to 0** (it looks fine within a single process,
+which is what makes it dangerous). Fix: run ReasonIR through an isolated venv pinned to **transformers
+4.51.3** (`reasonir_venv`, built `--system-site-packages` so it reuses the base torch/opensearch). Under it
+the same weights load with no patches, encode is deterministic across processes, and a 295-doc probe gold
+ranks 18/11/5/9/3 vs 289/240/78/9/2 on the corrupt path. Qwen3-8B has no such issue (loads on 5.6.2 via
+sentence-transformers). `reasonir_encoder.py` refuses to run under transformers ≥ 5.
+
+**Artifacts / how to reproduce**
+- Embed + index (per model): `experiments/browsecomp/embed_and_index.py` (Qwen3-8B, sentence-transformers)
+  and `experiments/browsecomp/embed_reasonir.py` (ReasonIR, venv). Indices: `browsecomp_qwen8b`,
+  `browsecomp_reasonir` (dim 4096), `browsecomp` (gte-base, 768).
+- Query eval: `experiments/browsecomp/reproduce_qwen8b.py` (env `BC_EMB`/`BC_INDEX`/`BC_TASK`; plain vs
+  instruct) and `experiments/browsecomp/repro_reasonir.py` (venv). Results: `repro_qwen8b.json`,
+  `repro_dense_reasonir.json`; the **operating-point comparison vs the paper** (R@5/R@100/R@1000, exact kNN)
+  is `repro_dense_extended.json`.
+- ReasonIR steps run as `reasonir_venv/bin/python -m experiments.browsecomp.{embed_reasonir,repro_reasonir}`.
+- To reproduce the paper's operating points, raise `ef_search` on the kNN index first
+  (`PUT <index>/_settings {"index":{"knn.algo_param.ef_search":1200}}`) — the HNSW default undershoots top-k
+  recall and made an earlier pass report Qwen3 R@5 0.175 instead of 0.200.
 
 ## Files
 - `judge_core.py` — the diagnostic judge (prompt, render, parse, metrics).

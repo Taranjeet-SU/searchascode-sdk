@@ -1,0 +1,38 @@
+{
+  "split": "test",
+  "confusion": {
+    "n": 100,
+    "tp": 37,
+    "tn": 33,
+    "fp": 14,
+    "fn": 16,
+    "accuracy": 0.7,
+    "balanced_acc": 0.7001204335608189,
+    "sensitivity": 0.6981132075471698,
+    "specificity": 0.7021276595744681,
+    "false_accept_rate": 0.2978723404255319,
+    "false_reject_rate": 0.3018867924528302
+  },
+  "balanced_acc_ci": [
+    0.7001,
+    0.6128,
+    0.7886
+  ],
+  "always_pass_baseline": {
+    "n": 100,
+    "tp": 53,
+    "tn": 0,
+    "fp": 47,
+    "fn": 0,
+    "accuracy": 0.53,
+    "balanced_acc": 0.5,
+    "sensitivity": 1.0,
+    "specificity": 0.0,
+    "false_accept_rate": 1.0,
+    "false_reject_rate": 0.0
+  },
+  "signal_only_logreg": [
+    0.7218842560947824,
+    0.03895936674896577
+  ]
+}

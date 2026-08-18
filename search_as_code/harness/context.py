@@ -11,6 +11,10 @@ class StepResult:
     ids: list
     ok: bool = False
     score: float = 0.0
+    verified: bool = False              # True only when a REAL reward signal scored this
+                                        # (gold / teacher reranker / judge) — never for
+                                        # default_verify, which has no relevance signal.
+                                        # Online learning gates on this, not on score (SDK-A3).
 
 
 @dataclass
@@ -19,6 +23,7 @@ class HarnessResult:
     intent: str = ""
     skill: str = ""                     # winning skill (or "subagents")
     score: float = 0.0
+    verified: bool = False              # see StepResult.verified
     steps: list = field(default_factory=list)        # list[StepResult] — the control-loop trace
     subagents: list = field(default_factory=list)     # sub-task results, if any
     dynamic_prompt: str = ""            # the assembled pre-loop prompt (for an LLM agent)

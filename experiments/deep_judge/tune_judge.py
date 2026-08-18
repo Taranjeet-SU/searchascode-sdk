@@ -143,10 +143,15 @@ def main():
         log.append(f"## Round {r}\nTUNE: {cm}\nTEST: {tm}\n")
         prompts_out.write(json.dumps({"round": r, "tune": cm, "test": tm, "prompt": prompt}) + "\n")
         prompts_out.flush()
-        # select on TUNE but require a real margin (>0.01) so we don't chase eval noise; tie-break on TEST
-        if best is None or cm["balanced_acc"] > best["tune"]["balanced_acc"] + 0.01 or (
-                abs(cm["balanced_acc"] - best["tune"]["balanced_acc"]) <= 0.01
-                and tm["balanced_acc"] > best["test"]["balanced_acc"]):
+        # Select on TUNE ONLY, requiring a real margin (>0.01) so we don't chase eval noise.
+        # Ties are broken by the EARLIEST round — never by TEST. The previous version's second
+        # branch chose between near-tied rounds by TEST balanced accuracy, which contradicted
+        # the module's own stated intent ("Track TEST (held-out) each round for honest
+        # generalization") and meant the reported number was not a clean held-out estimate.
+        # It propagated to diagnostic_judge.py's docstring, this experiment's README §1,
+        # open_problems.md #6, and the "0.72 IS the signal ceiling" conclusion.
+        # See issues.md DJ-1; reselect_judge.py re-derives the published numbers correctly.
+        if best is None or cm["balanced_acc"] > best["tune"]["balanced_acc"] + 0.01:
             best = {"round": r, "prompt": prompt, "tune": cm, "test": tm}
         if cm["balanced_acc"] >= target or r == rounds - 1:
             log.append(f"(stop: {'target hit' if cm['balanced_acc'] >= target else 'max rounds'})\n")

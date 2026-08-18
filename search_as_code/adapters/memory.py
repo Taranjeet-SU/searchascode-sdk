@@ -9,6 +9,7 @@ real adapter must match.
 from __future__ import annotations
 
 import math
+import threading
 from collections import Counter
 from typing import Any, Optional, Sequence
 
@@ -23,11 +24,22 @@ from .base import VectorStore
 class MemoryStore(VectorStore):
     backend = "memory"
 
-    def __init__(self, **_: Any):
+    def __init__(self, dim: Optional[int] = None, **_: Any):
+        # `dim` is accepted (not swallowed by **_) so Session._check_dims can enforce the
+        # declared width on the DEFAULT backend used by tests, demos and the SU experiments.
+        # It previously found neither `dim` nor `_dim`, so only intra-batch consistency was
+        # checked — which is what forced the SAC_DIM env hack in qwen8b_sac/issues.md #2
+        # (SDK-C10).
+        self.dim = dim
         self._docs: dict[str, Document] = {}
         self._matrix: Optional[np.ndarray] = None
         self._ids: list[str] = []
         self._dirty = True
+        # keyword index (SDK-C11) — built lazily, invalidated on write
+        self._kw_lock = threading.Lock()
+        self._kw_df: Optional[Counter] = None
+        self._kw_toks: dict[str, Counter] = {}
+        self._kw_dl: dict[str, int] = {}
 
     def capabilities(self) -> Capabilities:
         return Capabilities(
@@ -44,6 +56,7 @@ class MemoryStore(VectorStore):
         for d in docs:
             self._docs[d.id] = d
         self._dirty = True
+        self._invalidate_kw_index()
 
     def _rebuild(self) -> None:
         self._ids = [d.id for d in self._docs.values() if d.vector is not None]
@@ -77,30 +90,58 @@ class MemoryStore(VectorStore):
         ]
         return ResultSet(hits)
 
+    def _ensure_kw_index(self) -> None:
+        """Build (once) the document-frequency table + per-doc term counts.
+
+        Previously ``query_keyword`` re-tokenized **every document on every call** — O(N·tokens)
+        per keyword search with no index and no caching, which is unusable at ~100K docs and
+        made ``explore/multihop`` (n_docs-1 keyword searches per candidate chain) do thousands
+        of full-corpus scans (SDK-C11). The working version of this fix already existed in
+        ``experiments/browsecomp/bc_common.py::FastMemoryStore``; this promotes it into the SDK
+        (BC-3). The index is invalidated on upsert/delete.
+        """
+        with self._kw_lock:
+            if self._kw_df is not None:
+                return
+            df: Counter = Counter()
+            toks_by_id: dict[str, Counter] = {}
+            dl_by_id: dict[str, int] = {}
+            for d in self._docs.values():
+                if not d.text:
+                    continue
+                toks = Counter(_tokenize(d.text))
+                toks_by_id[d.id] = toks
+                dl_by_id[d.id] = sum(toks.values()) or 1
+                for t in toks:
+                    df[t] += 1
+            self._kw_df, self._kw_toks, self._kw_dl = df, toks_by_id, dl_by_id
+
+    def _invalidate_kw_index(self) -> None:
+        with self._kw_lock:
+            self._kw_df = None
+
     def query_keyword(self, text, top_k=10, flt=None) -> ResultSet:
         terms = Counter(_tokenize(text))
         if not terms:
             return ResultSet()
-        docs = [d for d in self._docs.values() if d.text and matches(d.metadata, flt)]
-        n = len(docs) or 1
-        df: Counter = Counter()
-        toks_by_id: dict[str, Counter] = {}
-        for d in docs:
-            toks = Counter(_tokenize(d.text or ""))
-            toks_by_id[d.id] = toks
-            for t in set(toks):
-                df[t] += 1
+        self._ensure_kw_index()
+        df, toks_by_id, dl_by_id = self._kw_df, self._kw_toks, self._kw_dl
+        assert df is not None
+        n = len(toks_by_id) or 1
         scored = []
-        for d in docs:
-            toks = toks_by_id[d.id]
-            dl = sum(toks.values()) or 1
+        for doc_id, toks in toks_by_id.items():
+            d = self._docs.get(doc_id)
+            if d is None or not matches(d.metadata, flt):
+                continue
+            dl = dl_by_id[doc_id]
             score = 0.0
             for term, qf in terms.items():
-                if term in toks:
+                tf = toks.get(term)
+                if tf:
                     idf = math.log(1 + n / (1 + df[term]))
-                    score += qf * idf * (toks[term] / dl)
+                    score += qf * idf * (tf / dl)
             if score > 0:
-                scored.append(Hit(id=d.id, score=score, document=d, store=self.backend))
+                scored.append(Hit(id=doc_id, score=score, document=d, store=self.backend))
         scored.sort(key=lambda h: h.score, reverse=True)
         return ResultSet(scored[:top_k])
 
@@ -132,11 +173,14 @@ class MemoryStore(VectorStore):
         for i in ids:
             self._docs.pop(i, None)
         self._dirty = True
+        self._invalidate_kw_index()
 
     def count(self) -> int:
         return len(self._docs)
 
     def sample(self, n: int = 5) -> list[Document]:
+        # deterministic (first-n) so corpus_fingerprint / resume stay stable; the OpenSearch
+        # adapter samples randomly server-side, and the qrels path uses real pairs directly.
         return list(self._docs.values())[:n]
 
     def describe_schema(self) -> dict:

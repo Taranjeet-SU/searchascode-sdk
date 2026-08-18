@@ -8,7 +8,7 @@ to the original doc ids (like the FAISS adapter).
 
 from __future__ import annotations
 
-from typing import Any, Optional, Sequence
+from typing import Any, Sequence
 
 import numpy as np
 
@@ -35,7 +35,7 @@ class NmslibStore(VectorStore):
         self._ids: list[str] = []
         self._vecs: list[list[float]] = []
         self._mem = MemoryStore()
-        self._index = None
+        self._index: Any = None
         self._built = False
         self.params = {"M": M, "efConstruction": ef_construction}
         self.ef_search = ef_search
@@ -49,7 +49,8 @@ class NmslibStore(VectorStore):
         for d in docs:
             if d.vector is None:
                 continue
-            self._ids.append(d.id); self._vecs.append(d.vector)
+            self._ids.append(d.id)
+            self._vecs.append(d.vector)
         self._mem.upsert(docs)
         self._built = False
 

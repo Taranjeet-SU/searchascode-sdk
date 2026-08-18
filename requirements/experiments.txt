@@ -1,0 +1,13 @@
+-r dev.txt
+# The ML stack the experiments measure through. transformers is capped BELOW 5.x deliberately:
+# 5.x materialises non-persistent RoPE buffers as uninitialised memory, which silently zeroed
+# ReasonIR's positional encoding and collapsed recall across processes (issues.md BC-4).
+# search_as_code/embeddings.py now repairs inv_freq, but the pin is the reproducibility contract.
+torch>=2.0
+transformers>=4.40,<5
+sentence-transformers>=2.2,<4
+scikit-learn>=1.3
+opensearch-py>=2.4
+openai>=1.0
+langchain-openai>=0.1
+requests>=2.28

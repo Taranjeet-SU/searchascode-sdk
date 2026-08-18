@@ -1,0 +1,29 @@
+{
+  "corpus": "browsecomp",
+  "max_hops": 8,
+  "stage1_explore_recall@20": 0.107,
+  "decomposed": "3/50",
+  "discovered_structure": "whole-query",
+  "stage4_dense_held@20": 0.05,
+  "stage4_selected": "dense-default",
+  "stage3_validate_judgestop@20": 0.087,
+  "stage3_oraclestop@20": 0.121,
+  "stage5_forge_on_train@20": 0.294,
+  "stage7_test_recall@10": 0.119,
+  "stage7_test_recall@20": 0.144,
+  "artifacts": {
+    "code_primitives": [
+      "browsecomp_explored_primitive"
+    ],
+    "skills": [
+      "browsecomp_explored_skill"
+    ],
+    "subagents": [
+      "browsecomp_explored_agent"
+    ],
+    "rules": [
+      "[browsecomp] discovered structure = whole-query (decomposed 3/50 in exploration)"
+    ]
+  },
+  "forged_code": "def run(session, query, top_k):\n    return session.search(query, top_k=top_k, mode='dense').ids()"
+}

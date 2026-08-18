@@ -38,6 +38,13 @@ def featurize(query: str, emb: np.ndarray) -> np.ndarray:
     return np.concatenate([np.asarray(emb, dtype=np.float32), lexical_features(query)])
 
 
+# What an UNFITTED router returns. It must be a real template: predict()/route_plan() used to
+# return "all_rerank", which is not in TEMPLATE_NAMES, so the value KeyError'd in run_template
+# and the unfitted path was simply broken (SDK-C12). `deep_all` is the nearest real strategy —
+# the widest one — which is the right default when nothing has been learned yet.
+_UNFITTED_FALLBACK = "deep_all"
+
+
 def best_from_hits(hits: dict) -> str:
     """Winner policy over recall@k hits: the **cheapest-effort** template that retrieved the
     gold doc (so the router learns the lightest strategy that works). 'none' if all missed."""
@@ -66,24 +73,37 @@ def label_via_templates(ctx, gold, k: int = 10, cascade: bool = True, all_golds:
     """
     from itertools import groupby
 
+    from .templates import available_templates
+
     golds = {gold} if isinstance(gold, str) else set(gold)
 
     def _hit(name):
         got = set(run_template(name, ctx, top_k=k))
         return int(golds <= got) if all_golds else int(bool(golds & got))
 
-    order = sorted(TEMPLATE_NAMES, key=lambda t: (TEMPLATE_COST.get(t, 99), TEMPLATE_NAMES.index(t)))
+    # Only label templates that are genuinely DISTINCT under this context's capabilities.
+    # Without a generator, hyde/decompose/rephrase/expand return dense()/hybrid(); without a
+    # reranker, rerank() is the identity — so labeling all 16 scored ~4 real strategies many
+    # times over and handed every tie to light_dense on cost (SDK-A1). Unavailable templates
+    # are recorded as None (= "not evaluated"), never as a miss.
+    usable = available_templates(use_llm=bool(getattr(ctx, "use_llm", False)),
+                                 use_rerank=bool(getattr(ctx, "use_rerank", False)))
+    order = sorted(usable, key=lambda t: (TEMPLATE_COST.get(t, 99), TEMPLATE_NAMES.index(t)))
+    unavailable = {t: None for t in TEMPLATE_NAMES if t not in set(usable)}
     hits: dict = {}
     if not cascade:
         for name in order:
             hits[name] = _hit(name)
+        hits.update(unavailable)
         return best_from_hits(hits), hits
-    for _cost, grp in groupby(order, key=lambda t: TEMPLATE_COST.get(t, 99)):
-        grp = list(grp)
+    for _cost, group in groupby(order, key=lambda t: TEMPLATE_COST.get(t, 99)):
+        grp = list(group)
         for name in grp:
             hits[name] = _hit(name)
         if any(hits[n] for n in grp):
+            hits.update(unavailable)
             return best_from_hits(hits), hits     # cheapest solver is in this group
+    hits.update(unavailable)
     return "none", hits
 
 
@@ -98,7 +118,7 @@ class TemplateRouter:
 
     def predict(self, query: str, emb: np.ndarray) -> str:
         if self.model is None:
-            return "all_rerank"
+            return _UNFITTED_FALLBACK
         x = featurize(query, emb).reshape(1, -1)
         return str(self.model.predict(x)[0])
 
@@ -108,7 +128,7 @@ class TemplateRouter:
         which is where routing actually pays off (chaining, not betting on a single template).
         Falls back to a single predict when the head has no ``predict_proba``."""
         if self.model is None:
-            return ["all_rerank"]
+            return [_UNFITTED_FALLBACK]
         x = featurize(query, emb).reshape(1, -1)
         if not hasattr(self.model, "predict_proba"):
             return [str(self.model.predict(x)[0])]
@@ -142,28 +162,3 @@ def format_route_plan(plan: list[str]) -> str:
     return (f"Learned strategy plan for THIS query (router-ranked, cheapest-effective first): "
             f"{steps}. Execute as a cascade — start with the first; escalate to the next only if "
             f"the result looks weak. What each does: {detail}.")
-
-
-def train_router(X: np.ndarray, y: np.ndarray, seed: int = 0) -> dict:
-    """Train HistGradientBoosting (XGB-style) with CV. Returns model + metrics."""
-    from collections import Counter
-
-    from sklearn.ensemble import HistGradientBoostingClassifier
-    from sklearn.model_selection import cross_val_score
-
-    counts = Counter(y)
-    clf = HistGradientBoostingClassifier(max_iter=300, learning_rate=0.08,
-                                         max_depth=6, random_state=seed)
-    # CV needs >=2 per class; fold count bounded by the rarest class
-    min_class = min(counts.values()) if counts else 0
-    folds = max(2, min(5, min_class))
-    cv_acc = None
-    if len(counts) >= 2 and min_class >= 2:
-        scores = cross_val_score(clf, X, y, cv=folds, scoring="accuracy")
-        cv_acc = (float(scores.mean()), float(scores.std()))
-    clf.fit(X, y)
-    return {"model": clf, "classes": sorted(counts),
-            "label_counts": dict(counts), "cv_folds": folds,
-            "cv_accuracy": cv_acc[0] if cv_acc else None,
-            "cv_std": cv_acc[1] if cv_acc else None,
-            "train_accuracy": float((clf.predict(X) == y).mean())}

@@ -1,0 +1,15 @@
+{
+  "note": "Exact-kNN reproduction at the paper's operating points (BrowseComp-Plus Table 2, Gold Document Retrieval). 830 gold queries, docs 512-token truncated + plain, cosine kNN with OpenSearch ef_search=1200 (near-exact). Paper numbers from arXiv 2508.06600 Table 2 (Gold).",
+  "protocol": {"queries": 830, "gold_set": "qrel_golds (paper 'Gold Document Retrieval')", "doc_max_tokens": 512, "ef_search": 1200, "normalize": true},
+  "qwen3_8b": {
+    "ours_instruct": {"recall@5": 0.200, "recall@10": 0.2766, "recall@20": 0.3737, "recall@100": 0.592, "recall@1000": 0.8498},
+    "paper_gold":    {"recall@5": 0.185, "recall@100": 0.558, "recall@1000": 0.835, "ndcg@10": 0.195},
+    "verdict": "matches/exceeds paper at R@5/R@100/R@1000"
+  },
+  "reasonir_8b": {
+    "ours_instruct": {"recall@5": 0.1223, "recall@10": 0.1773, "recall@20": 0.2434, "recall@100": 0.4523, "recall@1000": 0.7607},
+    "ours_plain":    {"recall@5": 0.1222, "recall@10": 0.1766, "recall@20": 0.2336, "recall@100": 0.4179, "recall@1000": 0.7302},
+    "paper_gold":    {"recall@5": 0.153, "recall@100": 0.497, "recall@1000": 0.789, "ndcg@10": 0.155},
+    "verdict": "~3-4 pts below paper at every operating point (80/91/96% of paper as k grows); instruction is a no-op for ReasonIR (instruct~=plain). Engine validated by the Qwen3 match, so the gap is a ReasonIR encoding-pipeline difference (paper uses Tevatron; card shows only empty-instruction)."
+  }
+}

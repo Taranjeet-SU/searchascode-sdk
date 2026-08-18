@@ -77,4 +77,6 @@ class SkillLookup:
         v = v / (np.linalg.norm(v) or 1.0)
         M = self.M / (np.linalg.norm(self.M, axis=1, keepdims=True) + 1e-9)
         order = np.argsort(M @ v)[::-1][:top]
-        return [(self.cards[i].name, self.cards[i].technique) for i in order]
+        # return the RECIPE too (when_to_use), not just the label — so the author prompt can APPLY the skill
+        # instead of only naming it (buzzword gap that made the playbook a no-op in agentic_solve).
+        return [(self.cards[i].name, self.cards[i].technique, self.cards[i].when_to_use) for i in order]

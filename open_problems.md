@@ -18,7 +18,7 @@ matches the fix the current SOTA papers propose.
 | 4 | Reranking drops multi-gold coverage | [multi_hop §12](experiments/multi_hop_synth_queries/RESULTS.md) | precision-recall / list-coverage tradeoff | reproduced; fixed via fuse-for-coverage |
 | 5 | Deep/iterative retrieval degrades vs one-shot | [multi_hop §15](experiments/multi_hop_synth_queries/RESULTS.md) | over-retrieval / distractor injection | reproduced; partial monotone fix |
 | 6 | Unreliable stopping (LLM self-judge) | [deep_sac](experiments/deep_sac/) | LLM-as-judge overconfidence | reproduced; QPP-gate = SOTA fix, not yet built |
-| 7 | Multi-hop / deep-research coverage ceiling | [browsecomp RESULTS](experiments/browsecomp/RESULTS.md) | all-golds retrieval ceiling | reproduced; a *coverage* not routing problem |
+| 7 | Multi-hop / deep-research coverage ceiling | browsecomp RESULTS (*internal, not published — see `issues.md` GOV-1*) | all-golds retrieval ceiling | reproduced; a *coverage* not routing problem |
 | 8 | Templates non-orthogonal + synthetic bias | [explore_learning §9](experiments/explore_learning/README.md) | query-generator artifact / redundant strategies | diagnosed; redesign pending |
 
 ---
@@ -96,7 +96,7 @@ RRF-fuse all hops) restores aggregate parity (0.611) but still loses on easy 2-h
 ## 6. Unreliable stopping — the LLM self-judge
 **What we saw.** The per-hop LLM judge is the weak link: it rejects an already-correct hop-0 (forcing
 a diluting hop-2) or accepts a confidently-wrong hop. Deep on BrowseComp burned 34 searches for 0
-recall. → [deep_sac](experiments/deep_sac/), [browsecomp RESULTS](experiments/browsecomp/RESULTS.md).
+recall. → [deep_sac](experiments/deep_sac/), browsecomp RESULTS (*internal, not published — see `issues.md` GOV-1*).
 
 **Literature.** [Overconfidence in LLM-as-a-Judge](https://arxiv.org/html/2508.06225v2): *"inflated
 confidence scores that do not reflect true performance… overconfident models propagate erroneous
@@ -109,7 +109,7 @@ instead of the LLM self-judge (Stop-RAG's exact prescription) — not yet built.
 ## 7. Multi-hop / deep-research coverage ceiling
 **What we saw.** all-golds@10 needs *all N* golds in the top-10; unsolved explodes 1%→20/31% from
 2→4 docs. On BrowseComp (100k, ~3 golds/query) even the lenient any-gold oracle is 0.353 (65%
-unsolvable) and all-golds@10 ≈ 0. → [browsecomp RESULTS](experiments/browsecomp/RESULTS.md),
+unsolvable) and all-golds@10 ≈ 0. → browsecomp RESULTS (*internal, not published — see `issues.md` GOV-1*),
 [explore_learning §9b](experiments/explore_learning/README.md).
 
 **Literature.** [MultiHop-RAG](https://arxiv.org/pdf/2401.15391): multi-hop facts are distributed

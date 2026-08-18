@@ -8,7 +8,7 @@ the "one primitive API, any vector DB" thesis for an embedded index.
 
 from __future__ import annotations
 
-from typing import Any, Optional, Sequence
+from typing import Any, Sequence
 
 import numpy as np
 
@@ -40,15 +40,49 @@ class FaissStore(VectorStore):
                             metadata_filter=True)
 
     def upsert(self, docs: Sequence[Document]) -> None:
+        """Upsert by id. IndexFlatIP has no in-place update, so re-inserting a known id
+        rebuilds the index.
+
+        This used to unconditionally ``index.add``, while the composed MemoryStore replaced
+        the document — so re-upserting an id appended a SECOND vector, ``count()`` drifted
+        away from the real document count, and the stale vector stayed searchable forever.
+        Caught by the conformance suite (issues.md ADP-1).
+        """
         vecs, keep = [], []
         for d in docs:
             if d.vector is None:
                 continue
-            vecs.append(d.vector); keep.append(d)
+            vecs.append(d.vector)
+            keep.append(d)
+        self._mem.upsert(docs)
+        known = set(self._ids)
+        if any(d.id in known for d in keep):
+            self._rebuild()
+            return
         if vecs:
             self.index.add(_norm(np.asarray(vecs, dtype=np.float32)))
             self._ids.extend(d.id for d in keep)
-        self._mem.upsert(docs)
+
+    def _rebuild(self) -> None:
+        """Rebuild the flat index from the documents the MemoryStore currently holds."""
+        import faiss
+
+        self.index = faiss.IndexFlatIP(self.dim)
+        self._ids = []
+        rows, ids = [], []
+        for doc_id, d in self._mem._docs.items():
+            if d.vector is None:
+                continue
+            rows.append(d.vector)
+            ids.append(doc_id)
+        if rows:
+            self.index.add(_norm(np.asarray(rows, dtype=np.float32)))
+        self._ids = ids
+
+    def delete(self, ids: Sequence[str]) -> None:
+        """Delete by id (was unimplemented, so it raised NotImplementedError — ADP-2)."""
+        self._mem.delete(ids)
+        self._rebuild()
 
     def query_vector(self, vector, top_k=10, flt=None) -> ResultSet:
         if self.index.ntotal == 0:

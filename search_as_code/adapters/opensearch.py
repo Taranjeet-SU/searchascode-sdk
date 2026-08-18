@@ -17,7 +17,13 @@ from __future__ import annotations
 from typing import Any, Optional, Sequence
 
 from .._resilience import DEFAULT_BATCH_SIZE, chunked, with_retry
-from ..errors import BackendError, InvalidArgumentError, MissingDependencyError
+from ..errors import (
+    BackendError,
+    DimensionMismatchError,
+    InvalidArgumentError,
+    InvalidFilterError,
+    MissingDependencyError,
+)
 from ..filters import normalize
 from ..types import Capabilities, Document, Hit, ResultSet
 from .base import VectorStore
@@ -40,6 +46,7 @@ class OpenSearchStore(VectorStore):
         space_type: str = "cosinesimil",
         text_field: str = "text",
         vector_field: str = "vector",
+        sample_seed: int = 0,
         timeout: float = 30.0,
         max_retries: int = 3,
         batch_size: int = DEFAULT_BATCH_SIZE,
@@ -55,6 +62,11 @@ class OpenSearchStore(VectorStore):
         self.vector_field = vector_field
         self._space = space_type
         self.batch_size = batch_size
+        self._mapping_cache: Optional[dict[str, Optional[str]]] = None
+        # Seeded so sample() is reproducible: corpus_fingerprint hashes a sample, so an
+        # unseeded random_score made the fingerprint differ on every call and the explore
+        # pipeline re-ran every stage every time (SDK-C4; seeded pattern from P4-4).
+        self.sample_seed = sample_seed
         # Lean on the client's native resilience for transient connection/timeout
         # failures (retry_on_timeout), and wrap our own calls in BackendError so
         # callers get one typed failure regardless of backend.
@@ -83,6 +95,14 @@ class OpenSearchStore(VectorStore):
     # ---- index lifecycle -------------------------------------------------
     def ensure_index(self, dim: int) -> None:
         if self.client.indices.exists(index=self.index):
+            # Do not silently reuse an index whose vectors are a different width — that
+            # surfaces later as an opaque server-side error or, worse, as bad recall.
+            existing = self._existing_dim()
+            if existing is not None and dim is not None and existing != dim:
+                raise DimensionMismatchError(
+                    "existing index was created with a different vector dimension",
+                    index=self.index, dim=dim, expected=existing,
+                )
             return
         body = {
             "settings": {"index": {"knn": True, "number_of_shards": 1, "number_of_replicas": 0}},
@@ -105,6 +125,19 @@ class OpenSearchStore(VectorStore):
             },
         }
         self.client.indices.create(index=self.index, body=body)
+
+    def _existing_dim(self) -> Optional[int]:
+        """Vector width the live index was created with, or None if it cannot be read."""
+        try:
+            resp = self.client.indices.get_mapping(index=self.index)
+            for body in resp.values():
+                props = (body.get("mappings") or {}).get("properties") or {}
+                d = (props.get(self.vector_field) or {}).get("dimension")
+                if d is not None:
+                    return int(d)
+        except Exception:
+            return None
+        return None
 
     def capabilities(self) -> Capabilities:
         return Capabilities(
@@ -135,24 +168,85 @@ class OpenSearchStore(VectorStore):
                        backend="opensearch", op="bulk")
 
     # ---- filter translation ---------------------------------------------
+    def _term_field(self, field: str, val: Any) -> str:
+        """The field a ``term`` query must target for exact matching.
+
+        Dynamically-mapped strings are indexed as ``text`` **plus** a ``.keyword`` sub-field.
+        A ``term`` query on the bare field is analyzed-vs-not-analyzed and matches nothing, so
+        ``$eq`` on string metadata failed closed — zero hits, no error (SDK-C3). Numbers, bools
+        and explicitly-mapped keyword fields are unaffected.
+        """
+        if not isinstance(val, str):
+            return field
+        if field.endswith(".keyword"):
+            return field
+        mapped = self._field_type(field)
+        return field if mapped in ("keyword", "boolean", "long", "integer", "float", "double") \
+            else f"{field}.keyword"
+
+    def _field_type(self, field: str) -> Optional[str]:
+        """Mapping type of ``field``, cached. ``None`` when unknown (index/mapping missing)."""
+        if self._mapping_cache is None:
+            try:
+                resp = self.client.indices.get_mapping(index=self.index)
+                props: dict = {}
+                for body in resp.values():
+                    props.update((body.get("mappings") or {}).get("properties") or {})
+                self._mapping_cache = {k: (v or {}).get("type") for k, v in props.items()}
+            except Exception:
+                self._mapping_cache = {}
+        return self._mapping_cache.get(field)
+
     def _to_filter(self, flt: Optional[dict]) -> list[dict]:
+        """Translate the normalized filter tree into OpenSearch bool clauses.
+
+        ``$and`` / ``$or`` / ``$not`` are translated rather than skipped. They used to be
+        dropped silently, so ``search(filter={"$or": [...]})`` ran **unfiltered** and returned
+        more results than asked for, while ``filters.validate()`` accepted the operator and
+        promised fail-fast boundary validation (SDK-C2).
+        """
         if not flt:
             return []
         clauses: list[dict] = []
         for field, cond in normalize(flt).items():
+            if field == "$and":
+                for sub in cond:
+                    clauses.extend(self._to_filter(sub))
+                continue
+            if field == "$or":
+                shoulds = [{"bool": {"filter": self._to_filter(sub)}} for sub in cond]
+                clauses.append({"bool": {"should": shoulds, "minimum_should_match": 1}})
+                continue
+            if field == "$not":
+                subs = cond if isinstance(cond, list) else [cond]
+                for sub in subs:
+                    clauses.append({"bool": {"must_not": self._to_filter(sub)}})
+                continue
             if field.startswith("$"):
-                continue  # nested and/or omitted in reference adapter
+                raise InvalidFilterError(
+                    "unsupported filter operator for the opensearch backend",
+                    op=field, backend="opensearch",
+                )
             for op, val in cond.items():
                 if op == "$eq":
-                    clauses.append({"term": {field: val}})
+                    clauses.append({"term": {self._term_field(field, val): val}})
                 elif op == "$ne":
-                    clauses.append({"bool": {"must_not": {"term": {field: val}}}})
+                    clauses.append({"bool": {"must_not": {"term": {self._term_field(field, val): val}}}})
                 elif op == "$in":
-                    clauses.append({"terms": {field: list(val)}})
+                    vals = list(val)
+                    tf = self._term_field(field, vals[0]) if vals else field
+                    clauses.append({"terms": {tf: vals}})
                 elif op == "$nin":
-                    clauses.append({"bool": {"must_not": {"terms": {field: list(val)}}}})
+                    vals = list(val)
+                    tf = self._term_field(field, vals[0]) if vals else field
+                    clauses.append({"bool": {"must_not": {"terms": {tf: vals}}}})
                 elif op in _RANGE_OPS:
                     clauses.append({"range": {field: {_RANGE_OPS[op]: val}}})
+                else:
+                    raise InvalidFilterError(
+                        "unsupported filter operator for the opensearch backend",
+                        op=op, field=field, backend="opensearch",
+                    )
         return clauses
 
     def _hits(self, resp: dict) -> ResultSet:
@@ -342,8 +436,15 @@ class OpenSearchStore(VectorStore):
         # wide docs the full source is ~15 KB/doc, so a large sample can be many MB and time
         # out. The vector is always excluded.
         want = list(fields) if fields else [self.text_field]
+        # SEEDED random_score (+ a stable tiebreak field) so repeated calls return the same
+        # sample: corpus_fingerprint() hashes store.sample(12) and calls it "deterministic-ish",
+        # but an unseeded random_score made the fingerprint differ on every invocation, so
+        # fingerprint_changed() was always True and run_pipeline re-ran every stage every run
+        # (SDK-C4). Pass sample_seed=None for the old nondeterministic behaviour.
+        rnd: dict = {} if self.sample_seed is None else {"seed": int(self.sample_seed),
+                                                         "field": "_seq_no"}
         body = {"size": n, "_source": want,
-                "query": {"function_score": {"query": {"match_all": {}}, "random_score": {}}}}
+                "query": {"function_score": {"query": {"match_all": {}}, "random_score": rnd}}}
         out = []
         for h in self.client.search(index=self.index, body=body)["hits"]["hits"]:
             src = dict(h.get("_source", {}))

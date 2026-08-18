@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import re
 from dataclasses import dataclass, field
+from typing import Any
 
 # error/status codes and part numbers: ORA-01017, HTTP 500, E1234, 0x80070005, ERR_CONN, AGFC012
 _CODE_RE = re.compile(
@@ -27,9 +28,29 @@ _CODE_RE = re.compile(
 _HTTP_RE = re.compile(r"\b(?:error|status|exception|code|errno|traceback|stack ?trace)\b", re.I)
 _DEF_RE = re.compile(r"^\s*(?:what\s+(?:is|are|does|do)|define|definition of|meaning of|explain)\b", re.I)
 _ENTITY_RE = re.compile(r"^\s*(?:who|where|when|which)\s+(?:is|are|was|were)\b", re.I)
+# STRONG multi-document signals: the question explicitly contrasts or enumerates several
+# DOCUMENTS. A bare "and" is deliberately NOT here — it is the single most common word in a
+# conjunctive-constraint question ("a film released in 1994 AND directed by X"), which needs
+# ONE document, not a decomposition. Classifying those as multi_hop routed them to
+# decompose_arsenal, the structure experiments/deep_judge/README.md §5 measures as wrong for
+# conjunctive corpora (decompose 0.025 vs dense 0.079 recall@10 on BrowseComp) — SDK-A4.
 _MULTI_HINT = re.compile(
-    r"\b(?:and|both|compare|comparison|versus|vs\.?|difference between|relate[sd]?|relationship|"
-    r"how (?:do|does|are).*(?:relate|connect|differ)|each|respectively|as well as)\b", re.I)
+    r"\b(?:both|compare|comparison|versus|vs\.?|difference between|relate[sd]?|relationship|"
+    r"how (?:do|does|are).*(?:relate|connect|differ)|respectively|as well as|"
+    r"each of the|which of the (?:two|three))\b", re.I)
+
+# WEAK hints — conjunctions that only suggest multi-document when several distinct named
+# entities are also present. "and"/"each" live here.
+_WEAK_MULTI_HINT = re.compile(r"\b(?:and|each)\b", re.I)
+# A proper-noun-ish run, used to tell "two entities joined by and" from "one entity with
+# several constraints joined by and".
+_ENTITY_TOKEN_RE = re.compile(r"\b[A-Z][A-Za-z0-9'’\-]{2,}(?:\s+[A-Z][A-Za-z0-9'’\-]{2,})*\b")
+
+
+def _n_named_entities(q: str) -> int:
+    """Count distinct capitalised multi-word runs, ignoring a leading sentence capital."""
+    body = q[1:] if q[:1].isupper() else q
+    return len({m.group(0) for m in _ENTITY_TOKEN_RE.finditer(body)})
 
 
 @dataclass
@@ -50,7 +71,8 @@ def extract_codes(query: str) -> list[str]:
     for m in _CODE_RE.findall(query):
         m = m.strip()
         if m and m not in seen:
-            seen.add(m); out.append(m)
+            seen.add(m)
+            out.append(m)
     return out[:4]
 
 
@@ -62,18 +84,32 @@ def triage(query: str) -> QueryIntent:
     """Classify a query into an intent + recommended skill + depth, from cheap surface signals."""
     q = (query or "").strip()
     codes = extract_codes(q)
-    sig = {"len": len(q), "n_words": len(q.split()), "codes": codes,
-           "has_error_word": bool(_HTTP_RE.search(q)), "n_clauses": _n_clauses(q),
-           "multi_hint": bool(_MULTI_HINT.search(q))}
+    n_entities = _n_named_entities(q)
+    sig: dict[str, Any] = {
+        "len": len(q), "n_words": len(q.split()), "codes": codes,
+        "has_error_word": bool(_HTTP_RE.search(q)), "n_clauses": _n_clauses(q),
+        "multi_hint": bool(_MULTI_HINT.search(q)),
+        "weak_multi_hint": bool(_WEAK_MULTI_HINT.search(q)),
+        "n_entities": n_entities,
+    }
 
-    # 1) error / status codes → exact match wins (embeddings blur IDs)
+    # 1) multi-hop: a STRONG contrastive/enumerating hint, or a weak conjunction that comes
+    #    with several distinct named entities (two documents), or many clauses AND several
+    #    entities. A long conjunctive-constraint question about ONE entity stays single-depth
+    #    and is handled whole — which is what the BrowseComp evidence supports (SDK-A4).
+    #    Checked BEFORE the code branch: "the difference between BM25 and dense retrieval"
+    #    trips the part-number regex on "BM25", and a comparison of two coded entities is
+    #    still a two-document question.
+    strong = sig["multi_hint"]
+    weak_with_entities = sig["weak_multi_hint"] and n_entities >= 2
+    clausal_with_entities = sig["n_clauses"] >= 3 and n_entities >= 2
+    if strong or weak_with_entities or clausal_with_entities:
+        conf = 0.85 if (strong and n_entities >= 2) else (0.7 if strong else 0.6)
+        return QueryIntent("multi_hop", sig, "decompose_arsenal", "multi", conf)
+
+    # 2) error / status codes → exact match wins (embeddings blur IDs)
     if codes or (sig["has_error_word"] and re.search(r"\d", q)):
         return QueryIntent("error_code", sig, "exact_lookup", "single", 0.9 if codes else 0.6)
-
-    # 2) multi-hop: explicit connective hints OR several distinct clauses/entities
-    if sig["multi_hint"] or sig["n_clauses"] >= 3:
-        return QueryIntent("multi_hop", sig, "decompose_arsenal", "multi",
-                           0.85 if sig["multi_hint"] and sig["n_clauses"] >= 3 else 0.65)
 
     # 3) definition / factoid → one focused lookup
     if _DEF_RE.match(q):

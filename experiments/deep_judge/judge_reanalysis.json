@@ -1,0 +1,95 @@
+{
+  "note": "DJ-1/2/3 re-analysis: selection on TUNE only, CIs attached.",
+  "variants": {
+    "bi-encoder cosine (v0)": {
+      "log": "tuning_log_same.md",
+      "rounds": 8,
+      "originally_adopted_round": 0,
+      "honest_round": 0,
+      "tune_balanced_acc": [
+        0.6459,
+        0.5528,
+        0.7403
+      ],
+      "test_balanced_acc": [
+        0.5845,
+        0.4902,
+        0.6849
+      ],
+      "round0_test_balanced_acc": [
+        0.5845,
+        0.4902,
+        0.6849
+      ],
+      "tuning_gain_on_test": {
+        "delta": 0.0,
+        "lo": -0.14,
+        "hi": 0.14,
+        "significant": false,
+        "n": 100,
+        "paired": false
+      },
+      "is_untuned_round_zero": true
+    },
+    "+ cross-encoder, same-model critic (v1)": {
+      "log": "tuning_log_ce_same.md",
+      "rounds": 8,
+      "originally_adopted_round": 7,
+      "honest_round": 7,
+      "tune_balanced_acc": [
+        0.771,
+        0.6849,
+        0.8537
+      ],
+      "test_balanced_acc": [
+        0.7214,
+        0.6329,
+        0.8111
+      ],
+      "round0_test_balanced_acc": [
+        0.7001,
+        0.6104,
+        0.791
+      ],
+      "tuning_gain_on_test": {
+        "delta": 0.02,
+        "lo": -0.11,
+        "hi": 0.15,
+        "significant": false,
+        "n": 100,
+        "paired": false
+      },
+      "is_untuned_round_zero": false
+    },
+    "+ cross-encoder, independent Qwen-32B critic": {
+      "log": "tuning_log_ce_qwen.md",
+      "rounds": 8,
+      "originally_adopted_round": 0,
+      "honest_round": 0,
+      "tune_balanced_acc": [
+        0.7603,
+        0.6764,
+        0.8442
+      ],
+      "test_balanced_acc": [
+        0.7001,
+        0.6104,
+        0.791
+      ],
+      "round0_test_balanced_acc": [
+        0.7001,
+        0.6104,
+        0.791
+      ],
+      "tuning_gain_on_test": {
+        "delta": 0.0,
+        "lo": -0.12,
+        "hi": 0.12,
+        "significant": false,
+        "n": 100,
+        "paired": false
+      },
+      "is_untuned_round_zero": true
+    }
+  }
+}

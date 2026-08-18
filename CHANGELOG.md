@@ -1,5 +1,49 @@
 # Changelog
 
+## 2026-08-17 — audit-fix sweep (`fix/audit-sweep`)
+
+Worked `issues.md` end to end. 10 commits, each one issue-family. Highlights:
+
+**Correctness (the silent-failure class the audit called dominant)**
+- GEN-1/2/3: nine consumers took `out[0]` of a line-splitting generator, so the "validated
+  multi-hop recipe" ran on ONE sub-fact, HyDE embedded a preamble line, and pretty-printed JSON
+  was dropped. One shared helper (`_genutil`) + 11 regression tests.
+- SDK-C1..C14: dead `os_query` allowlist, `$or` filters running unfiltered, `$eq` on strings
+  matching nothing, unseeded `sample()` defeating resume, failure taxonomy reading a stripped
+  `d.vector`, `regexp` never matching, thread-unsafe reranker loading, O(n²) memory writes,
+  `MemoryStore` ignoring `dim`, per-query corpus re-tokenization.
+- SDK-A1..A5: the 16-template space collapsing to ~4 under shipped defaults; the "self-improving"
+  harness learning from a reward that was just "returned ≥1 id"; triage decomposing every
+  conjunctive question; the `validate()` gate no stage implemented.
+- BC-4: `_fix_meta_buffers` never rebuilt `inv_freq` — the buffer that actually corrupted ReasonIR.
+
+**Measurement honesty**
+- Promoted `phase4/metrics.py` → `search_as_code.metrics` (bootstrap CIs, `compare`, recall@k /
+  all-golds@k / nDCG). It was the only significance testing in the repo.
+- DJ-1/2/3: re-derived the judge headline. 0.721 **[0.633, 0.811]**; the tuning gain is
+  +0.020 [−0.110, +0.150] (not distinguishable from noise); two of five table rows were the
+  *untuned* prompt. "0.72 is the signal ceiling" softened to what the data supports.
+- P1-7 / EXP-2: re-ran multi-hop with matched prompts and explore-first applied to BOTH harnesses.
+  The quality margin does not survive (`sac_explored − tool_explored` = −0.10/−0.07/−0.08, ns);
+  the cost margin does, and is large (1 turn vs ~9; ~600 vs ~15–19k input tokens). Explore is a
+  real ingredient but a corpus-knowledge win, not a code-mode win. `RESULTS.md` §4b.
+
+**Controls, so the next defect of each class is loud**
+- `tests/test_conformance.py`: the adapter contract the README claimed, run against every
+  installed backend. Enforcing it immediately found 3 real bugs (ADP-1/2/3).
+- CI was RED before this branch (ruff 37, mypy 52 errors on committed HEAD). Now 0/0, plus new
+  jobs for the wheel smoke test, conformance, doc links and the customer-artifact guard.
+- `make check` as the single definition of "keep it green"; `.pre-commit-config.yaml`;
+  pinned `requirements/`; `scripts/check_no_customer_artifacts.py`.
+- Governance: 48 tracked customer files untracked, `*.pub` ignored (the SSH key), version
+  single-sourced, `learnings_standard.md` created (soul.md named it 3× and it never existed).
+
+Tests: 199 unit + 23 OpenSearch integration. `issues.md`: 126 → 136 entries (10 found *by* the
+new controls), 7 marked FIXED.
+
+---
+
+
 Running log of everything built/changed/learned. Newest first.
 
 ## Phase 4 — answer-generation benchmark (standard)
@@ -109,6 +153,34 @@ Granular status so another agent can pick up the work. Read this first, then the
 
 ---
 
+## 2026-08-11 — Diagnostic LLM-as-judge + forged-primitive playbook (promoted to the SDK)
+- **Diagnostic judge** (`search_as_code.harness.DiagnosticJudge`): a STOP/CONTINUE controller that
+  coverage-checks each sub-fact with calibrated signals (per-sub-fact CROSS-ENCODER score is the primary
+  signal; bi-encoder cosine is saturated) and emits `MISSING/DIAGNOSIS/TECHNIQUE/NEXT_QUERY/VERDICT` the
+  next hop consumes. Oracle-agreement **0.63→0.72 balanced-acc** once the cross-encoder signal is added —
+  and 0.72 **is the signal ceiling**: a supervised model tops out there, and neither same-model
+  self-critique (0.721) nor an independent **Qwen-32B** critic (0.70) beats it. The residual is
+  snippet-level (can't verify the exact gold vs a distractor), not a reasoning/critic limit.
+- **Playbook** (`harness.diagnostic_solve`): decompose → per-sub-fact arsenal (hybrid+HyDE+fielded RRF) →
+  reserve-one-slot-per-sub-fact assembly (fixes multi-hop dilution) → judge + **RAG-Techniques skill
+  lookup** (`harness.SkillLookup`, seeded from NirDiamant/RAG_Techniques) routes each weak sub-fact to
+  HyDE/fielded/rerank/decompose/PRF/**authored os_query** (`harness.author_os_query`, validated read-only DSL).
+- **Forge from discovered OpenSearch queries** (`experiments/deep_judge/run_forge_playbook.py`): on
+  HotpotQA+SU (n=30, 4-hop) the loop captured winning queries and the LLM **authored 5 free-form code
+  primitives over the full SDK** (all validated on held queries; compose hybrid+HyDE+fielded+RRF), plus
+  composed skills + subagents + a learned rule per corpus, persisted to `forge_store_{hotpot,su}/`.
+  Numbers: **SU diagnostic 0.53 vs 0.33 all-golds (+0.10 recall, 30% fewer hops)**; HotpotQA ~parity
+  (its comparison queries name their entities, so broad retrieval already suffices).
+- **SAC-replicate** (`run_sac_replicate.py`): the forged SAC primitives reproduce raw-query relevance —
+  `sac_oracle` recall within ~0.02–0.03 of `raw_oracle`; the autonomous judge (`sac_judge`, no oracle)
+  keeps recall within ~0.02–0.06 but loses ~0.10–0.20 on *strict* all-golds because its stop decision is
+  right only ~47–57% of the time (the same 0.72 ceiling). **Retrieval is not the limiter — the stop
+  signal is.**
+- **Pip test**: `tests/test_diagnostic_playbook.py` reproduces raw≈SAC recall via the installed package API.
+- Full write-up: `experiments/deep_judge/README.md`.
+
+---
+
 ## Multi-dataset campaign (in progress)
 - **Datasets added** — SciFact, NFCorpus, ArguAna, SciDocs, TREC-COVID (BEIR, real qrels,
   diverse query types) on top of FiQA + HotpotQA. Generic ingest/eval harness (`phase2/beir.py`,
@@ -162,6 +234,21 @@ Granular status so another agent can pick up the work. Read this first, then the
   Retrieval and Abstention" — parallel our adaptive-routing + confidence/abstain primitives.
 - **Planned Phase 3** — multi-backend adapters (FAISS/nmslib/Elasticsearch/Milvus/SQLite/Mongo/Pinecone)
   + HotpotQA cross-DB relevance (`docs/PHASE3.md`).
+
+## Phase 4 — answer-generation benchmark (global RAG authenticity, task #24)
+- **HotpotQA answer-gen DONE (n=200, EM/F1 + bootstrap 95% CIs, gen=gpt-4.1-mini, k=5).** All arms share
+  generator+corpus+prompt; only retrieval differs; closed-book = contamination control.
+  | arm | EM [95% CI] | F1 [95% CI] |
+  |---|---|---|
+  | **SAC** | **0.520 [0.450,0.585]** | **0.673 [0.614,0.728]** |
+  | tool-RAG | 0.500 [0.430,0.565] | 0.659 [0.600,0.713] |
+  | vanilla-RAG | 0.470 [0.405,0.535] | 0.626 [0.568,0.683] |
+  | closed-book | 0.310 [0.250,0.375] | 0.423 [0.362,0.485] |
+  - **SAC tops answer quality**, clearly beats vanilla RAG (+0.05 EM/+0.05 F1); edges tool-calling (CIs
+    overlap → the two agentic methods tie, both > vanilla). Retrieval lift over closed-book +0.20–0.25 F1
+    (real value, not memorization). Harness: `phase4/{metrics.py,answer_gen.py}`, `runs/answergen_hotpotqa.json`.
+  - Method note: authentic protocol (deterministic EM/F1 = leaderboard metric; contamination control;
+    equal budget). 2WikiMultiHopQA/MuSiQue queued (need their own corpora built).
 
 ## Phase 3 extensions (task #23)
 - **Tuned-HNSW re-index CONFIRMS the ANN finding.** Rebuilt HotpotQA as `hotpotqa_tuned` (m=48,

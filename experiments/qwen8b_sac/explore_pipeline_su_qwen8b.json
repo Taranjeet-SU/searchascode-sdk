@@ -1,0 +1,27 @@
+{
+  "corpus": "su",
+  "max_hops": 6,
+  "stage1_explore_recall@20": 0.75,
+  "decomposed": "2/40",
+  "discovered_structure": "whole-query",
+  "stage3_validate_judgestop@20": 0.667,
+  "stage3_oraclestop@20": 0.6,
+  "stage5_forge_on_train@20": 0.769,
+  "stage7_test_recall@10": 0.606,
+  "stage7_test_recall@20": 0.669,
+  "artifacts": {
+    "code_primitives": [
+      "su_explored_primitive"
+    ],
+    "skills": [
+      "su_explored_skill"
+    ],
+    "subagents": [
+      "su_explored_agent"
+    ],
+    "rules": [
+      "[su] discovered structure = whole-query (decomposed 2/40 in exploration)"
+    ]
+  },
+  "forged_code": "def run(session, query, top_k):\n    \"\"\"\n    General reusable retrieval primitive synthesizing winning strategies:\n    - If the query is decomposed into subqueries (list of strings), run hybrid search per subquery,\n      fuse results, then rerank with full query.\n    - Otherwise, run whole-query hybrid search (optionally combined with fielded query if supported),\n      fuse results, then rerank.\n    \n    Uses only allowed session methods and helpers: session.search, session.store.query_fielded (guarded),\n    fuse_ids, rerank.\n    \n    Returns a list of ids.\n    \"\"\"\n    # Detect if query is decomposed into subqueries (list of strings)\n    if isinstance(query, (list, tuple)) and all(isinstance(sq, str) for sq in query) and len(query) > 1:\n        # Decomposed query: run hybrid search per subquery\n        per_sub_k = max(1, top_k // len(query))\n        all_ids = []\n        for sq in query:\n            ids = session.search(sq, top_k=per_sub_k, mode='hybrid').ids()\n            all_ids.append(ids)\n        fused_ids = fuse_ids(all_ids)\n        reranked_ids = rerank(session, \" \".join(query), fused_ids, top_k=top_k)\n        return reranked_ids\n\n    # Whole query approach\n    # Run hybrid search with boosted top_k*3 to increase recall\n    ids_hybrid = session.search(query, top_k=top_k*3, mode='hybrid').ids()\n\n    # Optionally run fielded query if supported to boost title and text matches\n    if hasattr(session.store, 'query_fielded'):\n        ids_fielded = session.store.query_fielded(query, ['title^2', 'text'], top_k=top_k*3)\n    else:\n        ids_fielded = []\n\n    # Fuse all retrieved ids (hybrid + fielded if any)\n    fused_ids = fuse_ids([ids_hybrid, ids_fielded])\n\n    # Rerank fused results with full query for best precision\n    reranked_ids = rerank(session, query, fused_ids, top_k=top_k)\n\n    return reranked_ids"
+}
