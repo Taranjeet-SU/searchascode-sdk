@@ -1990,3 +1990,25 @@ sections land. The append-only rule forbids renumbering an existing section, so 
 forward-only: **the next section is §19**, and cross-references should cite the entry tag
 (`EXP-5`, `DJ-14`) rather than the section number. Recording it so the collision is deliberate
 and documented rather than silently confusing.
+
+#### 🟥 PROD-1 `[A]` The "never underperform the baseline" guarantee holds at the ARTIFACT level but leaks at runtime — measured 0.234 vs dense 0.257
+The gate guarantee is real for what forge ships (`accept_code_primitive` persists max(dense,
+hybrid) or better — on BrowseComp qwen8b the shipped primitive IS dense, 0.257 by construction).
+The runtime loop leaks it three ways, measured on the v3 BrowseComp qwen8b leg (n=100):
+1. **Judge false-FAILs fuse escalation into solved queries** — escalation rate 1.00 under the
+   coverage premise, including the ~26% of queries dense already solved at hop 0.
+2. **Weighted RRF (2× base) protects membership, not internal order**: an escalation hop that
+   RE-FINDS base's rank-30 doc lifts it (2/91 + 1/61 = 0.038) above base's rank-8 gold (2/69 =
+   0.029) — the baseline's tail overtakes its head and the gold exits the fused top-10. This is
+   the residual 0.234-vs-0.257 gap in `sac_product` (`experiments/cost_tokens/run_cost.py`
+   rrf_ids base_weight=2.0).
+3. **`sac_explored`'s authored program may add pools around `forged()`** (its guidance permits a
+   keyword escalation), reintroducing dilution the gate had eliminated (0.213).
+Fixes: (a) the sufficiency premise (feat/ws2-stopgate) removes fusion from solved queries —
+PASS returns base verbatim, and FAILed queries have ~0 base recall to lose; (b) a construction-
+level floor guard on the FAIL path: candidates in base top-k scoring above the tuned min-CE
+threshold cannot be evicted by fusion; (c) claim wording: the guarantee is UNCONDITIONAL at the
+artifact level and JUDGE-CONDITIONAL in the loop — the v1 README's "never ships a strategy that
+underperforms" is accurate; looser paraphrases ("never underperforms dense", incl. in chat/docs)
+must not be used until (a)+(b) are measured. Re-test on browsecomp_qwen8b is queued behind the
+v3 chain.
