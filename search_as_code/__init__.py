@@ -63,6 +63,8 @@ from .primitives import (
     abstain,
     auto_filter,
     confidence,
+    consensus,
+    content_type,
     decompose,
     dedup,
     diversity_quota,
@@ -71,6 +73,7 @@ from .primitives import (
     fan_out,
     freshness,
     fuse,
+    max_similarity,
     mmr,
     normalize_query,
     normalize_scores,
@@ -79,13 +82,16 @@ from .primitives import (
     relative_score_fusion,
     rephrase,
     rerank,
+    result_diversity,
     rrf,
+    score_cliff,
     score_cutoff,
     topics,
 )
 from .rerankers import CrossEncoderReranker, QwenReranker
 from .sandbox import ExecResult, LocalExecutor, Sandbox
 from .session import Session, route
+from .surface import SAC_SYSTEM  # the LLM-facing prompt surface ships with the wheel (DOC-1/SDK-R8)
 from .types import Capabilities, Document, Hit, ResultSet
 
 __version__ = "0.0.1"
@@ -113,6 +119,9 @@ __all__ = [
     "mmr", "expand", "decompose", "rephrase", "rrf", "topics", "auto_filter", "score_cutoff",
     "normalize_scores", "relative_score_fusion", "diversity_quota", "confidence", "abstain",
     "normalize_query", "rare_terms", "quality_filter",
+    "consensus", "score_cliff", "result_diversity", "max_similarity", "content_type",
+    # the LLM-facing prompt surface
+    "SAC_SYSTEM",
     # rerankers
     "CrossEncoderReranker", "QwenReranker",
     # errors

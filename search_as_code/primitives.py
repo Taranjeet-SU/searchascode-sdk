@@ -30,6 +30,25 @@ def fan_out(
         return list(ex.map(fn, items))
 
 
+def _merged_info(result_sets: Sequence[ResultSet]) -> dict:
+    """Union of the inputs' ``.info`` side-signals so they survive fusion (SDK-C16).
+
+    ``degraded`` counters are summed; for any other key the first occurrence wins.
+    """
+    out: dict = {}
+    deg: dict = {}
+    for rs in result_sets:
+        info = getattr(rs, "info", None) or {}
+        for reason, n in (info.get("degraded") or {}).items():
+            deg[reason] = deg.get(reason, 0) + n
+        for key, val in info.items():
+            if key != "degraded":
+                out.setdefault(key, val)
+    if deg:
+        out["degraded"] = deg
+    return out
+
+
 def fuse(
     result_sets: Sequence[ResultSet],
     weights: Optional[Sequence[float]] = None,
@@ -54,7 +73,7 @@ def fuse(
         for i, s in agg.items()
     ]
     fused.sort(key=lambda h: h.score, reverse=True)
-    return ResultSet(fused)
+    return ResultSet(fused, info=_merged_info(result_sets))
 
 
 # RRF is exactly the fusion primitive above; `rrf` is an explicit, discoverable alias.
@@ -78,7 +97,7 @@ def score_cutoff(results: ResultSet, method: str = "band", rel_band: float = 0.1
     """
     hits = sorted(results, key=lambda h: h.score, reverse=True)[:max_k]
     if not hits:
-        return ResultSet()
+        return ResultSet(info=getattr(results, "info", None))
     if method == "knee":
         scores = [h.score for h in hits]
         best_i, best_gap = len(hits), -1.0
@@ -93,7 +112,7 @@ def score_cutoff(results: ResultSet, method: str = "band", rel_band: float = 0.1
         kept = [h for h in hits if h.score >= cut]
     if len(kept) < min_k:
         kept = hits[:min_k]
-    return ResultSet(kept[:max_k])
+    return ResultSet(kept[:max_k], info=getattr(results, "info", None))
 
 
 def normalize_scores(results: ResultSet, method: str = "minmax") -> ResultSet:
@@ -101,7 +120,7 @@ def normalize_scores(results: ResultSet, method: str = "minmax") -> ResultSet:
     KEEPING magnitude (unlike RRF, which discards it). method=minmax → [0,1];
     zscore → standardized. (Weaviate hybrid-fusion.)"""
     if not results:
-        return ResultSet()
+        return ResultSet(info=getattr(results, "info", None))
     scores = [h.score for h in results]
     if method == "zscore":
         mu = sum(scores) / len(scores)
@@ -110,10 +129,14 @@ def normalize_scores(results: ResultSet, method: str = "minmax") -> ResultSet:
         norm = [(s - mu) / sd for s in scores]
     else:
         lo, hi = min(scores), max(scores)
-        rng = (hi - lo) or 1.0
-        norm = [(s - lo) / rng for s in scores]
-    return ResultSet(Hit(id=h.id, score=float(n), document=h.document, query=h.query, store=h.store)
-                     for h, n in zip(results, norm))
+        if hi == lo:
+            # A single hit / all-tied list maps to 1.0 (equally best), not 0.0 — mapping to
+            # 0.0 made relative_score_fusion of singleton lists collapse to a total tie (SDK-C17).
+            norm = [1.0] * len(scores)
+        else:
+            norm = [(s - lo) / (hi - lo) for s in scores]
+    return ResultSet((Hit(id=h.id, score=float(n), document=h.document, query=h.query, store=h.store)
+                      for h, n in zip(results, norm)), info=getattr(results, "info", None))
 
 
 def relative_score_fusion(result_sets: Sequence[ResultSet], weights: Optional[Sequence[float]] = None,
@@ -132,7 +155,7 @@ def relative_score_fusion(result_sets: Sequence[ResultSet], weights: Optional[Se
     fused = [Hit(id=i, score=s, document=keep[i].document, query=keep[i].query, store=keep[i].store)
              for i, s in agg.items()]
     fused.sort(key=lambda h: h.score, reverse=True)
-    return ResultSet(fused)
+    return ResultSet(fused, info=_merged_info(result_sets))
 
 
 def diversity_quota(results: ResultSet, key: Callable[[Hit], Any],
@@ -141,6 +164,7 @@ def diversity_quota(results: ResultSet, key: Callable[[Hit], Any],
     group (by ``key``) while walking down the ranking. (Vespa result diversity.)"""
     counts: dict[Any, int] = {}
     out: list[Hit] = []
+    _info = getattr(results, "info", None)
     for h in sorted(results, key=lambda x: x.score, reverse=True):
         g = key(h)
         if counts.get(g, 0) < max_per_group:
@@ -148,7 +172,7 @@ def diversity_quota(results: ResultSet, key: Callable[[Hit], Any],
             counts[g] = counts.get(g, 0) + 1
             if top_k and len(out) >= top_k:
                 break
-    return ResultSet(out)
+    return ResultSet(out, info=_info)
 
 
 def confidence(results: ResultSet) -> dict[str, float]:
@@ -198,6 +222,7 @@ def consensus(result_sets: Sequence[ResultSet], top_k: int = 10, per_list_k: int
     # attributes, and top()/dedup()/where() build a new ResultSet — so the documented gating
     # signals vanished as soon as agent code chained anything (SDK-C13).
     return ResultSet(scored[:top_k], info={
+        **_merged_info(lists),
         "agreement": round(max(votes.values()) / n, 3) if votes else 0.0,
         "votes": {i: votes[i] for i in sorted(votes, key=lambda x: -votes[x])[:top_k]},
         "n_lists": n,
@@ -277,7 +302,7 @@ def rerank(
         for h, s in zip(results, scores)
     ]
     rescored.sort(key=lambda h: h.score, reverse=True)
-    out = ResultSet(rescored)
+    out = ResultSet(rescored, info=getattr(results, "info", None))
     return out.top(top_k) if top_k else out
 
 
@@ -301,7 +326,7 @@ def freshness(
         blended = (1 - weight) * h.score + weight * decay
         out.append(Hit(id=h.id, score=blended, document=h.document, query=h.query, store=h.store))
     out.sort(key=lambda h: h.score, reverse=True)
-    return ResultSet(out)
+    return ResultSet(out, info=getattr(results, "info", None))
 
 
 def mmr(
@@ -330,6 +355,7 @@ def mmr(
         vecs[h.id] = v / (np.linalg.norm(v) or 1.0)
 
     selected: list[Hit] = []
+    sel_scores: list[float] = []
     pool = list(withvec)
     while pool and len(selected) < top_k:
         best, best_score = None, float("-inf")
@@ -340,8 +366,21 @@ def mmr(
             if score > best_score:
                 best, best_score = h, score
         selected.append(best)  # type: ignore[arg-type]
+        sel_scores.append(best_score)
         pool.remove(best)  # type: ignore[arg-type]
-    return ResultSet(selected + novec[: max(0, top_k - len(selected))])
+    # Write the MMR objective back as the hit score, clipped to be strictly decreasing.
+    # With the ORIGINAL scores kept, any later `.top()` / score-sort silently undid the
+    # diversification (SDK-C15) — and `.top()` is exactly the chain the prompt teaches.
+    out: list[Hit] = []
+    prev = float("inf")
+    for h, s in zip(selected, sel_scores):
+        s = min(float(s), prev - 1e-9)
+        prev = s
+        out.append(Hit(id=h.id, score=s, document=h.document, query=h.query, store=h.store))
+    floor = prev if out else 0.0
+    tail = [Hit(id=h.id, score=floor - 1e-6 * (i + 1), document=h.document, query=h.query, store=h.store)
+            for i, h in enumerate(novec[: max(0, top_k - len(out))])]
+    return ResultSet(out + tail, info=getattr(results, "info", None))
 
 
 def expand(query: str, generate: Callable[[str], list[str]], n: int = 4) -> list[str]:

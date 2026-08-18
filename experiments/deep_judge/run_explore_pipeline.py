@@ -3,7 +3,8 @@
 Stages (run before any analysis, per corpus):
   1. EXPLORE with raw OS queries, ORACLE (ceiling) as the stop signal — the LLM authors the retrieval
      strategy per hop (agentic_solve, gold-stopped, up to `max_hops`), capturing the winning strategies.
-  2. DEEP JUDGE — the DiagnosticJudge (cross-encoder coverage; tuned to the ~0.72 signal ceiling) that
+  2. DEEP JUDGE — the DiagnosticJudge (cross-encoder coverage; held-out balanced acc 0.700
+     [0.613, 0.789], matched by a no-LLM logistic gate — issues.md DJ-5/DJ-9) that
      mimics the oracle. (Corpus-agnostic; instantiated here.)
   3. VALIDATE WITHOUT CEILING — re-run held queries with the judge deciding stop (no gold); compare its
      recall to the oracle-stopped run.
@@ -100,7 +101,7 @@ def main():
     session = sac.Session(store, embedder=embed, generator=gen.as_generator(), reranker=rr)
     train, val = rows[:n_train], rows[n_train:n_train + n_val]
     test = rows[n_train + n_val:n_train + n_val + n_test]
-    judge = DiagnosticJudge(gen)                      # STAGE 2: the deep judge (tuned to the signal ceiling)
+    judge = DiagnosticJudge(gen)                      # STAGE 2: the deep judge (0.700 held-out; see DJ-5/9)
     skill = SkillLookup(embed)
     workers = int(sys.argv[6]) if len(sys.argv) > 6 else 8
     shared = AgentMemory(path=str(HERE / f"explore_{corpus}_memory.jsonl"))   # cross-QUERY skill-wins (thread-safe)

@@ -102,14 +102,49 @@ def test_resultset_dedup_keeps_highest_score():
 
 
 # ---- sandbox safety ---------------------------------------------------------
-def test_sandbox_blocks_open_and_import():
+def test_sandbox_trims_naive_open_and_import():
+    # NOTE: the LocalExecutor is NOT a security boundary (its docstring says so; escapes
+    # via injected classes' __globals__ exist by design — SDK-C19). This only checks the
+    # documented behavior: the *naive* spellings are trimmed so dev accidents don't land.
     s = sac.Session("memory")
     s.add([{"id": "1", "text": "x"}])
     box = sac.LocalExecutor(s)
-    r_open = box.run("evidence = open('/etc/passwd').read()")
-    assert not r_open.ok and "NameError" in (r_open.error or "")
-    r_import = box.run("import os\nevidence = os.listdir('/')")
-    assert not r_import.ok  # __import__ is not in the safe builtins
+    assert not box.run("evidence = open('/etc/passwd').read()").ok
+    assert not box.run("import os\nevidence = os.listdir('/')").ok
+
+
+def test_sandbox_timeout_interrupts_runaway_loop():
+    s = sac.Session("memory")
+    s.add([{"id": "1", "text": "x"}])
+    box = sac.LocalExecutor(s, timeout_s=0.3)
+    r = box.run("x = 0\nwhile True:\n    x += 1")
+    assert not r.ok and "SandboxTimeout" in (r.error or "")
+
+
+def test_sandbox_caps_stdout():
+    s = sac.Session("memory")
+    s.add([{"id": "1", "text": "x"}])
+    box = sac.LocalExecutor(s, max_stdout=200)
+    r = box.run("for i in range(10000):\n    print('y' * 50)")
+    assert r.ok and len(r.stdout) <= 200
+
+
+def test_sandbox_rebinds_injected_names_per_run():
+    # Hop-1 code poisoning `fuse` must not break hop 2 (SDK-C19).
+    s = sac.Session("memory")
+    s.add([{"id": "1", "text": "x"}])
+    box = sac.LocalExecutor(s)
+    assert box.run("fuse = None\nuser_var = 41").ok
+    r = box.run("evidence = (fuse is not None, user_var + 1)")
+    assert r.ok and r.evidence == (True, 42)   # injected name restored, user state kept
+
+
+def test_sandbox_injects_query():
+    s = sac.Session("memory")
+    s.add([{"id": "1", "text": "x"}])
+    box = sac.LocalExecutor(s)
+    r = box.run("evidence = query.upper()", query="hello")
+    assert r.ok and r.evidence == "HELLO"      # the contract surface.py documents
 
 
 # ---- capability emulation ---------------------------------------------------

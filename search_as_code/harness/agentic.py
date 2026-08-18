@@ -139,7 +139,7 @@ def _exec(code, session, query, top_k):
     return out.ids()[:top_k] if hasattr(out, "ids") else [str(x) for x in out][:top_k]
 
 
-def agentic_solve(session, query, *, gold=None, max_hops=4, generator=None, judge=None,
+def agentic_solve(session, query, *, gold=None, max_hops=10, generator=None, judge=None,
                   skill_lookup=None, reranker=None, embedder=None, judge_stop=None, top_k=10,
                   capture=None, memory=None, os_first=True):
     """LLM authors the retrieval strategy each hop (free structure); the DEEP JUDGE guides EVERY hop —
@@ -211,7 +211,8 @@ def agentic_solve(session, query, *, gold=None, max_hops=4, generator=None, judg
         cov, cids, ctexts = _coverage(session, embedder, reranker, subfacts, sub_vecs, fused)
         v = {"verdict": "FAIL", "covered": "", "missing": "", "diagnosis": "", "technique": "", "next_query": ""}
         if judge is not None:
-            cands = [{"id": i, "score": 1.0 / (r + 1), "snippet": t} for r, (i, t) in enumerate(zip(cids, ctexts))]
+            csc = dj.candidate_scores(reranker, query, ctexts)   # real spread, not 1/(rank+1) (DJ-10)
+            cands = [{"id": i, "score": s, "snippet": t} for (i, t), s in zip(zip(cids, ctexts), csc)]
             v = judge.judge(query, subfacts, cands, cov)
             if judge_stop and v["verdict"] == "PASS":
                 stopped_by = "judge_pass"

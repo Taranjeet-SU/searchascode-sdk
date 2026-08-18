@@ -76,6 +76,9 @@ version = { attr = "search_as_code.__version__" }
 [tool.setuptools.packages.find]
 include = ["search_as_code*"]
 
+[tool.setuptools.package-data]
+search_as_code = ["py.typed"]   # PEP 561: ship type information with the wheel
+
 [tool.pytest.ini_options]
 testpaths = ["tests"]
 addopts = "-q"

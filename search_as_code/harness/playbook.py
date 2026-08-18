@@ -150,7 +150,8 @@ def diagnostic_solve(session, query, *, gold=None, max_hops=6, generator=None, j
         cov, ids, texts = _coverage(session, embedder, reranker, subfacts, sub_vecs, fused)
         weak = [j for j, c in enumerate(cov) if c["ce_best"] < CE_WEAK]
         if judge_stop:
-            cands = [{"id": i, "score": 1.0 / (r + 1), "snippet": t} for r, (i, t) in enumerate(zip(ids, texts))]
+            csc = dj.candidate_scores(reranker, query, texts)    # real spread, not 1/(rank+1) (DJ-10)
+            cands = [{"id": i, "score": s, "snippet": t} for (i, t), s in zip(zip(ids, texts), csc)]
             v = judge.judge(query, subfacts, cands, cov) if judge else {"verdict": "FAIL", "technique": "", "missing": "", "next_query": ""}
             if v["verdict"] == "PASS":
                 stopped_by = "judge_pass"

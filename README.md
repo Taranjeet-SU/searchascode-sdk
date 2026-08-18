@@ -109,10 +109,13 @@ The explore run itself is a 7-stage pipeline (`experiments/deep_judge/run_explor
 
 1. **Explore with raw OpenSearch queries, oracle as judge** — the LLM authors the strategy per hop
    (up to 10), gold-stopped, capturing the winning strategies.
-2. **Create the deep judge** — a `DiagnosticJudge` (per-sub-fact cross-encoder coverage; validated to
-   the ~0.72 signal ceiling) that mimics the oracle without seeing gold.
-3. **Validate without the ceiling** — re-run held queries with the judge deciding when to stop; confirm
-   its recall matches the oracle-stopped run.
+2. **Create the deep judge** — a `DiagnosticJudge` (per-sub-fact cross-encoder coverage; measured
+   **0.700 [0.613, 0.789]** held-out balanced accuracy, which a 9-feature logistic regression matches
+   with no LLM call — see the audit table below) that approximates the oracle without seeing gold.
+3. **Validate without the oracle** — re-run held queries with the judge deciding when to stop, and
+   report judge-stopped vs oracle-stopped recall honestly (it *lags* the oracle: ~45% of oracle
+   recall on BrowseComp, 77–97% on HotpotQA/SU depending on metric — closing that gap is
+   tracked in `issues.md` DJ-6..12 / `fable.md` WS2).
 4. **Forge from the raw queries** — synthesize one reusable primitive from the winning strategies,
    *preserving the discovered structure*, plus a skill + subagent; persist them.
 5. **Validate on training with the new forge** — the forged primitive reproduces exploration recall.

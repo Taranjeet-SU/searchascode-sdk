@@ -89,6 +89,26 @@ def _tok(s):
     return {w for w in _WORD.findall((s or "").lower()) if len(w) > 2}
 
 
+def candidate_scores(reranker, query, texts):
+    """Real, query-specific candidate scores for the judge: sigmoid of whole-query
+    cross-encoder logits, in [0,1].
+
+    The previous call sites fed ``1.0/(rank+1)`` pseudo-scores, which are CONSTANT
+    across queries — top3_ratio was always 0.611 and cliff always 0.5, so the
+    prompt's "buried" rule fired on every hop forever while the judge had been
+    validated on informative signals (DJ-10). Falls back to reciprocal rank only
+    if the reranker call itself fails.
+    """
+    import math
+    if not texts:
+        return []
+    try:
+        raw = reranker(query, list(texts))
+        return [1.0 / (1.0 + math.exp(-float(s))) for s in raw]
+    except Exception:
+        return [1.0 / (r + 1) for r in range(len(texts))]
+
+
 def score_signals(scores):
     """Scale-free shape of the score curve (ratios to the top score) + largest consecutive gap (cliff)."""
     if not scores:
