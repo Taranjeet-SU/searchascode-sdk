@@ -1951,4 +1951,6 @@ supports).
 **FIXED** 2026-08-18 — `build_author_system(session)`: the raw-DSL call list, worked example,
 and diagnosis hint are included only when the store has `_search`; portable backends get a
 `mode='keyword'` exact-term escalation instead. Regression test asserts the memory-backend
-prompt contains no `_search`. SU pipeline re-run to confirm.
+prompt contains no `_search`. **Confirmed by SU re-run** (`ws1_pipeline_su_agt1fix.log`):
+explore recall@20 0.075 → **0.658**, judge-stop 0.675 vs oracle-stop 0.713 (95%), gate still
+correctly selects dense (0.800 tie).
