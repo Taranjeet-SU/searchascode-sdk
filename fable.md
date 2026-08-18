@@ -149,7 +149,42 @@ cheaper tokens" story with our measured 25–31×.
 
 ---
 
-## 3. Target architecture — the SAC loop
+## 2b. Research sweep (2026-08-18) — same walls elsewhere, and what we adopt
+
+A web sweep of late-2025/2026 work confirms our walls are the field's walls, and hands us the
+fixes. Full sources in the sweep report; the adopted actions, mapped to workstreams:
+
+1. **The judge premise is wrong for sparse-gold corpora, and the field already moved.** Judge
+   false-success/false-fail detection has a measured ~0.65 AUROC ceiling (tau2-bench, arXiv
+   2606.09863) — our BrowseComp false-FAILs are a known class, not a local bug. Google's
+   "sufficient context" line (arXiv 2411.06037) reframes the check as *sufficiency of
+   derivation* ("can the answer plausibly be derived?") instead of *coverage of N sub-facts* —
+   exactly our 6-sub-facts-vs-3-golds mismatch. → **WS2: rewrite the judge's question; cap
+   decomposition by observed gold density.**
+2. **Layer a free stop signal under the judge (TASR, arXiv 2606.13814):** answer-convergence
+   across hops + isotonically calibrated margin retains ~95% of quality at ~63% of the calls,
+   calibrated once per (model, corpus) on ~100 queries. QPP-style score signals (arXiv
+   2507.10411) are computable inside the retrieval program before any LLM call. → **WS2: the
+   StopGate stack becomes signals-first, judge-on-ambiguity.**
+3. **GEPA (ICLR'26, arXiv 2507.19457) is the judge-tuning standard** — reflective prompt
+   evolution, ~35× cheaper than RL, 90%/κ=0.816 for a tuned domain judge. → **WS3: the judge
+   prompt becomes a forge artifact, GEPA-tuned per corpus on explore-phase queries, behind the
+   same acceptance gate.**
+4. **RLM recursion beats judge-driven re-retrieval on sparse gold**: MIT's RLM scores
+   **91.3% on BrowseComp-Plus** (GPT-5, corpus-as-REPL-object, arXiv 2512.24601) where base
+   models get ~0. → **WS5/roadmap: the recursive sub-LLM primitive is the escalation tier
+   above hop-5, and likely the only way to move BrowseComp all-golds materially.** LANCER-style
+   coverage-aware reranking (ECIR'26) is the principled home for sub-fact decomposition —
+   in fusion, not in the FAIL-gate.
+5. **The competitive slot is still open, and the clock is running.** No open-source SaC
+   implementation exists as of this sweep; Perplexity's SaC is web-only with no corpus
+   learning; **Hornet's blog is describing our harness (agent-optimized, verifiable retrieval
+   config) without having shipped it**; Glean's Waldo validates the economics (their 25% token
+   cut vs our ~7–12×). Escalation-rate-per-corpus is the metric this literature reports —
+   publish ours. → **WS6/README: state the differentiators explicitly; ship before the
+   adjacent players do.**
+
+
 
 ```
                        ┌─────────────────────────────────────────────────┐
