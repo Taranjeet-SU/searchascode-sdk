@@ -32,20 +32,25 @@ identical tools and search budget for both arms, gpt-4.1-mini):
 
 | arm | model turns | input tokens/query | latency | recall@10 | all-golds@10 |
 |---|:-:|:-:|:-:|:-:|:-:|
-| tool-calling agent | 9.6 | 19,653 | 22.8 s | 0.102 | 0.050 |
-| tool-calling + explore | 9.3 | 17,435 | 26.0 s | 0.118 | 0.070 |
-| Search as Code | 1.0 | 637 | 14.1 s | 0.131 | 0.070 |
-| **Search as Code + explore** | **1.0** | **689 (29× less)** | **10.7 s (2.1× faster)** | **0.162 (+59%)** | **0.100 (2×)** |
+| tool-calling agent | 9.5 | 19,369 | 32.0 s | 0.147 | 0.100 |
+| Search as Code (one authored program) | 1.0 | 648 | 13.7 s | 0.125 | 0.060 |
+| **SAC + explore (runs the vetted strategy)** | **1.0** | **689 (28× less)** | **2.5 s (13× faster)** | **0.221 (+50%)** | **0.140** |
+| SAC product flow (judge-gated, ≤5 hops) | 6.0 | 14,159 | 66.7 s | 0.242 | 0.130 |
+| tool product flow (same policy via tools) | 44.3 | 91,015 (6.4× more) | 143.4 s | 0.215 | 0.130 |
 | *dense single-shot (the baseline)* | *0* | *0* | *0.1 s* | *0.265* | *0.160* |
+
+The same judge-gated policy costs **14k tokens in code-mode vs 91k through tool-calling** —
+execution model is the cost story even when the policy is identical. And on corpora where the
+baseline retriever is *weak*, the product flow **beats it**: dense 0.036 → sac_product 0.054
+(+50% relative, replicated twice on the gte-base index).
 
 <!-- GRAPH: docs/assets/cost_tokens.png — tokens per query, tool vs sac vs sac_explored -->
 <!-- GRAPH: docs/assets/cost_hops.png — input tokens vs hop depth, tool vs sac -->
 <!-- SLOT:HOTPOT_COST — per-hop-depth cost table (2/3/4-hop), tokens grow for tools, flat for SaC -->
 
 Two things this table shows. First, **explore's corpus knowledge compounds in code-mode**:
-seeding lifts SAC by +0.031 recall at ~50 extra tokens (and makes it *faster* — it stops
-flailing), while the same knowledge lifts the tool agent by half as much at 17k tokens.
-Second — read the dense row — **a strong single-shot retriever beats every agent arm on
+the vetted-strategy arm reaches 84% of dense's recall at 689 tokens and 2.5 seconds — one
+turn, no flailing. Second — read the dense row — **a strong single-shot retriever still tops
 raw recall here.** We print that on purpose, because it is the design:
 
 ### What explore learned, and what the gate enforced
@@ -68,11 +73,46 @@ is the product of explore. Deploy that, not the candidate it rejected.**
 (`HarnessForge.accept_code_primitive` persists the winning side under the requested name,
 so stores written through the gate can't make this mistake.)
 
-The guarantee, stated plainly: **SaC never ships a strategy that underperforms your
+The guarantee, stated plainly: **SaC never *ships a strategy* that underperforms your
 baseline.** Every forged primitive must beat `max(dense, hybrid)` on held-out queries —
 paired bootstrap confidence intervals — or the baseline ships under the same name. That
-gate is in the SDK with tests, and we publish it firing. A retrieval system that can
-prove it won't make things worse is worth more than one that claims magic.
+gate is in the SDK with tests, and we publish it firing. At runtime the guarantee is
+*judge-conditional*: PASS returns the vetted baseline verbatim; escalation trades a
+measured, bounded risk for measured gains — see the tier table below for exactly how we
+know the bound. A retrieval system that can prove it won't make things worse is worth
+more than one that claims magic.
+
+### The escalation tiers (and the receipts)
+
+The runtime is a ladder of increasingly expensive mechanisms, each engaged only when the
+one below it can't decide:
+
+1. **Hop 0 — the vetted strategy** (gate-selected; often just dense). Zero/near-zero LLM cost.
+2. **Convergence stop** [4]: if extra hops stop changing the fused top-k, stop free of charge.
+3. **The deep judge** (sufficiency premise [3]): PASS → return hop-0 verbatim; FAIL → a
+   structured diagnosis (which fact is missing, why, which technique next) steers…
+4. **Authored escalation** (≤5 hops): the LLM writes retrieval code per hop — including raw
+   OpenSearch DSL on exact constraints — with skills lookup and cross-query memory.
+5. **Verified selection** (the RLM tier [1]): where retrieval *scores* cannot recognize the
+   answers, sub-models **read** the pooled candidates against the query's constraints
+   (`llm_map`), and verified documents take the final slots.
+
+We publish the iteration history that produced this design, including what failed — on
+BrowseComp-Plus, whose defining property is that golds score poorly on every retrieval
+signal:
+
+| stop/fusion mechanism | result | verdict |
+|---|---|---|
+| coverage-checklist judge + plain weighted RRF | 0.242 vs dense 0.265; fusion evicted solved-query golds | shipped baseline, superseded |
+| sufficiency-premise prompt [3] alone | escalation rate unchanged (1.00) — LLM judges resist prompt-side calibration [2] | measured null |
+| universal CE floor guard (τ=0.5) | missed weak-CE golds (kept 6/10 solved) | rejected |
+| per-corpus calibrated CE gate (TASR-style [4]) | best τ separates solved/unsolved at only 0.602 balanced accuracy here | rejected, kept as negative result |
+| CE-replace fusion (head-to-head displacement) | −0.036 vs dense, CI [−0.122, +0.052] — statistical tie | superseded |
+| **verified selection (sub-LM reads candidates)** [1] | *measurement in progress* | — |
+
+Every row has a runnable artifact behind it. This is what "self-auditing retrieval" means
+in practice: the failures are part of the documentation, because they are how you know the
+successes are real.
 
 ## 📦 Install
 
@@ -190,11 +230,14 @@ research repository. If you find a number this repo can't back, that's a bug —
 
 ## 🗺️ Roadmap
 
-- **StopGate** — the judge, a logistic gate, and a threshold gate behind one swappable interface, A/B-able on your corpus
-- **Asymmetric query/passage embedding** — first-class support for bge/e5/Qwen instruction prefixes
-- **`llm_batch` sub-model primitives** — batched extraction/verification inside the sandbox ([RLM](https://arxiv.org/abs/2512.24601)-style; the root model never sees raw tool output)
-- **Single-turn deep mode** — one model turn authors a program that loops all 10 hops inside the sandbox
+- **GEPA-tuned judges per corpus** [10] — the judge prompt becomes a forge artifact behind the same acceptance gate
+- **Full recursive RLM mode** [1] — one model turn authors a program that loops all hops inside the sandbox, spawning sub-model reads recursively (shipped today: `llm_map` + verified selection; the recursion is next)
+- **StopGate interface** — judge / logistic / threshold gates swappable and A/B-able on your corpus (the measurement harness for this exists; see the tier table)
 - **More adapters** — Pinecone, Weaviate, LanceDB · **MCP server wrapper** · hardened sandbox backends (Docker/e2b)
+
+*Shipped since 0.1.0's first cut:* asymmetric query/passage embedders (`Session(query_embedder=…)`),
+`coverage_fuse`, `llm_map`, the convergence stop, the sufficiency-premise judge, subagent runtime,
+AST-based structure attribution, and `Session.reset_state`.
 
 ## 🤝 Contributing
 
@@ -208,6 +251,34 @@ Add a backend by implementing one `VectorStore`
 suite ([`tests/test_conformance.py`](tests/test_conformance.py)) is the contract — it runs
 against every installed backend in CI and has caught real bugs in three adapters.
 See [`CONTRIBUTING.md`](CONTRIBUTING.md).
+
+## 📚 References
+
+The ideas this SDK builds on, cited where they shaped the design:
+
+1. **Recursive Language Models** — Zhang, Kraska, Khattab (2025). Context-as-object, recursive
+   sub-model calls; 91.3% on BrowseComp-Plus where retrieval-scored approaches stall — the basis
+   of our verified-selection tier and `llm_map`. [arXiv:2512.24601](https://arxiv.org/abs/2512.24601)
+2. **LLM-as-judge calibration limits** — production judge configurations plateau near 0.65 AUROC at
+   detecting false success; motivates signals-first stop gates over prompt tuning.
+   [arXiv:2606.09863](https://arxiv.org/abs/2606.09863)
+3. **Sufficient context** — Joren et al. (Google). "Can the answer plausibly be derived?" beats
+   per-sub-claim coverage checking as the stop question — our judge's sufficiency premise.
+   [arXiv:2411.06037](https://arxiv.org/abs/2411.06037)
+4. **TASR: training-free adaptive stopping** — answer convergence + calibrated margin retains ~95%
+   of quality at ~63% of the calls — our convergence stop. [arXiv:2606.13814](https://arxiv.org/abs/2606.13814);
+   see also **Stop-RAG** (value-based stopping) [arXiv:2510.14337](https://arxiv.org/abs/2510.14337)
+5. **Adaptive-RAG** — route cheap-first, escalate on demand; routing's real win is cost.
+   [arXiv:2403.14403](https://arxiv.org/abs/2403.14403)
+6. **Search as Code** — Perplexity's argument that agents should program search primitives rather
+   than call a monolithic endpoint; this SDK is the open, bring-your-own-index counterpart.
+   [research.perplexity.ai](https://research.perplexity.ai/articles/rethinking-search-as-code-generation)
+7. **BrowseComp-Plus** — the sparse-gold benchmark used throughout.
+   [arXiv:2508.06600](https://arxiv.org/abs/2508.06600)
+8. **Reciprocal Rank Fusion** — Cormack, Clarke, Büttcher (SIGIR 2009) — `fuse`/`rrf`.
+9. **Maximal Marginal Relevance** — Carbonell & Goldstein (SIGIR 1998) — `mmr`.
+10. **GEPA: reflective prompt evolution** — the planned per-corpus judge-tuning mechanism.
+    [arXiv:2507.19457](https://arxiv.org/abs/2507.19457)
 
 ## 📄 License
 

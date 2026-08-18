@@ -65,6 +65,7 @@ from .primitives import (
     confidence,
     consensus,
     content_type,
+    coverage_fuse,
     decompose,
     dedup,
     diversity_quota,
@@ -73,6 +74,7 @@ from .primitives import (
     fan_out,
     freshness,
     fuse,
+    llm_map,
     max_similarity,
     mmr,
     normalize_query,
@@ -94,7 +96,7 @@ from .session import Session, route
 from .surface import SAC_SYSTEM  # the LLM-facing prompt surface ships with the wheel (DOC-1/SDK-R8)
 from .types import Capabilities, Document, Hit, ResultSet
 
-__version__ = "0.1.0"
+__version__ = "0.0.1"
 
 __all__ = [
     # data model
@@ -120,6 +122,7 @@ __all__ = [
     "normalize_scores", "relative_score_fusion", "diversity_quota", "confidence", "abstain",
     "normalize_query", "rare_terms", "quality_filter",
     "consensus", "score_cliff", "result_diversity", "max_similarity", "content_type",
+    "coverage_fuse", "llm_map",
     # the LLM-facing prompt surface
     "SAC_SYSTEM",
     # rerankers

@@ -127,6 +127,8 @@ class LocalExecutor(Sandbox):
             "fan_out": P.fan_out,
             "fuse": P.fuse,
             "rrf": P.rrf,
+            "coverage_fuse": P.coverage_fuse,
+            "llm_map": P.llm_map,
             "rerank": P.rerank,
             "dedup": P.dedup,
             "freshness": P.freshness,

@@ -67,13 +67,30 @@ and FUSE it with the dense hits (this backend has NO raw-DSL endpoint — do NOT
     ids = fuse_ids([session.search(query, top_k=top_k, mode='dense').ids(), kw_ids])"""
 
 
-def build_author_system(session) -> str:
+_NEUTRAL_STRATEGY = """YOU choose the STRATEGY — both structures are equally valid; pick from the \
+QUESTION'S OWN SHAPE and the judge's diagnosis: (a) KEEP THE QUERY WHOLE (one entity satisfying many \
+constraints — dense + a targeted exact-term escalation + rerank), or (b) DECOMPOSE into sub-questions \
++ fuse_ids (the answer genuinely needs SEVERAL different documents — retrieve per sub-question, fuse \
+for coverage). When the judge names a SUGGESTED technique with its recipe, APPLY that recipe. \
+ALWAYS return a list of ids. Return ONLY one ```python block```."""
+
+
+def build_author_system(session, structure_prior: str = "whole") -> str:
     """Backend-aware author prompt. The old static prompt COMMANDED session.store._search on every
     backend; on MemoryStore every authored program crashed with AttributeError hop after hop —
-    SU exploration scored 0.075 while plain dense scored 0.800 on the same rows (issues.md AGT-1)."""
+    SU exploration scored 0.075 while plain dense scored 0.800 on the same rows (issues.md AGT-1).
+
+    ``structure_prior``: ``"whole"`` (production default — the measured winner on every corpus so
+    far) or ``"neutral"`` — EXPLORE mode must use neutral, or "structure-emergent" is dictated by
+    the prompt rather than discovered (issues.md FRG-2)."""
     has_dsl = hasattr(session.store, "_search")
-    return _AUTHOR_BASE.format(backend_calls=_OS_CALLS if has_dsl else "",
+    base = _AUTHOR_BASE.format(backend_calls=_OS_CALLS if has_dsl else "",
                                escalation=_OS_ESCALATION if has_dsl else _PORTABLE_ESCALATION)
+    if structure_prior == "neutral":
+        head, sep, _tail = base.partition("YOU choose the STRATEGY")
+        if sep:
+            base = head + _NEUTRAL_STRATEGY
+    return base
 
 
 #: backward-compat: the OpenSearch-flavored prompt under the old name
@@ -90,6 +107,43 @@ with [h["_id"] for h in r["hits"]["hits"]] and return that list. Return ONLY one
 
 _STOP = {"the", "and", "for", "that", "with", "which", "this", "who", "was", "were", "has", "had", "from",
          "what", "name", "please", "tell", "individual", "following", "criteria", "provide", "could", "would"}
+
+
+def classify_structure(code: str) -> str:
+    """``"decompose"`` if the authored code fans out over sub-queries, else ``"whole"``.
+
+    AST-based (FRG-2): the old regex `'re.split' in code or 'split(' in code` missed manual
+    decomposition (several literal sub-query searches) and false-negatived the very signal the
+    pipeline reports. Decompose = a loop containing a retrieval call, a `decompose(`/`re.split`
+    call, or 3+ distinct retrieval calls with different literal queries."""
+    import ast
+    retrieval_names = {"search", "hyde_search", "prf_search", "query_fielded", "_search", "forged"}
+    try:
+        tree = ast.parse(code)
+    except SyntaxError:
+        low = (code or "").lower()
+        return "decompose" if re.search(r"re\.split|\bdecompose\(|split\(", low) else "whole"
+
+    def is_retrieval(call: ast.Call) -> bool:
+        f = call.func
+        name = f.attr if isinstance(f, ast.Attribute) else getattr(f, "id", "")
+        return name in retrieval_names
+
+    literal_queries: set[str] = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Call):
+            f = node.func
+            name = f.attr if isinstance(f, ast.Attribute) else getattr(f, "id", "")
+            if name in ("decompose",) or (name == "split" and isinstance(f, ast.Attribute)):
+                return "decompose"
+            if is_retrieval(node) and node.args and isinstance(node.args[0], ast.Constant) \
+                    and isinstance(node.args[0].value, str):
+                literal_queries.add(node.args[0].value)
+        if isinstance(node, (ast.For, ast.ListComp, ast.GeneratorExp)):
+            for inner in ast.walk(node):
+                if isinstance(inner, ast.Call) and is_retrieval(inner):
+                    return "decompose"
+    return "decompose" if len(literal_queries) >= 3 else "whole"
 
 
 def _raw_os_body(query, top_k):
@@ -163,7 +217,8 @@ def _exec(code, session, query, top_k):
 
 def agentic_solve(session, query, *, gold=None, max_hops=10, generator=None, judge=None,
                   skill_lookup=None, reranker=None, embedder=None, judge_stop=None, top_k=10,
-                  capture=None, memory=None, os_first=True):
+                  capture=None, memory=None, os_first=True, max_subfacts=6, converge_stop=True,
+                  structure_prior="whole"):
     """LLM authors the retrieval strategy each hop (free structure); the DEEP JUDGE guides EVERY hop —
     its covered/missing/diagnosis/technique/next_query become the next hop's instructions — and MEMORY
     carries findings across hops (working) and winning strategies across queries (long-term, for skill
@@ -183,7 +238,7 @@ def agentic_solve(session, query, *, gold=None, max_hops=10, generator=None, jud
     if judge_stop is None:
         judge_stop = gold is None
     goldset = set(str(g) for g in (gold or []))
-    author_sys = build_author_system(session)       # backend-aware (AGT-1: no raw DSL on memory)
+    author_sys = build_author_system(session, structure_prior)   # AGT-1 backend-aware; FRG-2 prior
     has_dsl = hasattr(session.store, "_search")
 
     # cross-query memory: strategies that worked on similar past queries (skill building)
@@ -193,13 +248,18 @@ def agentic_solve(session, query, *, gold=None, max_hops=10, generator=None, jud
     pooled, codes, diagnosis, prior = [], [], "", ""
     fused: list = []
     got, stopped_by = 0, None
+    # Decompose ONCE, before the loop (it used to re-run per hop — one wasted LLM call/hop),
+    # capped by max_subfacts: on sparse-gold corpora (~3 golds/query) a 6-way decomposition
+    # guarantees the coverage-premise judge can never PASS (issues.md DJ-12 premise mismatch).
+    subfacts = [query]
+    try:
+        from .. import primitives as P
+        subfacts = [s for s in (P.decompose(query, session._require_generator()) or [query])
+                    if s.strip()][:max(1, max_subfacts)] or [query]
+    except Exception:
+        pass
+    prev_fused: list = []
     for hop in range(1, max_hops + 1):
-        subfacts = [query]                           # decomposition here is ONLY the judge's coverage lens
-        try:
-            from .. import primitives as P
-            subfacts = [s for s in (P.decompose(query, session._require_generator()) or [query]) if s.strip()][:6] or [query]
-        except Exception:
-            pass
         findings = memory.working_context(max_chars=600, kinds={"finding"})   # cross-hop memory
         key = diagnosis or query
         # inject each suggested skill's RECIPE (when_to_use), not just its name, so the model can APPLY it
@@ -223,7 +283,8 @@ def agentic_solve(session, query, *, gold=None, max_hops=10, generator=None, jud
         fused = _reserve(pooled, top_k) if len(pooled) > 1 else (pooled[0][:top_k] if pooled else [])
         got = len(goldset & set(fused[:top_k])) if goldset else 0
         if capture is not None:
-            capture.append({"hop": hop, "code": code, "n_ids": len(ids),
+            capture.append({"hop": hop, "code": code, "n_ids": len(ids), "got": got,
+                            "structure": classify_structure(code),
                             "won": bool(goldset and (goldset & set(fused[:top_k])))})
         if hop == max_hops:
             stopped_by = "maxhops"
@@ -231,6 +292,14 @@ def agentic_solve(session, query, *, gold=None, max_hops=10, generator=None, jud
         if not judge_stop and goldset and got == len(goldset):
             stopped_by = "oracle"
             break
+        # TASR-style convergence stop (arXiv 2606.13814, adapted to retrieval): from hop 3 on,
+        # if the latest hop left the fused top-k UNCHANGED, further hops are re-finding the
+        # same results — stop before burning another judge/author call. Costs zero LLM tokens
+        # and caps the damage of a judge that can never PASS (BrowseComp escalation rate 1.00).
+        if converge_stop and judge_stop and hop >= 3 and fused[:top_k] == prev_fused:
+            stopped_by = "converged"
+            break
+        prev_fused = fused[:top_k]
         # ALWAYS run the deep judge for its structured suggestion (guides the next hop in BOTH modes)
         sub_vecs = np.asarray(embedder(subfacts), dtype=np.float32)
         cov, cids, ctexts = _coverage(session, embedder, reranker, subfacts, sub_vecs, fused)
@@ -263,9 +332,17 @@ def agentic_solve(session, query, *, gold=None, max_hops=10, generator=None, jud
 
     # cross-query memory write: remember the winning strategy so LATER queries can reuse it (skill building)
     if got > 0 and codes:
+        # Attribute the win to the hop that REACHED the final coverage, not blindly to the
+        # last authored code (FRG-2); classify structure by AST, not the old split( regex.
+        win_code = codes[-1]
+        if capture:
+            for row in capture:
+                if row.get("got", 0) == got:
+                    win_code = row["code"]
+                    break
         memory.remember(f"query \"{query[:70]}\" reached coverage {got}: winning strategy authored "
-                        f"(decomposed={'yes' if 're.split' in codes[-1] or 'split(' in codes[-1] else 'no'})",
-                        kind="skill_win", code=codes[-1], recall=got)
+                        f"(structure={classify_structure(win_code)})",
+                        kind="skill_win", code=win_code, recall=got)
     return {"ids": fused, "hops": hop, "stopped_by": stopped_by, "codes": codes,
             "all_recall": (got / len(goldset)) if goldset else None,
             "solved": int(bool(goldset) and got == len(goldset)) if goldset else None}
