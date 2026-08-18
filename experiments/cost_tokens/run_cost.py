@@ -165,9 +165,11 @@ def load_explore_seed(corpus):
                   "extra pools, decompose, or fuse by default — escalate with ONE targeted keyword search "
                   "on exact rare tokens ONLY if the question hinges on a constraint (a year, a name, a "
                   "part number) that a semantic search demonstrably blurs.")
+    # Return the SKILL OBJECT: eval_fair's Tools.forged calls `.run(session, query, top_k)` —
+    # a bare lambda broke that contract and every forged() call AttributeError'd internally,
+    # so earlier "seeded" rows measured guidance-text lift only, not the forged primitive.
     sk = CodePrimitive(name=f"{stem}_gate_selected", when_to_use=vetted_desc, code=vetted_code).to_skill()
-    forged_fn = lambda session, q, k=20: sk.run(session, q, top_k=k)   # noqa: E731
-    return guidance, forged_fn
+    return guidance, sk
 
 
 def main():
@@ -280,7 +282,7 @@ def main():
 
             def judge_hop0(pgen, judge):
                 """baseline ids + the judge's verdict on them. -> (base_ids, verdict, subs)"""
-                base_ids = [str(i) for i in forged_fn(session, q, 50)]
+                base_ids = [str(i) for i in forged_fn.run(session, q, top_k=50)]
                 try:
                     subs = [s for s in (P.decompose(q, pgen.as_generator()) or [q]) if s.strip()][:6] or [q]
                 except Exception:
@@ -296,11 +298,15 @@ def main():
                          for (i, t_), s in zip(zip(base_ids[:10], texts), csc)]
                 return base_ids, judge.judge(q, subs, cands, cov), subs
 
-            def rrf_ids(lists):
+            def rrf_ids(lists, base_weight=2.0):
+                """Weighted RRF: list 0 is the GATE-VETTED baseline and outweighs escalation
+                pools — plain RRF let 5 hops of escalation noise evict a hop-0 gold at dense
+                rank 8 from the fused top-10, turning a judge false-FAIL into recall 0."""
                 agg2: dict = {}
-                for lst in lists:
+                for li, lst in enumerate(lists):
+                    w = base_weight if li == 0 else 1.0
                     for rank, did in enumerate(lst):
-                        agg2[did] = agg2.get(did, 0.0) + 1.0 / (60 + rank + 1)
+                        agg2[did] = agg2.get(did, 0.0) + w / (60 + rank + 1)
                 return [d for d, _ in sorted(agg2.items(), key=lambda x: -x[1])]
 
             # --- sac_product: escalation = judge-guided authored code (agentic_solve) ---

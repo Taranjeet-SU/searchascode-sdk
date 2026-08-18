@@ -1954,3 +1954,25 @@ and diagnosis hint are included only when the store has `_search`; portable back
 prompt contains no `_search`. **Confirmed by SU re-run** (`ws1_pipeline_su_agt1fix.log`):
 explore recall@20 0.075 → **0.658**, judge-stop 0.675 vs oracle-stop 0.713 (95%), gate still
 correctly selects dense (0.800 tie).
+
+#### 🟥 COST-1 `[C]` The cost benchmark's `forged_skill` broke Tools' contract — every seeded forged() call failed silently, so the published seeded rows measured guidance-text lift only
+`experiments/cost_tokens/run_cost.py` passed a bare lambda as `forged_skill`, but
+`eval_fair.Tools.forged` calls `self.forged_skill.run(session, query, top_k)` — a method.
+Every `forged()` call in the seeded arms raised `AttributeError` inside `_retrieve`'s
+swallow-all try (LEG-5's shape, again), returning empty results with no trace. Consequence:
+the BrowseComp 5-arm "final" table (sac_explored 0.162) measured the guidance TEXT's effect
+only — the forged primitive never executed. Caught by the v2 sanity gate (dense=1.00 while
+every seeded arm=0.00 on qid 331). Root cause of the miss: the seed smoke tested `forged_fn`
+DIRECTLY instead of through `Tools.forged` — the same class of error as DJ-14 (validate
+through the interface production uses).
+**FIXED** 2026-08-18 — the loader returns the Skill object; the contract is now smoke-tested
+through `Tools.forged` itself; v3 chain re-running all numbers.
+
+#### 🟥 COST-2 `[C]` Plain RRF let escalation noise evict a vetted hop-0 gold — judge false-FAIL turned dense recall 1.00 into 0.00
+`sac_product` fused hop-0 (the gate-vetted baseline, 50 ids) with up to 5 escalation pools by
+unweighted RRF: a gold at dense rank ~8 (1/69) is outranked by every escalation-pool head
+(1/61+), so on a judge false-FAIL the fused top-10 dropped the gold the baseline had already
+found. Observed on qid 331 (dense 1.00, sac_product 0.00, judge FAILed to the 5-hop cap).
+**FIXED** 2026-08-18 — weighted RRF: the vetted baseline pool gets weight 2.0 vs 1.0 for
+escalation pools, so escalation can add coverage but cannot evict what the gate already
+vetted. The judge's BrowseComp false-FAIL rate itself remains the WS2 item.
