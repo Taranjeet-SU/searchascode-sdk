@@ -436,6 +436,13 @@ class Session:
     def forget(self, key: str) -> None:
         self._state.pop(key, None)
 
+    def reset_state(self) -> None:
+        """Clear the whole out-of-context state store — call BETWEEN QUERIES when one Session
+        serves many. Benchmarks used to clear three hand-picked keys and leak everything else
+        an agent program stashed via ``remember(...)`` into later queries' ``recall(...)``
+        (issues.md P1-4)."""
+        self._state.clear()
+
     def state_keys(self) -> list[str]:
         return list(self._state)
 

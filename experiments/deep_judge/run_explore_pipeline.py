@@ -174,11 +174,22 @@ def main():
     fstore = HarnessStore(path=str(HERE / f"forge_store_{corpus}_explored"))
     forge = HarnessForge(fstore, reg, AgentMemory())
     name = f"{corpus}_explored_primitive"
-    held_list = (test[:5] or train[:5])
-    code, ok, held_mean = forge_from_exploration(gen, session, winning, held_list, name)
-    print(f"[stage4] forge validation mean recall@20 over {len(held_list)} held = {held_mean:.3f}", flush=True)
-    if ok:
-        forge.create_code_primitive(name, f"explored on {corpus}: structure-preserving reusable retriever", code)
+    # THE SDK GATE (fable.md WS3): the pipeline used to run its own 5-held dense-only gate —
+    # thin enough to be a coin flip, and deletable by a merge (issues.md FRG-1, which
+    # happened). accept_code_primitive gates on max(dense, hybrid) over up to 30 held
+    # queries with a paired-bootstrap CI, persists WHICHEVER SIDE WINS under `name`, and
+    # records full provenance either way.
+    held_list = (test[:30] or train[:30])
+    code, ok, held_mean = forge_from_exploration(gen, session, winning, held_list[:5], name)
+    print(f"[stage4] forge synthesis: compiled={bool(code)} smoke over 5 held = {held_mean:.3f}", flush=True)
+    gate_report = forge.accept_code_primitive(
+        name, f"explored on {corpus}: structure-preserving reusable retriever", code,
+        session=session, held=held_list, k=20,
+        extra_provenance={"corpus": corpus, "n_winning": len(winning)}) if code else {"accepted": False}
+    ok = bool(gate_report.get("accepted"))
+    print(f"[stage4-gate] candidate={gate_report.get('candidate_mean')} "
+          f"baselines={gate_report.get('baseline_means')} -> accepted={ok} "
+          f"(delta vs {gate_report.get('gate_baseline')}: {gate_report.get('delta_vs_baseline')})", flush=True)
     struct = "whole-query" if decomp < len(train) / 2 else "decompose"
     # Derive the skill's retrievers from what the WINNING code actually called (FRG-3) —
     # the old two-branch ternary flattened whatever was discovered into a hardcoded bag.
@@ -215,18 +226,16 @@ def main():
         except Exception:
             return []
 
-    dense_held = [_recall(r["gold_ids"], _dense_ids(r["query"]))[0] for r in held_list]
-    dense_mean = float(np.mean(dense_held)) if dense_held else 0.0
-    beats_dense = bool(ok and held_mean > dense_mean)
-    selected = "forged" if beats_dense else "dense"
-    print(f"[stage4b] dense-default gate: forged={held_mean:.3f} vs dense={dense_mean:.3f} "
-          f"on {len(held_list)} held -> SELECTED **{selected}**", flush=True)
-
-    prim = reg.get(name) if beats_dense else None
+    # The SDK gate persisted the WINNER under `name` (the accepted candidate, or the best
+    # no-LLM baseline as fallback code) — the registry entry IS the deployable strategy.
+    selected = "forged" if ok else str(gate_report.get("gate_baseline", "dense"))
+    print(f"[stage4b] best-baseline gate SELECTED **{selected}** "
+          f"(registry primitive '{name}' runs it either way)", flush=True)
+    prim = reg.get(name)
 
     def _run_selected(q, k=20):
-        """What the pipeline actually deploys: the forged primitive, or dense if the gate
-        rejected it. Never returns [] just because nothing was forged."""
+        """What the pipeline actually deploys: the gate's winner (candidate or baseline),
+        with a dense last-resort. Never returns [] just because nothing was forged."""
         if prim is not None:
             try:
                 return prim.run(session, q, top_k=k)
@@ -251,8 +260,9 @@ def main():
            # `selected` says WHICH strategy these numbers describe. Reporting a bare 0 when
            # nothing was forged conflated "no primitive" with "primitive retrieved nothing".
            "selected_strategy": selected,
-           "gate_forged_on_held@20": round(held_mean, 3),
-           "gate_dense_on_held@20": round(dense_mean, 3),
+           "gate_candidate_mean@20": gate_report.get("candidate_mean"),
+           "gate_baseline_means@20": gate_report.get("baseline_means"),
+           "gate_delta_vs_baseline": gate_report.get("delta_vs_baseline"),
            "forge_accepted": bool(ok),
            "stage5_train@20": round(float(np.mean(tr_rec)), 3) if tr_rec else None,
            "stage7_test_recall@10": round(float(np.mean(te10)), 3) if te10 else None,
@@ -263,7 +273,7 @@ def main():
     (HERE / f"explore_pipeline_{corpus}.json").write_text(json.dumps(out, indent=2))
     print(f"\n===== [{corpus}] explore pipeline =====")
     for k in ("discovered_structure", "stage1_explore_recall@20", "stage3_validate_judgestop@20",
-              "stage3_oraclestop@20", "selected_strategy", "gate_forged_on_held@20",
+              "stage3_oraclestop@20", "selected_strategy", "gate_candidate_mean@20",
                  "gate_dense_on_held@20", "forge_accepted", "stage5_train@20",
                  "stage7_test_recall@10", "stage7_test_recall@20"):
         print(f"  {k}: {out[k]}")
