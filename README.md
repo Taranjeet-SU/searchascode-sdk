@@ -30,23 +30,49 @@ Tool-calling agents pay per hop: every result flows back through the context win
 Code-mode pays once. On **BrowseComp-Plus** (100k docs, Qwen3-Embedding-8B, n=100,
 identical tools and search budget for both arms, gpt-4.1-mini):
 
-| arm | model turns | input tokens/query | latency | recall@10 |
-|---|:-:|:-:|:-:|:-:|
-| tool-calling agent | 9.5 | 19,430 | 22.6 s | 0.088 |
-| **Search as Code** | **1.0** | **629 (31× less)** | **13.0 s (1.7× faster)** | **0.124 (+41%)** |
+| arm | model turns | input tokens/query | latency | recall@10 | all-golds@10 |
+|---|:-:|:-:|:-:|:-:|:-:|
+| tool-calling agent | 9.6 | 19,653 | 22.8 s | 0.102 | 0.050 |
+| tool-calling + explore | 9.3 | 17,435 | 26.0 s | 0.118 | 0.070 |
+| Search as Code | 1.0 | 637 | 14.1 s | 0.131 | 0.070 |
+| **Search as Code + explore** | **1.0** | **689 (29× less)** | **10.7 s (2.1× faster)** | **0.162 (+59%)** | **0.100 (2×)** |
+| *dense single-shot (the baseline)* | *0* | *0* | *0.1 s* | *0.265* | *0.160* |
 
 <!-- GRAPH: docs/assets/cost_tokens.png — tokens per query, tool vs sac vs sac_explored -->
 <!-- GRAPH: docs/assets/cost_hops.png — input tokens vs hop depth, tool vs sac -->
-<!-- SLOT:SEEDED — sac_explored row + the explore-pays-for-itself paragraph -->
 <!-- SLOT:HOTPOT_COST — per-hop-depth cost table (2/3/4-hop), tokens grow for tools, flat for SaC -->
 
-And the guarantee that makes it safe to adopt: **SaC never ships a strategy that
-underperforms your baseline.** Every forged primitive must beat `max(dense, hybrid)` on
-held-out queries — measured with paired bootstrap confidence intervals — or the system
-emits the baseline itself. That gate is in the SDK, with tests
-([`HarnessForge.accept_code_primitive`](search_as_code/harness/forge.py)), and we publish
-it firing: on strong retrievers it frequently selects the baseline. We think a retrieval
-system that can prove it won't make things worse is worth more than one that claims magic.
+Two things this table shows. First, **explore's corpus knowledge compounds in code-mode**:
+seeding lifts SAC by +0.031 recall at ~50 extra tokens (and makes it *faster* — it stops
+flailing), while the same knowledge lifts the tool agent by half as much at 17k tokens.
+Second — read the dense row — **a strong single-shot retriever beats every agent arm on
+raw recall here.** We print that on purpose, because it is the design:
+
+### What explore learned, and what the gate enforced
+
+On this corpus (BrowseComp-Plus, a strong 8B embedder), `explore` authored strategies for
+30 training queries across up to 10 hops each — including raw OpenSearch DSL probes on
+exact constraints — and discovered: **keep the query whole (0/30 decomposed), and nothing
+it authored beat one plain dense search.** The acceptance gate then did its job and
+recorded `selected_strategy: dense` — the vetted primitive for this corpus *is* the
+baseline. Deploy the gate's selection and your floor is the dense row above (0.265), at
+one cheap model turn for the queries that need escalation and zero turns for those that
+don't.
+
+The agent rows above are the harness running *standalone* (every query, no baseline
+hop-0) — the worst case, shown so you can see the cost mechanics. And one lesson we
+publish because we hit it ourselves: an earlier version of this benchmark seeded the
+agents with the forge store's *candidate* strategy instead of the **gate's selection** —
+the rejected multi-mode fusion — and recall diluted on every query. **The gate's decision
+is the product of explore. Deploy that, not the candidate it rejected.**
+(`HarnessForge.accept_code_primitive` persists the winning side under the requested name,
+so stores written through the gate can't make this mistake.)
+
+The guarantee, stated plainly: **SaC never ships a strategy that underperforms your
+baseline.** Every forged primitive must beat `max(dense, hybrid)` on held-out queries —
+paired bootstrap confidence intervals — or the baseline ships under the same name. That
+gate is in the SDK with tests, and we publish it firing. A retrieval system that can
+prove it won't make things worse is worth more than one that claims magic.
 
 ## 📦 Install
 

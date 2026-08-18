@@ -27,6 +27,13 @@ summary a user should read before quoting anything.
   single-gold pools; coverage-first fusion is the multi-hop default.
 - **A learned query-profile lift of +2.7 pts** — did not reproduce under leak-free
   splits; struck from the record.
+- **A seeded-agent benchmark row (0.169 r@10) measured with the wrong artifact** — the
+  arms were seeded with the forge store's *candidate* strategy (a multi-mode fusion the
+  acceptance gate had rejected) instead of the gate's recorded selection (`dense`). The
+  fusion diluted recall on every query. Corrected the same day; the deploy rule it
+  produced — **consume the gate's selection, never the rejected candidate** — is now in
+  the README, and `HarnessForge.accept_code_primitive` persists the winning side under
+  the requested name so gate-written stores cannot reproduce the mistake.
 
 ## How to check us
 
