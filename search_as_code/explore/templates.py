@@ -34,7 +34,8 @@ def extract_codes(q: str) -> list[str]:
     seen, out = set(), []
     for m in CODE_RE.findall(q):
         if m not in seen and len(m) >= 4:
-            seen.add(m); out.append(m)
+            seen.add(m)
+            out.append(m)
     return out[:2]
 
 
@@ -62,12 +63,19 @@ class StrategyContext:
         self.top_k = top_k
         self._c: dict = {}
         self._rr_lock = rerank_lock            # serialize GPU reranker across worker threads
+        self.degraded: dict = {}               # {"<pool>:<ExcType>": n} — see _memo (LEG-5)
 
     def _memo(self, key, fn) -> ResultSet:
         if key not in self._c:
             try:
                 self._c[key] = fn() or ResultSet()
-            except Exception:
+            except Exception as e:
+                # Keep the fallback, but COUNT it. A crashing template used to be recorded
+                # as "did not solve", so labeling could not distinguish "this strategy lost"
+                # from "this strategy errored" — which is how SDK-C5/C6 stayed invisible
+                # (LEG-5). ``ctx.degraded`` is surfaced in the labeling metadata.
+                self.degraded[f"{key}:{type(e).__name__}"] = \
+                    self.degraded.get(f"{key}:{type(e).__name__}", 0) + 1
                 self._c[key] = ResultSet()
         return self._c[key]
 
@@ -122,7 +130,10 @@ class StrategyContext:
         def _go():
             out = ResultSet()
             for c in extract_codes(self.q):
-                out = P.fuse([out, self.s.search(re.escape(c), self.P, mode="regex")])
+                # Wrap with .* — OpenSearch `regexp` anchors to the WHOLE field value, so a
+                # bare escaped code never matched and the regex pool was always empty,
+                # silently weakening exact_partnum / confidence_gated_exact (SDK-C6).
+                out = P.fuse([out, self.s.search(f".*{re.escape(c)}.*", self.P, mode="regex")])
             return out
         return self._memo("regex", _go)
 
@@ -236,6 +247,47 @@ TEMPLATES: dict[str, Callable[[StrategyContext], ResultSet]] = {
 }
 
 TEMPLATE_NAMES = list(TEMPLATES)
+
+# What each template NEEDS to be itself. Without the dependency the strategy silently
+# degrades to another template's behaviour — e.g. with ``use_llm=False`` hyde/decompose/
+# rephrase/expand all return dense() or hybrid(), and with no reranker rerank() returns its
+# input unchanged. Under the shipped labeling defaults (label_llm=False, label_rerank=False)
+# that made 10 of the 16 templates *literally the same function*, and since best_from_hits
+# breaks ties by cheapest cost, light_dense (cost 0) won essentially every tie by
+# construction — the mechanical cause of the "minority collapse" in open_problems.md #1/#8.
+# Labeling now marks these `unavailable` instead of scoring a degenerate duplicate (SDK-A1).
+TEMPLATE_REQUIRES: dict[str, set[str]] = {
+    "rephrase_rerank": {"llm", "rerank"},
+    "dense_rerank": {"rerank"},
+    "hyde_rerank": {"llm", "rerank"},
+    "mmr_diverse": {"rerank"},
+    "prf_rerank": {"rerank"},
+    "multi_rephrase": {"llm"},
+    "decompose_rerank": {"llm", "rerank"},
+    "deep_hyde_decompose": {"llm"},
+    "deep_all": {"llm", "rerank"},
+    "score_guarded": {"llm", "rerank"},
+    "escalating": {"llm", "rerank"},
+    "confidence_gated_exact": {"llm", "rerank"},
+}
+
+
+def template_available(name: str, *, use_llm: bool, use_rerank: bool) -> bool:
+    """Is ``name`` genuinely runnable, or would it degrade to a duplicate of another
+    template? See :data:`TEMPLATE_REQUIRES` (SDK-A1)."""
+    need = TEMPLATE_REQUIRES.get(name, set())
+    if "llm" in need and not use_llm:
+        return False
+    if "rerank" in need and not use_rerank:
+        return False
+    return True
+
+
+def available_templates(*, use_llm: bool, use_rerank: bool) -> list[str]:
+    """The subset of TEMPLATE_NAMES that is distinct under these capabilities."""
+    return [t for t in TEMPLATE_NAMES
+            if template_available(t, use_llm=use_llm, use_rerank=use_rerank)]
+
 
 # effort cost per tier — used to pick the CHEAPEST template that still solves a query
 # (recall@k), so the router learns the lightest strategy that works.

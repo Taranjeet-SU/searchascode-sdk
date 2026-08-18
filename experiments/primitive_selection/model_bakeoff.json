@@ -1,0 +1,192 @@
+{
+  "hotpotqa_multihop": {
+    "baselines": {
+      "n": 600,
+      "always_dense": 0.5517,
+      "oracle": 0.9,
+      "none_rate": 0.1
+    },
+    "meta": {
+      "n": 600,
+      "solved": 540,
+      "unsolved": 60,
+      "oracle_coverage": 0.9
+    },
+    "cv_accuracy": {
+      "hist_gb": {
+        "cv_acc": 0.6296,
+        "cv_std": 0.0111,
+        "folds": 2
+      },
+      "xgb": {
+        "cv_acc": 0.6222,
+        "cv_std": 0.0074,
+        "folds": 2
+      },
+      "logreg": {
+        "cv_acc": 0.6204,
+        "cv_std": 0.0093,
+        "folds": 2
+      },
+      "random_forest": {
+        "cv_acc": 0.6241,
+        "cv_std": 0.0019,
+        "folds": 2
+      },
+      "mlp": {
+        "cv_acc": 0.637,
+        "cv_std": 0.0074,
+        "folds": 2
+      }
+    },
+    "grid": {
+      "hist_gb": {
+        "best_params": {
+          "learning_rate": 0.1,
+          "max_depth": 8,
+          "max_iter": 400
+        },
+        "best_cv_acc": 0.6407
+      },
+      "xgb": {
+        "best_params": {
+          "learning_rate": 0.1,
+          "max_depth": 8,
+          "n_estimators": 300,
+          "subsample": 0.8
+        },
+        "best_cv_acc": 0.637
+      }
+    },
+    "routed_recall": {
+      "hist_gb": {
+        "routed_recall": 0.6117
+      },
+      "xgb": {
+        "routed_recall": 0.5983
+      },
+      "hist_gb_grid": {
+        "routed_recall": 0.6167,
+        "params": {
+          "learning_rate": 0.1,
+          "max_depth": 8,
+          "max_iter": 400
+        }
+      },
+      "xgb_grid": {
+        "routed_recall": 0.6067,
+        "params": {
+          "learning_rate": 0.1,
+          "max_depth": 8,
+          "n_estimators": 300,
+          "subsample": 0.8
+        }
+      },
+      "logreg": {
+        "routed_recall": 0.58
+      },
+      "random_forest": {
+        "routed_recall": 0.5667
+      },
+      "mlp": {
+        "routed_recall": 0.6133
+      }
+    },
+    "best_grid_model": "hist_gb"
+  },
+  "su_multihop": {
+    "baselines": {
+      "n": 450,
+      "always_dense": 0.5756,
+      "oracle": 0.8378,
+      "none_rate": 0.1622
+    },
+    "meta": {
+      "n": 450,
+      "solved": 377,
+      "unsolved": 73,
+      "oracle_coverage": 0.8378
+    },
+    "cv_accuracy": {
+      "hist_gb": {
+        "cv_acc": 0.6552,
+        "cv_std": 0.0033,
+        "folds": 3
+      },
+      "xgb": {
+        "cv_acc": 0.6791,
+        "cv_std": 0.009,
+        "folds": 3
+      },
+      "logreg": {
+        "cv_acc": 0.6923,
+        "cv_std": 0.0108,
+        "folds": 3
+      },
+      "random_forest": {
+        "cv_acc": 0.6844,
+        "cv_std": 0.0026,
+        "folds": 3
+      },
+      "mlp": {
+        "cv_acc": 0.6816,
+        "cv_std": 0.0184,
+        "folds": 3
+      }
+    },
+    "grid": {
+      "hist_gb": {
+        "best_params": {
+          "learning_rate": 0.05,
+          "max_depth": 8,
+          "max_iter": 300
+        },
+        "best_cv_acc": 0.6684
+      },
+      "xgb": {
+        "best_params": {
+          "learning_rate": 0.1,
+          "max_depth": 6,
+          "n_estimators": 400,
+          "subsample": 0.8
+        },
+        "best_cv_acc": 0.695
+      }
+    },
+    "routed_recall": {
+      "hist_gb": {
+        "routed_recall": 0.6022
+      },
+      "xgb": {
+        "routed_recall": 0.5956
+      },
+      "hist_gb_grid": {
+        "routed_recall": 0.6022,
+        "params": {
+          "learning_rate": 0.05,
+          "max_depth": 8,
+          "max_iter": 300
+        }
+      },
+      "xgb_grid": {
+        "routed_recall": 0.5956,
+        "params": {
+          "learning_rate": 0.1,
+          "max_depth": 6,
+          "n_estimators": 400,
+          "subsample": 0.8
+        }
+      },
+      "logreg": {
+        "routed_recall": 0.5822
+      },
+      "random_forest": {
+        "routed_recall": 0.58
+      },
+      "mlp": {
+        "routed_recall": 0.6
+      }
+    },
+    "best_grid_model": "xgb"
+  }
+}

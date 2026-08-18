@@ -15,6 +15,7 @@ from collections import Counter
 
 import numpy as np
 
+from .._genutil import gen_text
 from .engine import ExploreContext, Stage  # noqa: F401  (re-exported for convenience)
 
 
@@ -161,7 +162,7 @@ def _llm_profile(ctx: ExploreContext, schema: dict, texts: list[str]) -> str:
     )
     try:
         out = ctx.generator(prompt)
-        return out[0] if isinstance(out, list) else str(out)
+        return gen_text(out)  # whole profile, not line 1 (GEN-1)
     except Exception as e:  # pragma: no cover
         return f"(llm profile unavailable: {e})"
 
@@ -218,6 +219,26 @@ class SynthesizeStage(Stage):
         ctx.pack.write_jsonl("synth_queries.jsonl", rows)
         return {"queries": len(rows), "from_docs": min(len(sample), max_docs),
                 "by_difficulty": dict(Counter(x["difficulty"] for x in rows))}
+
+    def validate(self, ctx: ExploreContext, summary: dict) -> tuple[bool, str]:
+        """A stage that produced NOTHING must not be recorded as ``ok``.
+
+        ``_gen_queries`` swallows a parse/API failure and returns ``[]`` per document, so a
+        generator whose output cannot be parsed yielded zero queries while this stage still
+        reported success — and the next stage then died with the confusing
+        "no synth queries to validate on". Same shape as SDK-A5 (a validate() gate nothing
+        implemented) plus LEG-5 (a silent fallback recorded as a result). Rejecting here makes
+        the real cause visible at the stage that caused it.
+        """
+        n = int(summary.get("queries", 0))
+        if n == 0:
+            return False, ("generated 0 queries — the generator's output could not be parsed as "
+                           "the requested JSON list (check the generator, or set "
+                           "config['synth_per_doc'])")
+        want = int(ctx.cfg("synth_min_queries", 1))
+        if n < want:
+            return False, f"generated only {n} queries, below synth_min_queries={want}"
+        return True, f"{n} grounded queries from {summary.get('from_docs')} documents"
 
 
 def _gen_queries(ctx: ExploreContext, text: str, per_doc: int):
@@ -311,6 +332,26 @@ class ValidateStage(Stage):
         ctx.pack.path("REPORT.md").write_text(_report_md(ctx, result))
         return {"n": n, "best": best,
                 "recall_at_k": {s: round(recall[s], 3) for s in self.STRATEGIES}}
+
+    def validate(self, ctx: ExploreContext, summary: dict) -> tuple[bool, str]:
+        """Implement the keep-if-usable gate the engine defines and the docs advertise.
+
+        ``Stage.validate`` and docs/EXPLORE.md's robustness table describe rejecting output
+        that does not beat baseline as "the honesty rule", but no stage in default_pipeline()
+        overrode it — so ``status="rejected"`` was unreachable and the table over-claimed
+        (SDK-A5). A validation pass whose best strategy retrieves nothing is measuring noise
+        (usually: the synth queries are not answerable from the corpus), so it is rejected
+        rather than recorded as a baseline later stages would trust.
+        """
+        recall = summary.get("recall_at_k") or {}
+        best = max(recall.values(), default=0.0)
+        floor = float(ctx.cfg("validate_min_recall", 0.05))
+        if best <= 0.0:
+            return False, "no strategy retrieved any gold document — baseline is not usable"
+        if best < floor:
+            return False, (f"best recall@k {best:.3f} is below the usable floor {floor:.2f} "
+                           f"(set config['validate_min_recall'] to override)")
+        return True, f"baseline established: {summary.get('best')} @ {best:.3f}"
 
 
 def _search_ids(ctx: ExploreContext, mode: str, query: str, k: int) -> set:

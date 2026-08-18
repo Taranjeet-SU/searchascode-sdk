@@ -17,6 +17,7 @@ from __future__ import annotations
 import numpy as np
 
 from . import diagnostic_judge as dj
+from .loop import fuse_ids
 from .os_query import author_os_query
 from .rag_techniques import SkillLookup
 
@@ -24,19 +25,17 @@ CE_WEAK = 0.0   # a sub-fact whose best candidate cross-encoder score is below t
 
 
 def _rrf(lists, k=60):
-    s = {}
-    for lst in lists:
-        for r, i in enumerate(lst):
-            s[i] = s.get(i, 0.0) + 1.0 / (k + r + 1)
-    return sorted(s, key=lambda i: -s[i])
+    """Delegates to the one id-list RRF implementation (SDK-R2)."""
+    return fuse_ids(lists, k=k)
 
 
 def _reserve(sf_lists, k=10):
     """Reserve each sub-fact's best candidate a slot, then fill by global RRF (coverage-guaranteed)."""
     reserved, seen = [], set()
-    for l in sf_lists:
-        if l and l[0] not in seen:
-            reserved.append(l[0]); seen.add(l[0])
+    for lst in sf_lists:
+        if lst and lst[0] not in seen:
+            reserved.append(lst[0])
+            seen.add(lst[0])
     return (reserved + [i for i in _rrf(sf_lists) if i not in seen])[:k]
 
 
@@ -57,7 +56,7 @@ def sf_arsenal(session, sub, k=30):
                      else session.search(sub, top_k=k, mode="keyword").ids())
     except Exception:
         pass
-    return _rrf([l for l in lists if l])
+    return _rrf([x for x in lists if x])
 
 
 def apply_technique(session, reranker, technique, nq, pool_ids, generator=None):
@@ -83,7 +82,7 @@ def apply_technique(session, reranker, technique, nq, pool_ids, generator=None):
         if technique == "rerank":
             docs = session.store.get(pool_ids[:40])
             texts = [d.text or "" for d in docs]
-            order = np.argsort(reranker(nq, texts))[::-1] if texts else []
+            order: list = list(np.argsort(reranker(nq, texts))[::-1]) if texts else []
             return [docs[i].id for i in order]
     except Exception:
         pass
@@ -142,9 +141,11 @@ def diagnostic_solve(session, query, *, gold=None, max_hops=6, generator=None, j
         got = len(goldset & set(fused[:top_k])) if goldset else 0
         oracle_complete = bool(goldset) and got == len(goldset)
         if hop == max_hops:
-            stopped_by = "maxhops"; break
+            stopped_by = "maxhops"
+            break
         if not judge_stop and oracle_complete:
-            stopped_by = "oracle"; break
+            stopped_by = "oracle"
+            break
 
         cov, ids, texts = _coverage(session, embedder, reranker, subfacts, sub_vecs, fused)
         weak = [j for j, c in enumerate(cov) if c["ce_best"] < CE_WEAK]
@@ -152,7 +153,8 @@ def diagnostic_solve(session, query, *, gold=None, max_hops=6, generator=None, j
             cands = [{"id": i, "score": 1.0 / (r + 1), "snippet": t} for r, (i, t) in enumerate(zip(ids, texts))]
             v = judge.judge(query, subfacts, cands, cov) if judge else {"verdict": "FAIL", "technique": "", "missing": "", "next_query": ""}
             if v["verdict"] == "PASS":
-                stopped_by = "judge_pass"; break
+                stopped_by = "judge_pass"
+                break
             if not weak:
                 weak = [int(np.argmin([c["ce_best"] for c in cov]))]
         else:

@@ -17,6 +17,7 @@ from typing import Any, Callable, Optional, Sequence
 
 from . import filters as F
 from . import primitives as P
+from ._genutil import gen_text
 from .adapters.base import VectorStore
 from .adapters.registry import connect
 from .embeddings import Embedder, HashEmbedder, as_embedder
@@ -136,7 +137,9 @@ class Session:
         )
         try:
             out = self.generator(prompt)  # type: ignore[misc]  # guarded by caller (generator is not None)
-            return out[0] if isinstance(out, list) else str(out)
+            # gen_text, not out[0]: a line-splitting generator adapter would otherwise return
+            # line 1 of a 4-6 line profile — dropping item (3), the recommended primitives (GEN-1).
+            return gen_text(out)
         except Exception as e:  # pragma: no cover - profiling is best-effort
             return f"(llm profile unavailable: {e})"
 
@@ -347,7 +350,9 @@ class Session:
         answer region of embedding space, a DIFFERENT neighborhood than the query."""
         gen = self._require_generator()
         prompt = f"Write a short passage that directly answers this query.\nQuery: {query}"
-        doc = (gen(prompt) or [query])[0]
+        # The WHOLE passage, not its first line: a multi-line or preamble-prefixed completion
+        # would otherwise embed a fragment instead of the hypothetical document (GEN-3).
+        doc = gen_text(gen(prompt), default=query)
         vec = self.embedder.embed([doc])[0]
         return self.store.query_vector(vec, top_k=top_k)
 
@@ -378,7 +383,8 @@ class Session:
         answer looks like. LOW ``max_sim`` ⇒ the answer is probably NOT in the corpus → abstain/stop
         instead of burning tokens going wider. Needs a generator."""
         gen = self._require_generator()
-        doc = (gen(f"Write a short passage that directly answers this query.\nQuery: {query}") or [query])[0]
+        doc = gen_text(gen(f"Write a short passage that directly answers this query.\nQuery: {query}"),
+                       default=query)  # whole passage, not line 1 (GEN-3)
         vec = self.embedder.embed([doc])[0]
         hits = self.store.query_vector(vec, top_k=top_k)
         top = max((h.score for h in hits), default=0.0)

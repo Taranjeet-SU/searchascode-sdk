@@ -194,11 +194,14 @@ def consensus(result_sets: Sequence[ResultSet], top_k: int = 10, per_list_k: int
     scored = [Hit(id=i, score=votes[i] + rr[i] / n, document=keep[i].document,
                   query=keep[i].query, store=keep[i].store) for i in votes]
     scored.sort(key=lambda h: h.score, reverse=True)
-    out = ResultSet(scored[:top_k])
-    out.agreement = round(max(votes.values()) / n, 3) if votes else 0.0  # type: ignore[attr-defined]
-    out.votes = {i: votes[i] for i in sorted(votes, key=lambda x: -votes[x])[:top_k]}  # type: ignore[attr-defined]
-    out.n_lists = n  # type: ignore[attr-defined]
-    return out
+    # Carried on .info so the signals SURVIVE chaining. They used to be set as ad-hoc
+    # attributes, and top()/dedup()/where() build a new ResultSet — so the documented gating
+    # signals vanished as soon as agent code chained anything (SDK-C13).
+    return ResultSet(scored[:top_k], info={
+        "agreement": round(max(votes.values()) / n, 3) if votes else 0.0,
+        "votes": {i: votes[i] for i in sorted(votes, key=lambda x: -votes[x])[:top_k]},
+        "n_lists": n,
+    })
 
 
 # ---- stop signals: "is an answer even here?" without burning tokens ----------

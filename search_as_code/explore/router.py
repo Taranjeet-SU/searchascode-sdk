@@ -38,6 +38,13 @@ def featurize(query: str, emb: np.ndarray) -> np.ndarray:
     return np.concatenate([np.asarray(emb, dtype=np.float32), lexical_features(query)])
 
 
+# What an UNFITTED router returns. It must be a real template: predict()/route_plan() used to
+# return "all_rerank", which is not in TEMPLATE_NAMES, so the value KeyError'd in run_template
+# and the unfitted path was simply broken (SDK-C12). `deep_all` is the nearest real strategy —
+# the widest one — which is the right default when nothing has been learned yet.
+_UNFITTED_FALLBACK = "deep_all"
+
+
 def best_from_hits(hits: dict) -> str:
     """Winner policy over recall@k hits: the **cheapest-effort** template that retrieved the
     gold doc (so the router learns the lightest strategy that works). 'none' if all missed."""
@@ -47,12 +54,17 @@ def best_from_hits(hits: dict) -> str:
     return min(winners, key=lambda t: (TEMPLATE_COST.get(t, 9), TEMPLATE_NAMES.index(t)))
 
 
-def label_via_templates(ctx, gold, k: int = 10, cascade: bool = True):
-    """Return (best_template, hits) where hits[name]=1 iff a gold doc is in that template's top-k
-    (**recall@k** — the success criterion) and best = the cheapest template that succeeds.
+def label_via_templates(ctx, gold, k: int = 10, cascade: bool = True, all_golds: bool = True):
+    """Return (best_template, hits) where best = the **cheapest template that returns ALL the gold
+    answers** in its top-k, and hits[name]=1 iff that template met the success criterion.
 
-    ``gold``: a single id or a set/list of relevant ids (qrels can have several) — a template
-    solves if it retrieves ANY of them in its top-k.
+    ``gold``: a single id or a set/list of relevant ids (qrels / multi-hop can have several).
+
+    ``all_golds`` (**default True** = cheapest-to-all-golds): a template "solves" a query iff **ALL**
+    gold ids are in its top-k (``gold_set ⊆ top_k``) — the correct criterion when the gold is a SET
+    of N documents that must ALL be retrieved (multi-hop). This **reduces exactly to single-gold
+    recall@k when the gold set has one element** (``{g} ⊆ got`` ≡ ``g ∈ got``), so single-gold
+    corpora (BEIR) are unaffected. Set ``all_golds=False`` for the older "ANY gold in top-k" gate.
 
     ``cascade`` (default): evaluate templates cheapest-first and **stop at the first cost group
     that solves the query** — so the expensive LLM strategies only run on the queries the cheap
@@ -61,23 +73,37 @@ def label_via_templates(ctx, gold, k: int = 10, cascade: bool = True):
     """
     from itertools import groupby
 
+    from .templates import available_templates
+
     golds = {gold} if isinstance(gold, str) else set(gold)
 
     def _hit(name):
-        return int(bool(golds & set(run_template(name, ctx, top_k=k))))
+        got = set(run_template(name, ctx, top_k=k))
+        return int(golds <= got) if all_golds else int(bool(golds & got))
 
-    order = sorted(TEMPLATE_NAMES, key=lambda t: (TEMPLATE_COST.get(t, 99), TEMPLATE_NAMES.index(t)))
+    # Only label templates that are genuinely DISTINCT under this context's capabilities.
+    # Without a generator, hyde/decompose/rephrase/expand return dense()/hybrid(); without a
+    # reranker, rerank() is the identity — so labeling all 16 scored ~4 real strategies many
+    # times over and handed every tie to light_dense on cost (SDK-A1). Unavailable templates
+    # are recorded as None (= "not evaluated"), never as a miss.
+    usable = available_templates(use_llm=bool(getattr(ctx, "use_llm", False)),
+                                 use_rerank=bool(getattr(ctx, "use_rerank", False)))
+    order = sorted(usable, key=lambda t: (TEMPLATE_COST.get(t, 99), TEMPLATE_NAMES.index(t)))
+    unavailable = {t: None for t in TEMPLATE_NAMES if t not in set(usable)}
     hits: dict = {}
     if not cascade:
         for name in order:
             hits[name] = _hit(name)
+        hits.update(unavailable)
         return best_from_hits(hits), hits
-    for _cost, grp in groupby(order, key=lambda t: TEMPLATE_COST.get(t, 99)):
-        grp = list(grp)
+    for _cost, group in groupby(order, key=lambda t: TEMPLATE_COST.get(t, 99)):
+        grp = list(group)
         for name in grp:
             hits[name] = _hit(name)
         if any(hits[n] for n in grp):
+            hits.update(unavailable)
             return best_from_hits(hits), hits     # cheapest solver is in this group
+    hits.update(unavailable)
     return "none", hits
 
 
@@ -92,9 +118,26 @@ class TemplateRouter:
 
     def predict(self, query: str, emb: np.ndarray) -> str:
         if self.model is None:
-            return "all_rerank"
+            return _UNFITTED_FALLBACK
         x = featurize(query, emb).reshape(1, -1)
         return str(self.model.predict(x)[0])
+
+    def route_plan(self, query: str, emb: np.ndarray, top_k: int = 3) -> list[str]:
+        """A ranked strategy CASCADE for one query: the top_k templates by predicted probability
+        (cheapest-first among near-ties). The code agent executes it as t1 → escalate to t2 → t3,
+        which is where routing actually pays off (chaining, not betting on a single template).
+        Falls back to a single predict when the head has no ``predict_proba``."""
+        if self.model is None:
+            return [_UNFITTED_FALLBACK]
+        x = featurize(query, emb).reshape(1, -1)
+        if not hasattr(self.model, "predict_proba"):
+            return [str(self.model.predict(x)[0])]
+        from .templates import TEMPLATE_COST
+        proba = self.model.predict_proba(x)[0]
+        classes = list(getattr(self.model, "classes_", self.classes))
+        order = sorted(range(len(classes)),
+                       key=lambda i: (-float(proba[i]), TEMPLATE_COST.get(str(classes[i]), 99)))
+        return [str(classes[i]) for i in order[:top_k]]
 
     def save(self, path) -> None:
         with open(path, "wb") as f:
@@ -108,26 +151,14 @@ class TemplateRouter:
         return cls(d["model"], d["classes"], d["emb_dim"], d.get("metrics", {}))
 
 
-def train_router(X: np.ndarray, y: np.ndarray, seed: int = 0) -> dict:
-    """Train HistGradientBoosting (XGB-style) with CV. Returns model + metrics."""
-    from collections import Counter
-
-    from sklearn.ensemble import HistGradientBoostingClassifier
-    from sklearn.model_selection import cross_val_score
-
-    counts = Counter(y)
-    clf = HistGradientBoostingClassifier(max_iter=300, learning_rate=0.08,
-                                         max_depth=6, random_state=seed)
-    # CV needs >=2 per class; fold count bounded by the rarest class
-    min_class = min(counts.values()) if counts else 0
-    folds = max(2, min(5, min_class))
-    cv_acc = None
-    if len(counts) >= 2 and min_class >= 2:
-        scores = cross_val_score(clf, X, y, cv=folds, scoring="accuracy")
-        cv_acc = (float(scores.mean()), float(scores.std()))
-    clf.fit(X, y)
-    return {"model": clf, "classes": sorted(counts),
-            "label_counts": dict(counts), "cv_folds": folds,
-            "cv_accuracy": cv_acc[0] if cv_acc else None,
-            "cv_std": cv_acc[1] if cv_acc else None,
-            "train_accuracy": float((clf.predict(X) == y).mean())}
+def format_route_plan(plan: list[str]) -> str:
+    """Render a :meth:`TemplateRouter.route_plan` cascade as a per-query prompt hint the code
+    agent can follow — the learned ``t1 → t2 → t3`` plan, with what each strategy does."""
+    from .templates import TEMPLATE_DOCS
+    if not plan:
+        return ""
+    steps = " → ".join(plan)
+    detail = "; ".join(f"{t} ({TEMPLATE_DOCS.get(t, {}).get('does', '')})" for t in plan)
+    return (f"Learned strategy plan for THIS query (router-ranked, cheapest-effective first): "
+            f"{steps}. Execute as a cascade — start with the first; escalate to the next only if "
+            f"the result looks weak. What each does: {detail}.")

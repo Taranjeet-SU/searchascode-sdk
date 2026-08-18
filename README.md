@@ -7,14 +7,17 @@
   <img alt="python" src="https://img.shields.io/badge/python-3.10+-blue">
   <img alt="license" src="https://img.shields.io/badge/license-Apache--2.0-green">
   <img alt="backends" src="https://img.shields.io/badge/backends-memory·opensearch·qdrant·chroma·pgvector·faiss·sqlite-orange">
-  <img alt="tests" src="https://img.shields.io/badge/tests-95%20passing-brightgreen">
+  <img alt="tests" src="https://img.shields.io/badge/tests-199%20unit%20%2B%2023%20integration-brightgreen">
 </p>
 
 **Search as Code** is an agentic retrieval harness: instead of calling a fixed
 `search()` endpoint, the LLM writes a short Python program against a unified
 **primitive API** — search modes, fan-out, rerank, rephrase, fuse, dedup, MMR,
 filter, aggregate — executed in a sandbox with intermediate state kept **out of
-the model context**. The same agent code runs over **any vector database**
+the model context**. In a matched head-to-head that is worth **one model turn
+instead of nine and ~25× fewer input tokens** at comparable recall — an
+efficiency win rather than a quality one ([the measurement, with
+intervals](experiments/multi_hop_synth_queries/RESULTS.md)). The same agent code runs over **any vector database**
 (OpenSearch, Qdrant, Chroma, pgvector, Pinecone, Weaviate, Milvus …) — no
 per-database SDK, no per-database rewrite. It's *code-mode* retrieval (à la
 Anthropic/Cloudflare) meets *search-as-code* primitives (à la Perplexity), made
@@ -60,13 +63,29 @@ pip install -e '.[dev]'          # editable + test/lint/type tooling (pytest, ru
 
 ```bash
 python -c "import search_as_code as sac; print(sac.available())"   # ['chroma', 'faiss', 'memory', 'opensearch', ...]
-python examples/demo.py                    # in-memory demo, zero setup, no API key
-python examples/opensearch_quickstart.py   # needs .[opensearch] + a running OpenSearch
-python -m pytest -q                        # 77 in-memory unit tests; +18 OpenSearch integration
+python examples/01_quickstart.py           # in-memory demo, zero setup, no API key
+python examples/03_explore_first.py        # the explore-first workflow, end to end, offline
+python examples/04_harness_judge_forge.py  # triage -> skills -> harness -> judge -> forge
+python -m pytest -q                        # 199 in-memory unit tests; +23 OpenSearch integration
 ```
 
-The base install ships a dependency-free embedder + in-memory backend, so the
-demo and unit tests run with **zero setup**.
+The base install ships a dependency-free embedder + in-memory backend, so **every example above
+runs with zero setup and no API key** — they use a small scripted generator in place of an LLM.
+CI executes them, so they cannot rot.
+
+### Learning the pieces
+
+| you want to understand | run this | then read |
+|---|---|---|
+| the primitive API + sandbox | [`examples/01_quickstart.py`](examples/01_quickstart.py) | [`docs/PRIMITIVES.md`](docs/PRIMITIVES.md) |
+| a real backend | [`examples/02_opensearch.py`](examples/02_opensearch.py) | [`docs/DATABASES.md`](docs/DATABASES.md) |
+| **explore** — discovering the strategy for a corpus | [`examples/03_explore_first.py`](examples/03_explore_first.py) | [`docs/EXPLORE.md`](docs/EXPLORE.md) · [`docs/INTROSPECTION.md`](docs/INTROSPECTION.md) |
+| **the harness, the deep judge, the forge** | [`examples/04_harness_judge_forge.py`](examples/04_harness_judge_forge.py) | [`docs/HARNESS.md`](docs/HARNESS.md) |
+| what the numbers actually support | — | [`issues.md`](issues.md) · [`open_problems.md`](open_problems.md) |
+
+Every headline entry point is importable from the top level — `sac.agentic_solve`,
+`sac.explore`, `sac.Harness`, `sac.DiagnosticJudge`, `sac.HarnessForge`, `sac.triage`,
+`sac.bootstrap_ci`.
 
 ## 🧠 Explore first — the default workflow
 
@@ -139,13 +158,46 @@ MCP tool-calling vs Search-as-Code (totals over the 100 queries):
 | tool-calling (MCP) | 0.440 | 0.399 | 15.9 s | 6.2 | 416k | 27% | $0.23 |
 | **Search as Code** | **0.549** | **0.408** | **7.7 s** | **2.6** | **335k** | **54%** | **$0.15** |
 
-**SAC wins every axis that matters vs MCP tool-calling** — best Recall@10 (**+11
-pts**) and nDCG@10, **~2.1× faster**, **~1.6× cheaper**, **2× the prompt-cache
-hit** (54% vs 27%), and **<½ the LLM calls** — because intermediate results stay
-in the sandbox instead of flowing back through context. Reproduce with
-`python -m phase1.benchmark -n 100`; full run log in
+SAC leads on every column here. **Read the caveat before quoting it:** an internal audit
+([`issues.md`](issues.md) P1-1 / CB-1) found the arms are **not matched** in this run — the
+tool arm gets 3 tools (`expand`, `search`, `finish`) and a 511-char prompt while the SAC arm
+gets ~20 primitives and a 7,667-char one, and a better-designed tool baseline already exists in
+`chatbot/toolcalling.py`. A matched-arm re-run is in progress; the *quality* columns should be
+treated as unconfirmed until it lands.
+
+**What is structural and not in question** is the cost profile: SAC keeps intermediate results
+in the sandbox instead of flowing them back through context, so it uses **~½ the LLM calls** and
+its input tokens stay ~flat with query difficulty while tool-calling's grow with every hop (in a
+matched 5-arm multi-hop re-run: **~550 input tokens/query vs ~16,000**, 1 model turn vs ~9).
+Reproduce with
+`python -m phase1.benchmark -n 100 --reranker cross-encoder/ms-marco-MiniLM-L-12-v2`
+(the ms-marco reranker is the one these numbers were measured with; see issues.md P1-14); full run log in
 [`benchmark_changelog.md`](benchmark_changelog.md), narrative in
 [`phase1/RESULTS.md`](phase1/RESULTS.md).
+
+## 🔍 Audit status — what these numbers do and don't support
+
+This repo keeps a standing, append-only audit of its own defects and over-claims:
+**[`issues.md`](issues.md)**. That is unusual for a README to advertise, and deliberate — the
+experiments here are the product's evidence, so their limitations are part of the documentation.
+
+Currently corrected or verified:
+
+| claim | status |
+|---|---|
+| Judge reaches 0.721 held-out, "0.72 **is** the signal ceiling" | **corrected.** Re-running the *shipped* judge scores **0.700 [0.613, 0.789]**, and a 9-feature logistic regression on the same signals scores **0.722 ± 0.039 with no LLM call** — so the judge does not beat a cheap classifier. Its value is the structured DIAGNOSIS that steers the next hop, not PASS/FAIL accuracy. [`experiments/deep_judge/README.md`](experiments/deep_judge/README.md) §1 |
+| Learned profile gives "+2.7 pts all_found" | **not reproduced.** Mining on train / evaluating on a disjoint test split (the passes previously shared 80% of their queries), every delta is zero or ns on FiQA *and* HotpotQA — in-sample too, so contamination was not the whole story. [`experiments/learned_profile_leakfree.md`](experiments/learned_profile_leakfree.md) |
+| "SAC beats MCP tool-calling on every axis" (FiQA) | **unconfirmed.** The arms were not matched (3 tools vs ~20 primitives). Re-run pending. |
+| SAC > tool-calling on multi-hop (**quality**) | **not reproduced.** With matched prompts and explore-first applied to *both* harnesses (5 arms, **n=100/hop**, forge-disjoint slice), `sac_explored − tool_explored` is −0.035/−0.040/−0.030 — consistently slightly negative, none significant. The published +0.06/+0.08/+0.13 was an artifact of handing the code arm the winning recipe as a worked program. [`RESULTS.md` §4b](experiments/multi_hop_synth_queries/RESULTS.md) |
+| SAC > tool-calling on **cost** | **holds, and it is large.** 1 model turn vs ~8–9, ~610 input tokens vs ~15,000–18,800 (**25–31×**), widening with hop depth, and fewer retrievals (2.9–4.2 vs 5.1–5.7). Structural to code-mode. |
+| `sac.explore` earns its keep | **yes, and it was missing from the old comparison.** Seeding the forged primitive lifts SAC +0.060/**+0.063**/+0.025 recall (3-hop significant) and cuts searches 5.4→2.9. Explore-seeded SAC also beats plain dense (+0.087 at 3-hop, significant). But it lifts the *tool* arm just as much — explore is a corpus-knowledge win, not a code-mode win. |
+| Forged SAC ≥ dense on a strong retriever | **holds as a negative result** — on Qwen3-Embedding-8B the forged primitive does *not* beat plain dense, which is why the dense-default gate exists. |
+| Adapter contract ("the test suite is the contract") | **now true.** `tests/test_conformance.py` runs 15 contract tests against every installed backend; enforcing it found 3 real bugs in faiss/sqlite/chroma. |
+| Cost profile (turns, tokens, cache) | **holds.** Structural to code-mode, unaffected by the prompt-matching issue. |
+
+Every measured claim should carry an interval — use
+`search_as_code.metrics.bootstrap_ci` / `compare`. A difference whose CI includes zero is not a
+result.
 
 ## 🧰 Capabilities
 
@@ -218,8 +270,8 @@ We develop in parallel using **git worktrees** (isolated checkouts per feature):
 ```bash
 git worktree add ../sac-<feature> -b feat/<feature>   # isolated working copy
 cd ../sac-<feature> && pip install -e '.[dev]'
-# …make your change, then keep it green:
-ruff check search_as_code && mypy search_as_code && pytest -q
+# …make your change, then keep it green (one target, same as CI):
+make check          # lint + typecheck + tests + repo guard + doc links
 ```
 
 - **Add a backend** by implementing one `VectorStore`
@@ -227,8 +279,10 @@ ruff check search_as_code && mypy search_as_code && pytest -q
   and the in-memory test suite is the contract every adapter must satisfy.
 - **Add a primitive** in `primitives.py` (portable, model-free) or as a backend
   method (native); update [`docs/DATABASES.md`](docs/DATABASES.md).
-- CI runs **ruff + mypy + pytest** on Python 3.10–3.12 plus a live-OpenSearch
-  integration job ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)).
+- CI runs **ruff + mypy + pytest** on Python 3.10–3.12, the **adapter conformance suite**,
+  a **wheel-install smoke test**, a **docs link check**, and a live-OpenSearch integration
+  job ([`.github/workflows/ci.yml`](.github/workflows/ci.yml)). Full contributor guide:
+  [`CONTRIBUTING.md`](CONTRIBUTING.md).
 
 ## 🧭 Philosophy
 

@@ -54,7 +54,7 @@ The old set was primitive *configs* (which pools to fuse). These are *strategies
 costs, so the router's choice is an **effort/quality trade-off**, not just a fusion recipe. That
 is what lets a deployment answer an easy query with `light_dense` (~one retrieval) and reserve
 `deep_all`/`deep_hyde_decompose` for the few queries that need them — directly addressing the
-93.8s/call latency the flat "always deep" SAC recipe showed on Altera.
+high per-call latency a flat "always deep" recipe incurs on a real support corpus.
 
 ## Cost note (for `explore.fit`)
 A per-query `StrategyContext` **memoizes** the shared sub-results (dense/keyword/hyde/decompose/

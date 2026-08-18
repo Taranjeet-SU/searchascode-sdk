@@ -28,17 +28,19 @@ from .engine import (
 from .multihop import generate_multihop
 from .pack import ProfilePack
 from .report import write_csv_report
-from .router import TemplateRouter, best_from_hits
+from .router import TemplateRouter, best_from_hits, format_route_plan
 from .templates import TEMPLATE_COST, TEMPLATE_DOCS, TEMPLATE_NAMES
 from .training import (
     MODEL_REGISTRY,
     RouterDataset,
-    build_dataset,
-    load_dataset,
-    make_model,
     analyze_failures,
+    build_dataset,
     classify_failure,
     duplication_scan,
+    fewshot_exemplars,
+    format_fewshot_block,
+    load_dataset,
+    make_model,
     train_router_model,
     unsolved,
     write_dataset_csv,
@@ -64,11 +66,14 @@ __all__ = [
     "make_model",
     "MODEL_REGISTRY",
     "best_from_hits",
+    "format_route_plan",
     "unsolved",
     "duplication_scan",
     "classify_failure",
     "analyze_failures",
     "write_dataset_csv",
+    "fewshot_exemplars",
+    "format_fewshot_block",
     "generate_multihop",
     "TEMPLATE_COST",
 ]

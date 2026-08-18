@@ -69,6 +69,7 @@ def _safe_globals():
     """Restricted globals for executing an LLM-authored primitive (retrieval logic only)."""
     import importlib
     import re as _re
+
     import search_as_code as sac
     from search_as_code import primitives as P
     _bi = __builtins__ if isinstance(__builtins__, dict) else vars(__builtins__)
@@ -83,7 +84,21 @@ def _safe_globals():
             raise ImportError(f"import '{name}' not allowed in a primitive")
         return importlib.import_module(name)
     allowed["__import__"] = _imp
-    return {"__builtins__": allowed, "sac": sac, "P": P, "fuse": P.fuse, "re": _re}
+
+    def _fuse_ids(lists, k=60):                    # RRF over id lists, for authored code
+        return fuse_ids([list(x) for x in lists], k=k)   # one implementation (SDK-R2)
+
+    def _rerank(session, query, ids, top_k=10):    # cross-encoder rerank an id list
+        docs = session.store.get(list(ids)[:60])
+        texts = [d.text or "" for d in docs]
+        if not texts:
+            return list(ids)[:top_k]
+        scores = session.reranker(query, texts) if getattr(session, "reranker", None) else list(range(len(texts), 0, -1))
+        order = sorted(range(len(docs)), key=lambda j: -scores[j])
+        return [str(docs[j].id) for j in order[:top_k]]
+
+    return {"__builtins__": allowed, "sac": sac, "P": P, "fuse": P.fuse, "re": _re,
+            "fuse_ids": _fuse_ids, "rerank": _rerank}
 
 
 @dataclass
@@ -139,18 +154,23 @@ class HarnessStore:
 
     def load(self) -> None:
         p = self.path
+        if p is None:
+            return
         if (p / "skills.jsonl").exists():
             for ln in (p / "skills.jsonl").read_text().splitlines():
                 if ln.strip():
-                    d = json.loads(ln); self.skills[d["name"]] = LearnedSkill(**d)
+                    d = json.loads(ln)
+                    self.skills[d["name"]] = LearnedSkill(**d)
         if (p / "subagents.jsonl").exists():
             for ln in (p / "subagents.jsonl").read_text().splitlines():
                 if ln.strip():
-                    d = json.loads(ln); self.subagents[d["name"]] = LearnedSubagent(**d)
+                    d = json.loads(ln)
+                    self.subagents[d["name"]] = LearnedSubagent(**d)
         if (p / "code_primitives.jsonl").exists():
             for ln in (p / "code_primitives.jsonl").read_text().splitlines():
                 if ln.strip():
-                    d = json.loads(ln); self.code_primitives[d["name"]] = CodePrimitive(**d)
+                    d = json.loads(ln)
+                    self.code_primitives[d["name"]] = CodePrimitive(**d)
         if (p / "learnings.md").exists():
             self.learnings = [x[2:].strip() for x in (p / "learnings.md").read_text().splitlines()
                               if x.strip().startswith("- ")]
@@ -163,8 +183,8 @@ class HarnessStore:
             for s in self.skills.values():
                 f.write(json.dumps(asdict(s)) + "\n")
         with (self.path / "subagents.jsonl").open("w") as f:
-            for s in self.subagents.values():
-                f.write(json.dumps(asdict(s)) + "\n")
+            for sub in self.subagents.values():
+                f.write(json.dumps(asdict(sub)) + "\n")
         with (self.path / "code_primitives.jsonl").open("w") as f:
             for c in self.code_primitives.values():
                 f.write(json.dumps(asdict(c)) + "\n")
@@ -235,7 +255,9 @@ def author_code_primitive(gen, patterns: str, forge, session, test_query: str, g
     """TRUE primitive creation with validate-and-retry: the LLM AUTHORS a retrieval function, we run
     it on a held query, and if it errors / returns nothing we feed the failure back and re-author —
     accepting only a primitive that actually retrieves. Returns (code, accepted)."""
-    goldset = set(map(str, gold)); err = ""; code = ""
+    goldset = set(map(str, gold))
+    err = ""
+    code = ""
     base = ("Write a reusable Python retrieval primitive. Signature EXACTLY: def run(session, query, top_k):\n"
             "Available: session.search(q, top_k=k, mode='hybrid'|'dense'|'keyword'); "
             "session.hyde_search(q, top_k=k) (USE for generically-DESCRIBED entities); "
@@ -274,10 +296,13 @@ def reflect(ctx, result, forge: HarnessForge, threshold: float = 0.5) -> list:
     """Online-learning step: after a solve, create/modify skills/subagents/rules/memory from evidence.
 
     Rule-based + deterministic (LLM proposals can extend it). Returns the names of forged artifacts."""
-    created = []
+    created: list = []
     intent = getattr(ctx, "intent", None)
     kind = intent.kind if intent is not None else "unknown"
-    if not result.ids or result.score < threshold:
+    # Forge only from a VERIFIED win. The gate used to be `score < threshold` alone, and with
+    # the old default_verify (1.0 for any non-empty list) it was never true — so every
+    # non-empty multi-hop run forged a skill and a subagent from no evidence at all (SDK-A3).
+    if not result.ids or result.score < threshold or not getattr(result, "verified", False):
         return created
 
     # 1) always remember the win (durable memory)

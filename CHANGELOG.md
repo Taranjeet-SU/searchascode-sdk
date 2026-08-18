@@ -1,5 +1,49 @@
 # Changelog
 
+## 2026-08-17 — audit-fix sweep (`fix/audit-sweep`)
+
+Worked `issues.md` end to end. 10 commits, each one issue-family. Highlights:
+
+**Correctness (the silent-failure class the audit called dominant)**
+- GEN-1/2/3: nine consumers took `out[0]` of a line-splitting generator, so the "validated
+  multi-hop recipe" ran on ONE sub-fact, HyDE embedded a preamble line, and pretty-printed JSON
+  was dropped. One shared helper (`_genutil`) + 11 regression tests.
+- SDK-C1..C14: dead `os_query` allowlist, `$or` filters running unfiltered, `$eq` on strings
+  matching nothing, unseeded `sample()` defeating resume, failure taxonomy reading a stripped
+  `d.vector`, `regexp` never matching, thread-unsafe reranker loading, O(n²) memory writes,
+  `MemoryStore` ignoring `dim`, per-query corpus re-tokenization.
+- SDK-A1..A5: the 16-template space collapsing to ~4 under shipped defaults; the "self-improving"
+  harness learning from a reward that was just "returned ≥1 id"; triage decomposing every
+  conjunctive question; the `validate()` gate no stage implemented.
+- BC-4: `_fix_meta_buffers` never rebuilt `inv_freq` — the buffer that actually corrupted ReasonIR.
+
+**Measurement honesty**
+- Promoted `phase4/metrics.py` → `search_as_code.metrics` (bootstrap CIs, `compare`, recall@k /
+  all-golds@k / nDCG). It was the only significance testing in the repo.
+- DJ-1/2/3: re-derived the judge headline. 0.721 **[0.633, 0.811]**; the tuning gain is
+  +0.020 [−0.110, +0.150] (not distinguishable from noise); two of five table rows were the
+  *untuned* prompt. "0.72 is the signal ceiling" softened to what the data supports.
+- P1-7 / EXP-2: re-ran multi-hop with matched prompts and explore-first applied to BOTH harnesses.
+  The quality margin does not survive (`sac_explored − tool_explored` = −0.10/−0.07/−0.08, ns);
+  the cost margin does, and is large (1 turn vs ~9; ~600 vs ~15–19k input tokens). Explore is a
+  real ingredient but a corpus-knowledge win, not a code-mode win. `RESULTS.md` §4b.
+
+**Controls, so the next defect of each class is loud**
+- `tests/test_conformance.py`: the adapter contract the README claimed, run against every
+  installed backend. Enforcing it immediately found 3 real bugs (ADP-1/2/3).
+- CI was RED before this branch (ruff 37, mypy 52 errors on committed HEAD). Now 0/0, plus new
+  jobs for the wheel smoke test, conformance, doc links and the customer-artifact guard.
+- `make check` as the single definition of "keep it green"; `.pre-commit-config.yaml`;
+  pinned `requirements/`; `scripts/check_no_customer_artifacts.py`.
+- Governance: 48 tracked customer files untracked, `*.pub` ignored (the SSH key), version
+  single-sourced, `learnings_standard.md` created (soul.md named it 3× and it never existed).
+
+Tests: 199 unit + 23 OpenSearch integration. `issues.md`: 126 → 136 entries (10 found *by* the
+new controls), 7 marked FIXED.
+
+---
+
+
 Running log of everything built/changed/learned. Newest first.
 
 ---

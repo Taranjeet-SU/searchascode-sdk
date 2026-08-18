@@ -51,7 +51,11 @@ class Harness:
         self.forge = HarnessForge(self.store, self.skills, self.memory)
         self.learn = learn
         self.generator = generator or getattr(session, "generator", None)
+        # `verified` marks whether the reward is a REAL signal. default_verify is not one
+        # (it cannot see relevance), so online learning must not treat its score as
+        # evidence — see loop.default_verify and reflect() (SDK-A3).
         self.verify = verify or default_verify
+        self.verify_is_real = verify is not None
         self.pre_hooks = pre_hooks if pre_hooks is not None else DEFAULT_PRE_HOOKS
         self.post_hooks = post_hooks if post_hooks is not None else DEFAULT_POST_HOOKS
         self.max_steps = max_steps
@@ -111,8 +115,10 @@ class Harness:
             except Exception:
                 return []
         best, steps = plan_execute_verify(ctx, execute, lambda ids: self.verify(ctx, ids),
-                                          max_steps=self.max_steps)
-        return HarnessResult(ids=best.ids, skill=best.skill, score=best.score, steps=steps)
+                                          max_steps=self.max_steps,
+                                          verified=self.verify_is_real)
+        return HarnessResult(ids=best.ids, skill=best.skill, score=best.score, steps=steps,
+                             verified=self.verify_is_real)
 
     def _run_subagents(self, ctx, top_k) -> HarnessResult:
         subs = decompose_query(ctx.query, self.generator)
@@ -124,7 +130,8 @@ class Harness:
                 ids = arsenal.run(self.session, sub, top_k=wide)
                 skill = "arsenal_single"
             else:
-                r = self.spawn(sub, top_k=top_k); ids, skill = r.ids, r.skill
+                r = self.spawn(sub, top_k=top_k)
+                ids, skill = r.ids, r.skill
             pools.append(ids)
             sub_traces.append({"query": sub, "ids": ids[:top_k], "skill": skill})
             # cross-hop memory: write each sub-fact's FINDING so later hops recall it (not just the query)
@@ -134,5 +141,10 @@ class Harness:
         if arsenal is not None:
             pools.append(arsenal.run(self.session, ctx.query, top_k=wide))    # whole query, full arsenal
         fused = fuse_ids(pools)[:top_k]
-        return HarnessResult(ids=fused, skill="subagents", score=1.0 if fused else 0.0,
+        # Score the subagent path through the SAME verifier as the loop path. It used to
+        # fabricate `1.0 if fused else 0.0`, which made every non-empty multi-hop run look
+        # like a confirmed win to reflect() and post_write_memory (SDK-A3).
+        ok, score = self.verify(ctx, fused)
+        return HarnessResult(ids=fused, skill="subagents", score=score,
+                             verified=self.verify_is_real,
                              subagents=sub_traces, meta={"n_subagents": len(subs)})

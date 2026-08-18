@@ -1,0 +1,46 @@
+# Pre-commit hooks (issues.md STR-5).
+#
+# Flask, mem0 and LangChain all ship one; this repo had none, so ruff/mypy ran only in CI and
+# only over search_as_code/. The file-hygiene hooks below are the mechanism that makes GOV-2
+# (a customer SSH key sitting unignored in the repo root) impossible to stage, rather than a
+# rule in CLAUDE.md that an agent has to remember.
+#
+#     pip install pre-commit && pre-commit install
+#     pre-commit run --all-files
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: check-added-large-files
+        args: ["--maxkb=1024"]
+      - id: detect-private-key
+      - id: check-merge-conflict
+      - id: check-yaml
+      - id: check-toml
+      - id: end-of-file-fixer
+      - id: trailing-whitespace
+      - id: mixed-line-ending
+
+  - repo: https://github.com/astral-sh/ruff-pre-commit
+    rev: v0.16.3
+    hooks:
+      - id: ruff
+        args: ["--fix"]
+        files: ^search_as_code/
+
+  - repo: local
+    hooks:
+      # Never stage a customer artifact. GOV-1/GOV-2/P4-3 are all instances of this class:
+      # the .gitignore discipline failed twice and internal data reached the public remote.
+      - id: no-customer-artifacts
+        name: block customer/internal artifacts from being staged
+        entry: python3 scripts/check_no_customer_artifacts.py
+        language: system
+        pass_filenames: true
+
+      - id: mypy
+        name: mypy (search_as_code)
+        entry: python3 -m mypy search_as_code
+        language: system
+        pass_filenames: false
+        files: ^search_as_code/

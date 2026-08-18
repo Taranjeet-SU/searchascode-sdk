@@ -120,12 +120,42 @@ def _samples(session, ids, n: int = 5) -> str:
     return "\n".join(f"[{d.id}] {(d.text or '')[:140]}" for d in docs) or "(none)"
 
 
+def _rrf_ids(lists, k: int = 60):
+    """Reciprocal-rank fusion over ranked id lists (coverage-preserving union)."""
+    s: dict = {}
+    for lst in lists:
+        for r, i in enumerate(lst):
+            s[i] = s.get(i, 0.0) + 1.0 / (k + r + 1)
+    return sorted(s, key=lambda i: -s[i])
+
+
 def run_sac(session, query: str, chat=None, k: int = 10, judge_chat=None, max_retries: int = 3,
-            deep: bool = True) -> dict:
+            deep: bool = True, oracle_gold=None, hint: str = "", monotone: bool = True) -> dict:
+    """Deep code-mode agent: write program → judge → deepen (persistent sandbox) up to max_retries.
+
+    ``monotone`` (default True): make deep-SAC never lose to one-shot. (1) HOP-1 uses the lean
+    one-shot recipe (``SAC_SYSTEM``); the ensemble ``SAC_DEEP_SYSTEM`` only kicks in when the judge
+    forces a *deeper* hop-2+. (2) Candidates ACCUMULATE across hops and the final answer is an
+    RRF-fusion of every hop's ids — so a later, confidently-wrong hop can no longer overwrite a good
+    hop-1 (the old behavior returned the single highest-*judge-confidence* hop, which is not the
+    highest-recall hop). With ``monotone=False`` the legacy "return best-confidence hop" is used
+    (kept for the deep-vs-one-shot ablation).
+
+    ``oracle_gold`` (measurement ONLY): if a gold id set is passed, the per-hop LLM judge is
+    replaced by an ORACLE that stops as soon as all gold ids are in the retrieved set — an upper
+    bound on how few hops a perfect judge would need. In production ``oracle_gold`` is None and the
+    LLM-as-judge decides when to stop (it cannot see the gold).
+    """
     from langchain_core.messages import SystemMessage, HumanMessage
 
-    # deep = default: ensemble + consensus prompt; deep=False = the lean dense-first prompt.
-    system_prompt = sac_surface.SAC_DEEP_SYSTEM if deep else sac_surface.SAC_SYSTEM
+    def _sys_for_hop(hop: int) -> str:
+        # monotone deep: hop-0 = lean one-shot recipe; escalate to the ensemble prompt only on hop-2+
+        if deep and monotone and hop == 0:
+            base = sac_surface.SAC_SYSTEM
+        else:
+            base = sac_surface.SAC_DEEP_SYSTEM if deep else sac_surface.SAC_SYSTEM
+        return base + ("\n\n" + hint if hint else "")
+
     retry_tmpl = sac_surface.SAC_DEEP_RETRY_TEMPLATE if deep else sac_surface.SAC_RETRY_TEMPLATE
     chat = chat or lc_chat()
     judge_chat = judge_chat or chat
@@ -138,8 +168,11 @@ def run_sac(session, query: str, chat=None, k: int = 10, judge_chat=None, max_re
     attempts, feedback, ids, code, reasoning = [], None, [], "", ""
     prev_stdout, prev_samples, verdict = "", "", ""
     best_ids, best_conf = [], -1.0            # keep the highest-confidence hop, never lose a good one
+    pooled: list = []                          # every hop's ids, for coverage-preserving RRF fusion
+    system_prompt = _sys_for_hop(0)
 
     for hop in range(max_retries + 1):
+        system_prompt = _sys_for_hop(hop)
         user_msg = f"Query: {query}"
         if hop > 0:  # feed samples + stdout + judge verdict back so the model deepens its exploration
             user_msg = retry_tmpl.format(
@@ -151,7 +184,10 @@ def run_sac(session, query: str, chat=None, k: int = 10, judge_chat=None, max_re
         reasoning, code = _split_reasoning_code(_text(resp))
         result = box.run(code)            # prior variables (dense, kw, pool, ...) still live here
         ids = [str(x) for x in (result.evidence or [])][:k] if isinstance(result.evidence, list) else []
-        if max_retries == 0:              # fast mode: single pass, skip the judge LLM call
+        if oracle_gold is not None:       # ORACLE stop (measurement): stop as soon as gold is covered
+            accept = set(str(g) for g in oracle_gold) <= set(ids)
+            feedback, verdict, conf = "", ("ORACLE_PASS" if accept else "ORACLE_FAIL"), (1.0 if accept else 0.0)
+        elif max_retries == 0:            # fast mode: single pass, skip the judge LLM call
             accept, feedback, verdict, conf = True, "", "SKIPPED", 1.0
         else:
             accept, feedback, conf = judge(judge_chat, query, ids, session, usage)
@@ -162,9 +198,12 @@ def run_sac(session, query: str, chat=None, k: int = 10, judge_chat=None, max_re
         agree = session.recall("agreement") if deep else None
         answerable = session.recall("answerable")   # False ⇒ answer likely absent ⇒ don't waste a hop
         low_agree = (deep and isinstance(agree, (int, float)) and agree < 0.6
-                     and hop < max_retries and answerable is not False)
+                     and hop < max_retries and answerable is not False
+                     and oracle_gold is None)   # oracle mode: don't force extra hops once gold is covered
         if low_agree and accept:
             verdict, feedback = "LOW_AGREEMENT", f"consensus agreement {agree} is low — strategies disagree; enrich on new axes"
+        if ids:
+            pooled.append(ids)            # accumulate for coverage-preserving fusion (monotone)
         if ids and conf > best_conf:      # keep the best hop so refinement can't destroy a good result
             best_conf, best_ids = conf, ids
         prev_stdout = (result.stdout or "")[:1200]
@@ -176,7 +215,10 @@ def run_sac(session, query: str, chat=None, k: int = 10, judge_chat=None, max_re
         if (accept or conf >= 0.75 or hop == max_retries) and not low_agree:   # short-circuit when confident AND strategies agree
             break
 
-    ids = best_ids or ids                 # return the highest-confidence hop, not necessarily the last
+    if monotone and pooled:
+        ids = _rrf_ids(pooled)[:k]        # coverage-preserving union of ALL hops (hop-1 golds can't be lost)
+    else:
+        ids = best_ids or ids             # legacy: the single highest-confidence hop
     return {"path": "sac", "ids": ids, "latency_s": time.time() - t0, "usage": usage.as_dict(),
             "code": code, "reasoning": reasoning, "ok": attempts[-1]["ok"], "hops": len(attempts),
             "attempts": attempts, "system_prompt": system_prompt,
