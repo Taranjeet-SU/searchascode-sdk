@@ -124,67 +124,76 @@ inside the SDK **sandbox** (`search_as_code/sandbox.py`) with the primitive name
 > primitive exposed as `forged(query)`). **Both** LLM arms get that knowledge and that capability,
 > so the only remaining difference between them is the execution model.
 
-**Setup.** n=30/hop, budget 6, `gpt-4.1-mini`, gte-base over HotpotQA, Qwen3-Reranker. Evaluated on
-`rows[200:230]` — **disjoint from the queries the forge was built on**, so the explored arms are not
-scored on their own training set (the flaw logged as DS-5). Paired bootstrap 95% CIs via
-`search_as_code.metrics.compare`. Raw: [`recall_fair_explore5.json`](recall_fair_explore5.json),
-[`recall_fair_explore5_ci.json`](recall_fair_explore5_ci.json).
+**Setup.** **n=100/hop** (matching the original §4 sample size), budget 6, `gpt-4.1-mini`,
+gte-base over HotpotQA, Qwen3-Reranker. Evaluated on `rows[200:300]` — **disjoint from the
+queries the forge was built on**, so the explored arms are not scored on their own training set
+(the flaw logged as DS-5). Paired bootstrap 95% CIs via `search_as_code.metrics.compare`. Raw:
+[`recall_fair_explore5_n100.json`](recall_fair_explore5_n100.json),
+[`recall_fair_explore5_n100_ci.json`](recall_fair_explore5_n100_ci.json). An earlier n=30 pass
+([`recall_fair_explore5.json`](recall_fair_explore5.json)) agrees on every sign.
 
 | hops | arm | recall@10 [95% CI] | all@10 | searches | turns | in-tok |
 |---|---|---|---|---|---|---|
-| **2** | dense | 0.817 [0.700, 0.917] | 0.700 | 1.0 | 0 | 0 |
-| | tool | 0.900 [0.817, 0.967] | 0.800 | 5.1 | 8.0 | 13,610 |
-| | sac | 0.767 [0.683, 0.850] | 0.533 | 5.3 | **1.0** | **512** |
-| | **tool_explored** | **0.950 [0.883, 1.000]** | **0.900** | 5.2 | 8.2 | 15,236 |
-| | sac_explored | 0.850 [0.750, 0.933] | 0.733 | **3.3** | **1.0** | **602** |
-| **3** | dense | 0.656 [0.522, 0.778] | 0.400 | 1.0 | 0 | 0 |
-| | tool | 0.722 [0.600, 0.833] | 0.500 | 5.7 | 8.8 | 16,153 |
-| | sac | 0.689 [0.578, 0.789] | 0.367 | 4.9 | **1.0** | **512** |
-| | **tool_explored** | **0.811 [0.711, 0.900]** | **0.600** | 5.9 | 8.5 | 16,889 |
-| | sac_explored | 0.744 [0.644, 0.833] | 0.433 | **3.8** | **1.0** | **610** |
-| **4** | dense | 0.650 [0.533, 0.758] | 0.267 | 1.0 | 0 | 0 |
-| | tool | 0.617 [0.525, 0.717] | 0.200 | 5.8 | 9.3 | 17,736 |
-| | sac | 0.642 [0.533, 0.758] | 0.300 | 4.9 | **1.0** | **527** |
-| | **tool_explored** | **0.742 [0.650, 0.833]** | **0.400** | 5.6 | 9.0 | 18,750 |
-| | sac_explored | 0.667 [0.550, 0.767] | 0.267 | **4.5** | **1.0** | **616** |
+| **2** | dense | 0.850 [0.795, 0.900] | 0.730 | 1.0 | 0 | 0 |
+| | tool | 0.875 [0.825, 0.925] | 0.780 | 5.3 | 8.0 | 13,396 |
+| | sac | 0.815 [0.770, 0.865] | 0.630 | 5.4 | **1.0** | **510** |
+| | **tool_explored** | **0.910 [0.865, 0.950]** | **0.840** | 5.1 | 8.2 | 15,147 |
+| | sac_explored | 0.875 [0.820, 0.920] | 0.790 | **2.9** | **1.0** | **609** |
+| **3** | dense | 0.683 [0.620, 0.743] | 0.430 | 1.0 | 0 | 0 |
+| | tool | 0.737 [0.673, 0.800] | 0.540 | 5.8 | 8.8 | 15,887 |
+| | sac | 0.707 [0.643, 0.767] | 0.440 | 5.0 | **1.0** | **517** |
+| | **tool_explored** | **0.810 [0.763, 0.857]** | 0.550 | 5.5 | 8.4 | 16,496 |
+| | sac_explored | 0.770 [0.710, 0.830] | 0.550 | **3.5** | **1.0** | **609** |
+| **4** | dense | 0.568 [0.505, 0.627] | 0.200 | 1.0 | 0 | 0 |
+| | tool | 0.627 [0.568, 0.688] | 0.260 | 5.9 | 9.2 | 17,326 |
+| | sac | 0.605 [0.545, 0.660] | 0.250 | 5.2 | **1.0** | **526** |
+| | **tool_explored** | **0.660 [0.605, 0.715]** | 0.260 | 5.7 | 9.1 | 18,799 |
+| | sac_explored | 0.630 [0.562, 0.693] | 0.260 | **4.2** | **1.0** | **618** |
 
 ### What changed, and what survives
 
 **1. Explore is a real ingredient — and it was missing from the original comparison.**
-Seeding with the forged primitive lifts SAC at every hop (+0.083 / +0.056 / +0.025 recall) and
-makes it **cheaper**, cutting searches from 5.3 → 3.3 at 2-hop. The corpus-specific strategy that
-`CODE_SYS` used to smuggle in as a hand-written hint is something explore genuinely discovers.
+Seeding with the forged primitive lifts SAC **+0.060 / +0.063 / +0.025** recall (the 3-hop lift is
+**significant**: [+0.003, +0.127]) and makes it markedly **cheaper** — searches drop from 5.4 to
+**2.9** at 2-hop. The corpus-specific strategy that `CODE_SYS` used to smuggle in as a hand-written
+hint is something explore genuinely discovers.
 
-**2. But explore is a knowledge win, not a code-mode win.** Given the same forged primitive, the
-*tool* arm gains at least as much (+0.050 / +0.089 / **+0.125 significant** at 4-hop). Whatever
-explore is worth, both harnesses can spend it.
+**2. But explore is a knowledge win, not a code-mode win.** Given the same forged primitive the
+*tool* arm gains just as much: **+0.035 / +0.073 / +0.033**, the 3-hop lift also significant
+([+0.013, +0.137]). Whatever explore is worth, either harness can spend it.
 
 **3. With knowledge held equal, code-mode does NOT beat tool-calling on quality.**
-`sac_explored − tool_explored` is **−0.100 / −0.067 / −0.075** — consistently negative, none
-significant at n=30. The published +0.06/+0.08/+0.13 in §4 is **not reproduced** once the prompt
-asymmetry is removed. Treat §4's quality columns as an artifact of that asymmetry.
+`sac_explored − tool_explored` = **−0.035 / −0.040 / −0.030** — consistently, if slightly,
+*negative*, and not significant at any hop count (widest CI [−0.107, +0.020]). The published
+**+0.06 / +0.08 / +0.13** in §4 is **not reproduced** at the same n once the prompt asymmetry is
+removed. Treat §4's quality columns as an artifact of that asymmetry.
 
 **4. What SAC does win is the cost axis, decisively and structurally.**
-**1 model turn vs ~8–9**, and **~600 input tokens vs ~15,000–19,000 — a 25–30× gap** that widens
+**1 model turn vs ~8–9**, and **~610 input tokens vs ~15,000–18,800 — a 25–31× gap** that widens
 with hop depth, because tool-calling re-feeds the whole transcript each turn while a program
-returns only its final ids. With explore it also issues **fewer retrievals** for its result. This
-is not a prompt artifact; it is the execution model, and it is unchanged by everything above.
+returns only its final ids. With explore it also reaches that result in **fewer retrievals**
+(2.9–4.2 vs 5.1–5.7). This is not a prompt artifact; it is the execution model.
 
-**5. Against plain dense, SAC is a wash here.** `sac_explored − dense` is +0.033 / +0.089 / +0.017,
-all ns. That is precisely the observation the **dense-default gate** exists to encode (see the
-README's explore guarantees and `experiments/qwen8b_sac/`): SAC should adopt a forged strategy only
-where it demonstrably beats dense, and match dense otherwise.
+**5. Explore-seeded SAC does beat plain dense.** `sac_explored − dense` = +0.025 / **+0.087
+(significant, [+0.010, +0.160])** / +0.062. So the pipeline earns its keep over the no-agent floor
+on this corpus — while remaining a wash against a tool-calling agent given the same knowledge.
+(Contrast `experiments/qwen8b_sac/`, where on a far stronger retriever the forged primitive does
+*not* beat dense — which is what the dense-default gate exists to catch.)
 
 ### The honest thesis, restated
 
 > On multi-document retrieval with a matched toolset, matched prompts, and explore-first applied to
-> **both** harnesses, **code-mode is an efficiency win, not a retrieval-quality win**: same or
-> slightly worse recall than tool-calling, at ~1/25th the input tokens and one model turn instead
-> of nine. Explore contributes real, measurable corpus knowledge — to whichever harness consumes it.
+> **both** harnesses, **code-mode is an efficiency win, not a retrieval-quality win**: recall
+> statistically indistinguishable from tool-calling (and nominally ~0.03–0.04 behind), at **~1/27th
+> the input tokens, one model turn instead of nine, and fewer retrievals**. Explore contributes
+> real, measurable corpus knowledge — significantly so at 3 hops — but to *whichever* harness
+> consumes it, and explore-seeded SAC does beat the no-agent dense floor.
 
-**Caveats.** n=30/hop (the original was n=100), so every quality delta above is within noise; this
-run establishes that the large published margins do not survive prompt matching, *not* that SAC is
-worse. Single-shot SAC only (no deepen-on-failure loop — see §5b). One corpus, one retriever.
+**Caveats.** n=100/hop, matching §4, so the arm-vs-arm deltas are no longer n-limited — but a
+~0.03 difference still needs roughly n≈400 to resolve, so "code-mode ≈ tool-calling on quality" is
+the supported claim, not "code-mode is worse". Single-shot SAC only (no deepen-on-failure loop —
+see §5b). One corpus, one retriever, one model. The forged primitive is HotpotQA-specific by
+construction; the *procedure* generalises, the artifact does not.
 
 ## 5. Key finding — the SAC program was the SAME for every query
 The SAC "agent" writes code per query, but with a fixed system prompt + a canonical example, the

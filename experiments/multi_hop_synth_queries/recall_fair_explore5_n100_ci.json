@@ -1,0 +1,272 @@
+{
+  "2hop": {
+    "n": 100,
+    "dense": {
+      "recall_ci": [
+        0.85,
+        0.795,
+        0.9
+      ],
+      "allgolds": 0.73,
+      "searches": 1.0,
+      "turns": 0.0,
+      "in_tok": 0
+    },
+    "tool": {
+      "recall_ci": [
+        0.875,
+        0.825,
+        0.925
+      ],
+      "allgolds": 0.78,
+      "searches": 5.32,
+      "turns": 8.04,
+      "in_tok": 13396
+    },
+    "sac": {
+      "recall_ci": [
+        0.815,
+        0.77,
+        0.865
+      ],
+      "allgolds": 0.63,
+      "searches": 5.39,
+      "turns": 1.0,
+      "in_tok": 510
+    },
+    "tool_explored": {
+      "recall_ci": [
+        0.91,
+        0.865,
+        0.95
+      ],
+      "allgolds": 0.84,
+      "searches": 5.13,
+      "turns": 8.18,
+      "in_tok": 15147
+    },
+    "sac_explored": {
+      "recall_ci": [
+        0.875,
+        0.82,
+        0.92
+      ],
+      "allgolds": 0.79,
+      "searches": 2.9,
+      "turns": 1.0,
+      "in_tok": 609
+    },
+    "sac_expl_vs_tool_expl": {
+      "delta": -0.035,
+      "lo": -0.1,
+      "hi": 0.03,
+      "significant": false,
+      "n": 100,
+      "paired": true
+    },
+    "explore_lift_sac": {
+      "delta": 0.06,
+      "lo": -0.005,
+      "hi": 0.12,
+      "significant": false,
+      "n": 100,
+      "paired": true
+    },
+    "explore_lift_tool": {
+      "delta": 0.035,
+      "lo": -0.015,
+      "hi": 0.085,
+      "significant": false,
+      "n": 100,
+      "paired": true
+    },
+    "sac_expl_vs_dense": {
+      "delta": 0.025,
+      "lo": -0.04,
+      "hi": 0.09,
+      "significant": false,
+      "n": 100,
+      "paired": true
+    }
+  },
+  "3hop": {
+    "n": 100,
+    "dense": {
+      "recall_ci": [
+        0.6833,
+        0.62,
+        0.7433
+      ],
+      "allgolds": 0.43,
+      "searches": 1.0,
+      "turns": 0.0,
+      "in_tok": 0
+    },
+    "tool": {
+      "recall_ci": [
+        0.7367,
+        0.6733,
+        0.8
+      ],
+      "allgolds": 0.54,
+      "searches": 5.82,
+      "turns": 8.84,
+      "in_tok": 15887
+    },
+    "sac": {
+      "recall_ci": [
+        0.7067,
+        0.6433,
+        0.7667
+      ],
+      "allgolds": 0.44,
+      "searches": 5.0,
+      "turns": 1.0,
+      "in_tok": 517
+    },
+    "tool_explored": {
+      "recall_ci": [
+        0.81,
+        0.7633,
+        0.8567
+      ],
+      "allgolds": 0.55,
+      "searches": 5.46,
+      "turns": 8.43,
+      "in_tok": 16496
+    },
+    "sac_explored": {
+      "recall_ci": [
+        0.77,
+        0.71,
+        0.83
+      ],
+      "allgolds": 0.55,
+      "searches": 3.49,
+      "turns": 1.0,
+      "in_tok": 609
+    },
+    "sac_expl_vs_tool_expl": {
+      "delta": -0.04,
+      "lo": -0.1067,
+      "hi": 0.02,
+      "significant": false,
+      "n": 100,
+      "paired": true
+    },
+    "explore_lift_sac": {
+      "delta": 0.0633,
+      "lo": 0.0033,
+      "hi": 0.1267,
+      "significant": true,
+      "n": 100,
+      "paired": true
+    },
+    "explore_lift_tool": {
+      "delta": 0.0733,
+      "lo": 0.0133,
+      "hi": 0.1367,
+      "significant": true,
+      "n": 100,
+      "paired": true
+    },
+    "sac_expl_vs_dense": {
+      "delta": 0.0867,
+      "lo": 0.01,
+      "hi": 0.16,
+      "significant": true,
+      "n": 100,
+      "paired": true
+    }
+  },
+  "4hop": {
+    "n": 100,
+    "dense": {
+      "recall_ci": [
+        0.5675,
+        0.505,
+        0.6275
+      ],
+      "allgolds": 0.2,
+      "searches": 1.0,
+      "turns": 0.0,
+      "in_tok": 0
+    },
+    "tool": {
+      "recall_ci": [
+        0.6275,
+        0.5675,
+        0.6875
+      ],
+      "allgolds": 0.26,
+      "searches": 5.86,
+      "turns": 9.17,
+      "in_tok": 17326
+    },
+    "sac": {
+      "recall_ci": [
+        0.605,
+        0.545,
+        0.66
+      ],
+      "allgolds": 0.25,
+      "searches": 5.17,
+      "turns": 1.0,
+      "in_tok": 526
+    },
+    "tool_explored": {
+      "recall_ci": [
+        0.66,
+        0.605,
+        0.715
+      ],
+      "allgolds": 0.26,
+      "searches": 5.72,
+      "turns": 9.13,
+      "in_tok": 18799
+    },
+    "sac_explored": {
+      "recall_ci": [
+        0.63,
+        0.5625,
+        0.6925
+      ],
+      "allgolds": 0.26,
+      "searches": 4.2,
+      "turns": 1.0,
+      "in_tok": 618
+    },
+    "sac_expl_vs_tool_expl": {
+      "delta": -0.03,
+      "lo": -0.095,
+      "hi": 0.0325,
+      "significant": false,
+      "n": 100,
+      "paired": true
+    },
+    "explore_lift_sac": {
+      "delta": 0.025,
+      "lo": -0.055,
+      "hi": 0.105,
+      "significant": false,
+      "n": 100,
+      "paired": true
+    },
+    "explore_lift_tool": {
+      "delta": 0.0325,
+      "lo": -0.0175,
+      "hi": 0.085,
+      "significant": false,
+      "n": 100,
+      "paired": true
+    },
+    "sac_expl_vs_dense": {
+      "delta": 0.0625,
+      "lo": -0.0175,
+      "hi": 0.1425,
+      "significant": false,
+      "n": 100,
+      "paired": true
+    }
+  }
+}
