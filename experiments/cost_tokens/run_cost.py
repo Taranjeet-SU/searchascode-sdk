@@ -192,6 +192,13 @@ def main():
     seed_guidance, forged_fn = load_explore_seed(corpus)
     only = [a for a in os.environ.get("SAC_ARMS", "").split(",") if a.strip()]
     premise = os.environ.get("SAC_JUDGE_PREMISE", "coverage")   # judge premise for product arms
+    # per-corpus calibrated hop-0 stop threshold (see calibrate_stop_tau.py); env overrides file
+    stop_tau = None
+    if os.environ.get("SAC_STOP_TAU"):
+        stop_tau = float(os.environ["SAC_STOP_TAU"])
+    elif (HERE / f"stop_tau_{corpus}.json").exists():
+        stop_tau = json.loads((HERE / f"stop_tau_{corpus}.json").read_text())["tau"]
+    print(f"[cost] hop-0 stop gate tau: {stop_tau}", flush=True)
     from search_as_code.harness.memory import AgentMemory as _AM
     shared_mem = _AM(path=str(HERE / f"product_memory_{corpus}.jsonl"))   # cross-query skill wins
     mem_lock = threading.Lock()
@@ -286,6 +293,14 @@ def main():
                 per_q.remember(w.content, kind="skill_win", **(w.meta or {}))
             n_seeded = len(wins)
 
+            def hop0_signals():
+                """The mechanical part of hop 0: vetted-baseline ids + whole-query CE scores.
+                No LLM. -> (base_ids, texts, csc)"""
+                base_ids = [str(i) for i in forged_fn.run(session, q, top_k=50)]
+                docs = {d.id: (d.text or "")[:700] for d in session.store.get(base_ids[:10])}
+                texts = [docs.get(i, "") for i in base_ids[:10]]
+                return base_ids, texts, djm.candidate_scores(session.reranker, q, texts)
+
             def judge_hop0(pgen, judge):
                 """baseline ids + the judge's verdict on them. -> (base_ids, verdict, subs)"""
                 base_ids = [str(i) for i in forged_fn.run(session, q, top_k=50)]
@@ -320,7 +335,19 @@ def main():
                 pgen = LLM()
                 judge = DiagnosticJudge(pgen, premise=premise)
                 t = time.monotonic()
-                base_ids, v, _, csc0 = judge_hop0(pgen, judge)
+                # SIGNALS-FIRST STOP GATE (fable.md §2b action 2, StopGate): a PER-CORPUS
+                # calibrated CE threshold decides hop-0 PASS mechanically, at ZERO LLM cost.
+                # Two LLM-side attempts failed here: both judge premises escalate 100% on
+                # BrowseComp, and a universal 0.5 guard misses this corpus's weak-CE golds.
+                if stop_tau is not None:
+                    base_ids, _texts0, csc0 = hop0_signals()
+                    if csc0 and max(csc0) >= stop_tau:
+                        v = {"verdict": "PASS", "covered": "", "missing": "", "diagnosis": "",
+                             "technique": "", "next_query": ""}
+                    else:
+                        base_ids, v, _, csc0 = judge_hop0(pgen, judge)
+                else:
+                    base_ids, v, _, csc0 = judge_hop0(pgen, judge)
                 hops, esc = 0, 0
                 if v["verdict"] != "PASS":
                     esc = 1
@@ -329,12 +356,28 @@ def main():
                                           skill_lookup=skill, memory=per_q,
                                           max_hops=PRODUCT_MAX_HOPS, top_k=20)
                     hops = res_p.get("hops", 0)
-                    pids = rrf_ids([base_ids, [str(i) for i in res_p.get("ids") or []]])
-                    # FLOOR GUARD (issues.md PROD-1 fix b): a strong base candidate (sigmoid-CE
-                    # >= 0.5, i.e. positive cross-encoder logit) cannot be evicted or demoted by
-                    # escalation fusion — the vetted baseline's confident hits keep their slots.
-                    strong = [x for x, s in zip(base_ids[:10], csc0) if s >= 0.5]
-                    pids = strong + [d for d in pids if d not in strong]
+                    esc_ids = [str(i) for i in res_p.get("ids") or []]
+                    if os.environ.get("SAC_FUSE_POLICY", "ce_replace") == "ce_replace":
+                        # CE-REPLACE fusion (PROD-1, iteration 4): an escalation doc enters the
+                        # top-10 ONLY by beating the SPECIFIC base doc it displaces (weakest-CE
+                        # first, 5% margin). RRF-mass eviction (iter 1/2) and threshold guards
+                        # (iter 3: universal 0.5 missed weak-CE golds; calibrated tau had 0.602
+                        # bal-acc) both failed; head-to-head CE is scorer-symmetric.
+                        kept = list(zip(base_ids[:10], csc0))
+                        new_e = [e for e in esc_ids[:20] if e not in set(base_ids[:10])]
+                        edocs = {d.id: (d.text or "")[:700] for d in session.store.get(new_e)}
+                        etexts = [edocs.get(e, "") for e in new_e]
+                        ecsc = djm.candidate_scores(session.reranker, q, etexts) if new_e else []
+                        for e, es in sorted(zip(new_e, ecsc), key=lambda x: -x[1]):
+                            weakest = min(range(len(kept)), key=lambda j: kept[j][1]) if kept else None
+                            if weakest is not None and es > kept[weakest][1] * 1.05:
+                                kept[weakest] = (e, es)
+                        pids = [d for d, _ in kept] + [d for d in esc_ids if d not in {k for k, _ in kept}]
+                    else:
+                        pids = rrf_ids([base_ids, esc_ids])
+                        guard_tau = stop_tau if stop_tau is not None else 0.5
+                        strong = [x for x, s in zip(base_ids[:10], csc0) if s >= guard_tau]
+                        pids = strong + [d for d in pids if d not in strong]
                     with mem_lock:                        # cross-query learning: harvest new wins
                         for m in per_q.longterm[n_seeded:]:
                             shared_mem.remember(m.content, kind="skill_win", **(m.meta or {}))
