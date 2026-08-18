@@ -12,7 +12,9 @@ def test_memory_backend_prompt_has_no_raw_dsl():
     s = sac.Session("memory")
     s.add([{"id": "1", "text": "x"}])
     sys_prompt = build_author_system(s)
-    assert "_search" not in sys_prompt
+    assert "RAW OpenSearch DSL. Returns a dict" not in sys_prompt   # the call is not OFFERED
+    assert "match_phrase" not in sys_prompt                          # no raw-DSL worked example
+    assert "do NOT call session.store._search" in sys_prompt        # and it is explicitly warned off
     assert "mode='keyword'" in sys_prompt            # the portable escalation replaces it
     assert "fuse_ids" in sys_prompt                  # helpers still documented
 
