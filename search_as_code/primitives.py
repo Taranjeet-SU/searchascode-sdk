@@ -76,6 +76,55 @@ def fuse(
     return ResultSet(fused, info=_merged_info(result_sets))
 
 
+def llm_map(items: Sequence[Any], instruction: str, complete: Callable[[str], str],
+            concurrency: int = 8, max_chars: int = 1500) -> list[str]:
+    """Batched sub-model calls over items, INSIDE the sandbox (the RLM pattern, arXiv
+    2512.24601; Perplexity's ``sdk.llm.extract_many``): map an instruction over candidate
+    texts with parallel sub-LM calls whose raw outputs STAY here as a Python list — the
+    root model never pays context for them. Use it for per-candidate extraction or
+    verification during an escalation hop:
+
+        answers = llm_map(hits.texts(), "Extract the founding year, or NONE.", complete)
+        keep = [h for h, a in zip(hits, answers) if "NONE" not in a]
+
+    ``complete(prompt) -> str`` is a single-string LLM callable (e.g. ``LLM().complete``
+    or ``gen_text``-wrapped). A failed call yields "" for that item rather than killing
+    the batch — count them via the returned list if you need loudness.
+    """
+    if not items:
+        return []
+
+    def one(item: Any) -> str:
+        try:
+            return complete(f"{instruction}\n\nITEM:\n{str(item)[:max_chars]}") or ""
+        except Exception:
+            return ""
+
+    with ThreadPoolExecutor(max_workers=max(1, concurrency)) as ex:
+        return list(ex.map(one, items))
+
+
+def coverage_fuse(result_sets: Sequence[ResultSet], top_k: int = 10, reserve: int = 1) -> ResultSet:
+    """Coverage-first fusion for MULTI-GOLD questions: each input list (one per sub-question)
+    gets its top ``reserve`` hits guaranteed a slot, then the remainder fills by RRF.
+
+    This is the assembly that fixed multi-hop dilution (open_problems #4): plain RRF — and
+    especially whole-question reranking — lets one dominant sub-question's documents crowd out
+    a document that satisfies only one sub-fact, which multi-gold recall needs. LANCER-style
+    coverage-aware reranking (ECIR'26) is the same idea; sub-question structure belongs in
+    FUSION, not in the stop-gate. Previously private as ``harness.playbook._reserve``.
+    """
+    reserved: list[Hit] = []
+    seen: set[str] = set()
+    for rs in result_sets:
+        for hit in sorted(rs, key=lambda h: h.score, reverse=True)[:max(0, reserve)]:
+            if hit.id not in seen:
+                reserved.append(hit)
+                seen.add(hit.id)
+    rest = [h for h in fuse(result_sets) if h.id not in seen]
+    return ResultSet((reserved + rest)[:top_k], info=_merged_info(result_sets))
+
+
 # RRF is exactly the fusion primitive above; `rrf` is an explicit, discoverable alias.
 rrf = fuse
 

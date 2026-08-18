@@ -28,6 +28,7 @@ without reading it.
 from __future__ import annotations
 
 import json
+import os
 import random
 import sys
 import threading
@@ -189,17 +190,27 @@ def main():
         rows = [r for tag in sorted(per) for r in per[tag]]
     chat = agents.lc_chat()
     seed_guidance, forged_fn = load_explore_seed(corpus)
+    only = [a for a in os.environ.get("SAC_ARMS", "").split(",") if a.strip()]
+    premise = os.environ.get("SAC_JUDGE_PREMISE", "coverage")   # judge premise for product arms
+    # per-corpus calibrated hop-0 stop threshold (see calibrate_stop_tau.py); env overrides file
+    stop_tau = None
+    if os.environ.get("SAC_STOP_TAU"):
+        stop_tau = float(os.environ["SAC_STOP_TAU"])
+    elif (HERE / f"stop_tau_{corpus}.json").exists():
+        stop_tau = json.loads((HERE / f"stop_tau_{corpus}.json").read_text())["tau"]
+    print(f"[cost] hop-0 stop gate tau: {stop_tau}", flush=True)
     from search_as_code.harness.memory import AgentMemory as _AM
     shared_mem = _AM(path=str(HERE / f"product_memory_{corpus}.jsonl"))   # cross-query skill wins
     mem_lock = threading.Lock()
     arms = ARMS if seed_guidance else ["dense", "tool", "sac"]
+    if only:
+        arms = [a for a in arms if a in only or a == "dense"]
     print(f"[cost] explore seed: {'LOADED' if seed_guidance else 'none'} "
           f"(forged runnable: {bool(forged_fn)})", flush=True)
 
     # Crash-proof + resumable: per-query rows flush to the JSONL as they complete, and prior
     # rows are reloaded on restart (learned the hard way — a spend-limit 429 killed a run at
     # 250/300 with nothing persisted; the LEG-5 lesson applied to this script's own output).
-    import os
     tag = os.environ.get("SAC_COST_TAG", "")          # e.g. "_qwen3-8b" — keeps models' rows apart
     pq_path = HERE / f"cost_{corpus}{tag}_perquery.jsonl"
     records = []
@@ -234,29 +245,31 @@ def main():
                         "searches": 1, "turns": 0, "in": 0, "in_cached": 0, "out": 0,
                         "in_uncached_known": True}
 
-        tgen = LLM()
-        tt = Tools(session, tgen, budget)
-        t = time.monotonic()
-        tids, tm = tool_harness(chat, tt, q)
-        dt = time.monotonic() - t
-        r10, a10 = recall_at(gold, tids, 10)
-        res["tool"] = {"recall@10": r10, "all@10": a10, "latency_s": round(dt, 3),
-                       "searches": tt.searches, "turns": tm["steps"],
-                       "in": tm["lc_in"] + tgen.usage.input_tokens,
-                       "in_cached": tgen.usage.cached_input_tokens,
-                       "out": tm["lc_out"] + tgen.usage.output_tokens,
-                       "in_uncached_known": False}   # lc_in is TOTAL input (P1-13)
+        if "tool" in arms:
+            tgen = LLM()
+            tt = Tools(session, tgen, budget)
+            t = time.monotonic()
+            tids, tm = tool_harness(chat, tt, q)
+            dt = time.monotonic() - t
+            r10, a10 = recall_at(gold, tids, 10)
+            res["tool"] = {"recall@10": r10, "all@10": a10, "latency_s": round(dt, 3),
+                           "searches": tt.searches, "turns": tm["steps"],
+                           "in": tm["lc_in"] + tgen.usage.input_tokens,
+                           "in_cached": tgen.usage.cached_input_tokens,
+                           "out": tm["lc_out"] + tgen.usage.output_tokens,
+                           "in_uncached_known": False}   # lc_in is TOTAL input (P1-13)
 
-        sgen = LLM()
-        st = Tools(session, sgen, budget)
-        t = time.monotonic()
-        sids, sm = code_harness(sgen, st, q)
-        dt = time.monotonic() - t
-        r10, a10 = recall_at(gold, sids, 10)
-        res["sac"] = {"recall@10": r10, "all@10": a10, "latency_s": round(dt, 3),
-                      "searches": st.searches, "turns": sm["steps"],
-                      "in": sgen.usage.input_tokens, "in_cached": sgen.usage.cached_input_tokens,
-                      "out": sgen.usage.output_tokens, "in_uncached_known": True}
+        if "sac" in arms:
+            sgen = LLM()
+            st = Tools(session, sgen, budget)
+            t = time.monotonic()
+            sids, sm = code_harness(sgen, st, q)
+            dt = time.monotonic() - t
+            r10, a10 = recall_at(gold, sids, 10)
+            res["sac"] = {"recall@10": r10, "all@10": a10, "latency_s": round(dt, 3),
+                          "searches": st.searches, "turns": sm["steps"],
+                          "in": sgen.usage.input_tokens, "in_cached": sgen.usage.cached_input_tokens,
+                          "out": sgen.usage.output_tokens, "in_uncached_known": True}
 
         # THE PRODUCT FLOW, both harnesses: gate-selected baseline at hop 0 -> deep judge ->
         # escalate ONLY on FAIL, judge between hops, cap PRODUCT_MAX_HOPS. This is the policy
@@ -280,6 +293,14 @@ def main():
                 per_q.remember(w.content, kind="skill_win", **(w.meta or {}))
             n_seeded = len(wins)
 
+            def hop0_signals():
+                """The mechanical part of hop 0: vetted-baseline ids + whole-query CE scores.
+                No LLM. -> (base_ids, texts, csc)"""
+                base_ids = [str(i) for i in forged_fn.run(session, q, top_k=50)]
+                docs = {d.id: (d.text or "")[:700] for d in session.store.get(base_ids[:10])}
+                texts = [docs.get(i, "") for i in base_ids[:10]]
+                return base_ids, texts, djm.candidate_scores(session.reranker, q, texts)
+
             def judge_hop0(pgen, judge):
                 """baseline ids + the judge's verdict on them. -> (base_ids, verdict, subs)"""
                 base_ids = [str(i) for i in forged_fn.run(session, q, top_k=50)]
@@ -296,7 +317,7 @@ def main():
                 csc = djm.candidate_scores(session.reranker, q, texts)
                 cands = [{"id": i, "score": s, "snippet": t_}
                          for (i, t_), s in zip(zip(base_ids[:10], texts), csc)]
-                return base_ids, judge.judge(q, subs, cands, cov), subs
+                return base_ids, judge.judge(q, subs, cands, cov), subs, csc
 
             def rrf_ids(lists, base_weight=2.0):
                 """Weighted RRF: list 0 is the GATE-VETTED baseline and outweighs escalation
@@ -310,101 +331,140 @@ def main():
                 return [d for d, _ in sorted(agg2.items(), key=lambda x: -x[1])]
 
             # --- sac_product: escalation = judge-guided authored code (agentic_solve) ---
-            pgen = LLM()
-            judge = DiagnosticJudge(pgen)
-            t = time.monotonic()
-            base_ids, v, _ = judge_hop0(pgen, judge)
-            hops, esc = 0, 0
-            if v["verdict"] != "PASS":
-                esc = 1
-                res_p = agentic_solve(session, q, generator=pgen, judge=judge, judge_stop=True,
-                                      reranker=session.reranker, embedder=emb,
-                                      skill_lookup=skill, memory=per_q,
-                                      max_hops=PRODUCT_MAX_HOPS, top_k=20)
-                hops = res_p.get("hops", 0)
-                pids = rrf_ids([base_ids, [str(i) for i in res_p.get("ids") or []]])
-                with mem_lock:                        # cross-query learning: harvest new wins
-                    for m in per_q.longterm[n_seeded:]:
-                        shared_mem.remember(m.content, kind="skill_win", **(m.meta or {}))
-            else:
-                pids = base_ids
-            dt = time.monotonic() - t
-            r10, a10 = recall_at(gold, pids, 10)
-            res["sac_product"] = {"recall@10": r10, "all@10": a10, "latency_s": round(dt, 3),
-                                  "searches": 1 + hops, "turns": 1 + hops, "escalated": esc,
-                                  "in": pgen.usage.input_tokens, "in_cached": pgen.usage.cached_input_tokens,
-                                  "out": pgen.usage.output_tokens, "in_uncached_known": True}
+            if "sac_product" in arms:
+                pgen = LLM()
+                judge = DiagnosticJudge(pgen, premise=premise)
+                t = time.monotonic()
+                # SIGNALS-FIRST STOP GATE (fable.md §2b action 2, StopGate): a PER-CORPUS
+                # calibrated CE threshold decides hop-0 PASS mechanically, at ZERO LLM cost.
+                # Two LLM-side attempts failed here: both judge premises escalate 100% on
+                # BrowseComp, and a universal 0.5 guard misses this corpus's weak-CE golds.
+                if stop_tau is not None:
+                    base_ids, _texts0, csc0 = hop0_signals()
+                    if csc0 and max(csc0) >= stop_tau:
+                        v = {"verdict": "PASS", "covered": "", "missing": "", "diagnosis": "",
+                             "technique": "", "next_query": ""}
+                    else:
+                        base_ids, v, _, csc0 = judge_hop0(pgen, judge)
+                else:
+                    base_ids, v, _, csc0 = judge_hop0(pgen, judge)
+                hops, esc = 0, 0
+                if v["verdict"] != "PASS":
+                    esc = 1
+                    res_p = agentic_solve(session, q, generator=pgen, judge=judge, judge_stop=True,
+                                          reranker=session.reranker, embedder=emb,
+                                          skill_lookup=skill, memory=per_q,
+                                          max_hops=PRODUCT_MAX_HOPS, top_k=20)
+                    hops = res_p.get("hops", 0)
+                    esc_ids = [str(i) for i in res_p.get("ids") or []]
+                    if os.environ.get("SAC_FUSE_POLICY", "ce_replace") == "ce_replace":
+                        # CE-REPLACE fusion (PROD-1, iteration 4): an escalation doc enters the
+                        # top-10 ONLY by beating the SPECIFIC base doc it displaces (weakest-CE
+                        # first, 5% margin). RRF-mass eviction (iter 1/2) and threshold guards
+                        # (iter 3: universal 0.5 missed weak-CE golds; calibrated tau had 0.602
+                        # bal-acc) both failed; head-to-head CE is scorer-symmetric.
+                        kept = list(zip(base_ids[:10], csc0))
+                        new_e = [e for e in esc_ids[:20] if e not in set(base_ids[:10])]
+                        edocs = {d.id: (d.text or "")[:700] for d in session.store.get(new_e)}
+                        etexts = [edocs.get(e, "") for e in new_e]
+                        ecsc = djm.candidate_scores(session.reranker, q, etexts) if new_e else []
+                        for e, es in sorted(zip(new_e, ecsc), key=lambda x: -x[1]):
+                            weakest = min(range(len(kept)), key=lambda j: kept[j][1]) if kept else None
+                            if weakest is not None and es > kept[weakest][1] * 1.05:
+                                kept[weakest] = (e, es)
+                        pids = [d for d, _ in kept] + [d for d in esc_ids if d not in {k for k, _ in kept}]
+                    else:
+                        pids = rrf_ids([base_ids, esc_ids])
+                        guard_tau = stop_tau if stop_tau is not None else 0.5
+                        strong = [x for x, s in zip(base_ids[:10], csc0) if s >= guard_tau]
+                        pids = strong + [d for d in pids if d not in strong]
+                    with mem_lock:                        # cross-query learning: harvest new wins
+                        for m in per_q.longterm[n_seeded:]:
+                            shared_mem.remember(m.content, kind="skill_win", **(m.meta or {}))
+                else:
+                    pids = base_ids
+                dt = time.monotonic() - t
+                r10, a10 = recall_at(gold, pids, 10)
+                res["sac_product"] = {"recall@10": r10, "all@10": a10, "latency_s": round(dt, 3),
+                                      "searches": 1 + hops, "turns": 1 + hops, "escalated": esc,
+                                      "in": pgen.usage.input_tokens, "in_cached": pgen.usage.cached_input_tokens,
+                                      "out": pgen.usage.output_tokens, "in_uncached_known": True}
 
             # --- tool_product: SAME hop-0 + judge; escalation = tool-calling episodes,
             #     judge between episodes, same PRODUCT_MAX_HOPS cap ---
-            tgen3 = LLM()
-            judge_t = DiagnosticJudge(tgen3)
-            t = time.monotonic()
-            base_ids, v, subs = judge_hop0(tgen3, judge_t)
-            pooled, hops, esc, lc_in, lc_out, tsearch, ep_steps = [base_ids], 0, 0, 0, 0, 0, 0
-            if v["verdict"] != "PASS":
-                esc = 1
-                for hop in range(1, PRODUCT_MAX_HOPS + 1):
-                    hint = (f"\nJudge diagnosis of current results: missing sub-fact "
-                            f"{v.get('missing') or '?'} ({v.get('diagnosis') or 'weak coverage'}); "
-                            f"suggested technique {v.get('technique') or 'hyde'}; "
-                            f"suggested query '{v.get('next_query') or subs[0]}'")
-                    tt3 = Tools(session, tgen3, budget, forged_skill=forged_fn)
-                    tids3, tm3 = tool_harness(chat, tt3, q + hint, system=TOOL_SYS + seed_guidance)
-                    lc_in += tm3["lc_in"]; lc_out += tm3["lc_out"]
-                    tsearch += tt3.searches; ep_steps += tm3["steps"]
-                    pooled.append([str(i) for i in tids3])
-                    hops = hop
-                    fused_now = rrf_ids(pooled)
-                    docs = {d.id: (d.text or "")[:700] for d in session.store.get(fused_now[:10])}
-                    texts = [docs.get(i, "") for i in fused_now[:10]]
-                    sub_vecs = np.asarray(emb(subs), dtype=np.float32)
-                    cand_vecs = (np.asarray(emb(texts), dtype=np.float32) if texts
-                                 else np.zeros((0, sub_vecs.shape[1]), np.float32))
-                    cov = djm.coverage_signals(subs, sub_vecs, texts, cand_vecs, session.reranker)
-                    csc = djm.candidate_scores(session.reranker, q, texts)
-                    cands = [{"id": i, "score": s, "snippet": t_}
-                             for (i, t_), s in zip(zip(fused_now[:10], texts), csc)]
-                    v = judge_t.judge(q, subs, cands, cov)
-                    if v["verdict"] == "PASS":
-                        break
-            tp_ids = rrf_ids(pooled)
-            dt = time.monotonic() - t
-            r10, a10 = recall_at(gold, tp_ids, 10)
-            res["tool_product"] = {"recall@10": r10, "all@10": a10, "latency_s": round(dt, 3),
-                                   "searches": 1 + tsearch, "turns": 1 + ep_steps + hops,
-                                   "escalated": esc,
-                                   "in": lc_in + tgen3.usage.input_tokens,
-                                   "in_cached": tgen3.usage.cached_input_tokens,
-                                   "out": lc_out + tgen3.usage.output_tokens,
-                                   "in_uncached_known": False}
+            if "tool_product" in arms:
+                tgen3 = LLM()
+                judge_t = DiagnosticJudge(tgen3, premise=premise)
+                t = time.monotonic()
+                base_ids, v, subs, csc_t = judge_hop0(tgen3, judge_t)
+                pooled, hops, esc, lc_in, lc_out, tsearch, ep_steps = [base_ids], 0, 0, 0, 0, 0, 0
+                if v["verdict"] != "PASS":
+                    esc = 1
+                    for hop in range(1, PRODUCT_MAX_HOPS + 1):
+                        hint = (f"\nJudge diagnosis of current results: missing sub-fact "
+                                f"{v.get('missing') or '?'} ({v.get('diagnosis') or 'weak coverage'}); "
+                                f"suggested technique {v.get('technique') or 'hyde'}; "
+                                f"suggested query '{v.get('next_query') or subs[0]}'")
+                        tt3 = Tools(session, tgen3, budget, forged_skill=forged_fn)
+                        tids3, tm3 = tool_harness(chat, tt3, q + hint, system=TOOL_SYS + seed_guidance)
+                        lc_in += tm3["lc_in"]; lc_out += tm3["lc_out"]
+                        tsearch += tt3.searches; ep_steps += tm3["steps"]
+                        pooled.append([str(i) for i in tids3])
+                        hops = hop
+                        fused_now = rrf_ids(pooled)
+                        docs = {d.id: (d.text or "")[:700] for d in session.store.get(fused_now[:10])}
+                        texts = [docs.get(i, "") for i in fused_now[:10]]
+                        sub_vecs = np.asarray(emb(subs), dtype=np.float32)
+                        cand_vecs = (np.asarray(emb(texts), dtype=np.float32) if texts
+                                     else np.zeros((0, sub_vecs.shape[1]), np.float32))
+                        cov = djm.coverage_signals(subs, sub_vecs, texts, cand_vecs, session.reranker)
+                        csc = djm.candidate_scores(session.reranker, q, texts)
+                        cands = [{"id": i, "score": s, "snippet": t_}
+                                 for (i, t_), s in zip(zip(fused_now[:10], texts), csc)]
+                        v = judge_t.judge(q, subs, cands, cov)
+                        if v["verdict"] == "PASS":
+                            break
+                tp_ids = rrf_ids(pooled)
+                strong_t = [i for i, s in zip(base_ids[:10], csc_t) if s >= 0.5]
+                tp_ids = strong_t + [d for d in tp_ids if d not in strong_t]
+                dt = time.monotonic() - t
+                r10, a10 = recall_at(gold, tp_ids, 10)
+                res["tool_product"] = {"recall@10": r10, "all@10": a10, "latency_s": round(dt, 3),
+                                       "searches": 1 + tsearch, "turns": 1 + ep_steps + hops,
+                                       "escalated": esc,
+                                       "in": lc_in + tgen3.usage.input_tokens,
+                                       "in_cached": tgen3.usage.cached_input_tokens,
+                                       "out": lc_out + tgen3.usage.output_tokens,
+                                       "in_uncached_known": False}
 
         # explore-SEEDED arms: same harnesses + the corpus knowledge explore/forge produced
         if seed_guidance:
             from experiments.multi_hop_synth_queries.eval_fair import CODE_SYS
-            tgen2 = LLM()
-            tt2 = Tools(session, tgen2, budget, forged_skill=forged_fn)
-            t = time.monotonic()
-            tids2, tm2 = tool_harness(chat, tt2, q, system=TOOL_SYS + seed_guidance)
-            dt = time.monotonic() - t
-            r10, a10 = recall_at(gold, tids2, 10)
-            res["tool_explored"] = {"recall@10": r10, "all@10": a10, "latency_s": round(dt, 3),
-                                    "searches": tt2.searches, "turns": tm2["steps"],
-                                    "in": tm2["lc_in"] + tgen2.usage.input_tokens,
-                                    "in_cached": tgen2.usage.cached_input_tokens,
-                                    "out": tm2["lc_out"] + tgen2.usage.output_tokens,
-                                    "in_uncached_known": False}
-            sgen2 = LLM()
-            st2 = Tools(session, sgen2, budget, forged_skill=forged_fn)
-            t = time.monotonic()
-            sids2, sm2 = code_harness(sgen2, st2, q, system=CODE_SYS + seed_guidance)
-            dt = time.monotonic() - t
-            r10, a10 = recall_at(gold, sids2, 10)
-            res["sac_explored"] = {"recall@10": r10, "all@10": a10, "latency_s": round(dt, 3),
-                                   "searches": st2.searches, "turns": sm2["steps"],
-                                   "in": sgen2.usage.input_tokens,
-                                   "in_cached": sgen2.usage.cached_input_tokens,
-                                   "out": sgen2.usage.output_tokens, "in_uncached_known": True}
+            if "tool_explored" in arms:
+                tgen2 = LLM()
+                tt2 = Tools(session, tgen2, budget, forged_skill=forged_fn)
+                t = time.monotonic()
+                tids2, tm2 = tool_harness(chat, tt2, q, system=TOOL_SYS + seed_guidance)
+                dt = time.monotonic() - t
+                r10, a10 = recall_at(gold, tids2, 10)
+                res["tool_explored"] = {"recall@10": r10, "all@10": a10, "latency_s": round(dt, 3),
+                                        "searches": tt2.searches, "turns": tm2["steps"],
+                                        "in": tm2["lc_in"] + tgen2.usage.input_tokens,
+                                        "in_cached": tgen2.usage.cached_input_tokens,
+                                        "out": tm2["lc_out"] + tgen2.usage.output_tokens,
+                                        "in_uncached_known": False}
+            if "sac_explored" in arms:
+                sgen2 = LLM()
+                st2 = Tools(session, sgen2, budget, forged_skill=forged_fn)
+                t = time.monotonic()
+                sids2, sm2 = code_harness(sgen2, st2, q, system=CODE_SYS + seed_guidance)
+                dt = time.monotonic() - t
+                r10, a10 = recall_at(gold, sids2, 10)
+                res["sac_explored"] = {"recall@10": r10, "all@10": a10, "latency_s": round(dt, 3),
+                                       "searches": st2.searches, "turns": sm2["steps"],
+                                       "in": sgen2.usage.input_tokens,
+                                       "in_cached": sgen2.usage.cached_input_tokens,
+                                       "out": sgen2.usage.output_tokens, "in_uncached_known": True}
 
         with lock:
             records.append(res)

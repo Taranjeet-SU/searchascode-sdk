@@ -82,6 +82,46 @@ NEXT_QUERY: <a focused query for the missing sub-fact, or none>
 CONFIDENCE: <0.0-1.0 confidence the set is COMPLETE>
 VERDICT: <PASS|FAIL>"""
 
+SUFFICIENCY_PROMPT = """You are the STOP/CONTINUE controller for a retrieval agent. Your ONE question: \
+could a careful reader PLAUSIBLY DERIVE the answer to the QUESTION from the CANDIDATES below? \
+(Google's "sufficient context" framing.) You are NOT checking that every listed sub-fact has its own \
+document — many questions state MANY constraints that one or two documents satisfy TOGETHER. Sub-facts \
+are hints for reading the evidence, not a checklist to complete.
+
+Input per current hop:
+- SUBFACTS: aspects of the question (context, NOT a per-document checklist).
+- CANDIDATES: current top retrieval results with normalized scores (0..1) and snippets.
+- COVERAGE: per sub-fact signals of its best candidate:
+    * ce = cross-encoder relevance (primary): > 0.1 strong; < -1.5 strongly absent; between = borderline.
+    * sim = bi-encoder cosine (weak, tie-break only) · lex = lexical overlap (vocab-gap detector).
+- SCORE SIGNALS: top3_ratio, min_ratio, cliff of the candidate score curve.
+
+Decide SUFFICIENCY:
+- PASS if the top candidates, READ TOGETHER, plausibly determine the answer — even when several
+  sub-facts have weak individual coverage (a single strong document often satisfies many constraints
+  at once: one candidate with ce > 0.1 whose snippet matches the question's specific entities/dates
+  is usually sufficient for an entity-lookup question).
+- FAIL only when the DECISIVE information is missing: no candidate could yield the answer even
+  combined. Ask: "which concrete fact would the reader still lack?" If you cannot name one, PASS.
+- A borderline set with one clearly-relevant candidate (ce > 0.1, matching snippet) leans PASS.
+- Deep hops are EXPENSIVE and often dilute good results; when genuinely uncertain, PASS.
+
+If FAIL, name the decisive gap and prescribe the next technique for it:
+- vocab_gap: some relevance but low lexical overlap → hyde
+- entity: a named entity that should match a title → fielded
+- buried: strong match exists but ranked low / large cliff → rerank
+- absent: nothing relevant at all → decompose
+
+Output EXACTLY these lines, nothing else:
+COVERED: <comma-separated sub-fact numbers plausibly satisfied by the set, or none>
+MISSING: <the single sub-fact number naming the DECISIVE gap, or none>
+DIAGNOSIS: <vocab_gap|entity|buried|absent|none>
+TECHNIQUE: <hyde|fielded|rerank|decompose|prf|none>
+NEXT_QUERY: <a focused query for the decisive gap, or none>
+CONFIDENCE: <0.0-1.0 confidence the answer is derivable from the set>
+VERDICT: <PASS|FAIL>"""
+
+
 _WORD = re.compile(r"[a-z0-9]+")
 
 
@@ -183,11 +223,20 @@ def parse_verdict(text):
 
 
 class DiagnosticJudge:
-    """Wraps a generator with `.complete(prompt, system=...)` into the diagnostic controller."""
+    """Wraps a generator with `.complete(prompt, system=...)` into the diagnostic controller.
 
-    def __init__(self, generator, prompt: str = DIAGNOSTIC_PROMPT):
+    ``premise`` selects the stop question:
+      * ``"coverage"``    — every sub-fact must have its own strong document (the original;
+        systematically false-FAILs on sparse-gold corpora where ~3 documents satisfy a
+        6-constraint question — measured escalation rate 1.00 on BrowseComp-Plus).
+      * ``"sufficiency"`` — could the answer plausibly be DERIVED from the candidates read
+        together (the Google "sufficient context" framing, arXiv 2411.06037).
+    """
+
+    def __init__(self, generator, prompt: str | None = None, premise: str = "coverage"):
         self.gen = generator
-        self.prompt = prompt
+        self.premise = premise
+        self.prompt = prompt or (SUFFICIENCY_PROMPT if premise == "sufficiency" else DIAGNOSTIC_PROMPT)
 
     def judge(self, query, subfacts, candidates, coverage):
         sig = score_signals([c["score"] for c in candidates])

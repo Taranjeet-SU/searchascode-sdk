@@ -1,0 +1,53 @@
+{
+  "split": "test",
+  "legacy_split": false,
+  "premise": "sufficiency",
+  "confusion": {
+    "n": 100,
+    "tp": 38,
+    "tn": 37,
+    "fp": 12,
+    "fn": 13,
+    "accuracy": 0.75,
+    "balanced_acc": 0.7501000400160064,
+    "sensitivity": 0.7450980392156863,
+    "specificity": 0.7551020408163265,
+    "false_accept_rate": 0.24489795918367346,
+    "false_reject_rate": 0.2549019607843137
+  },
+  "balanced_acc_ci_grouped": [
+    0.7501,
+    0.64,
+    0.85
+  ],
+  "always_pass_baseline": {
+    "n": 100,
+    "tp": 51,
+    "tn": 0,
+    "fp": 49,
+    "fn": 0,
+    "accuracy": 0.51,
+    "balanced_acc": 0.5,
+    "sensitivity": 1.0,
+    "specificity": 0.0,
+    "false_accept_rate": 1.0,
+    "false_reject_rate": 0.0
+  },
+  "no_llm_references": {
+    "logreg_groupkfold": [
+      0.7082,
+      0.0329
+    ],
+    "logreg_tune_to_test": 0.7489,
+    "min_ce_threshold": {
+      "threshold_fit_on_tune": -1.94,
+      "tune_balanced_acc": 0.7677,
+      "test_balanced_acc": 0.7379
+    }
+  },
+  "n_queries": {
+    "tune": 50,
+    "test": 50,
+    "overlap": 0
+  }
+}
