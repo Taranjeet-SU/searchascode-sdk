@@ -98,8 +98,8 @@ def load_corpus(corpus: str, gen):
         data = Path(__file__).parents[1] / "multi_hop_synth_queries" / "data"
         rows = []
         for ds in (2, 3, 4):
-            for r in [json.loads(l) for l in (data / f"multihop_{ds}docs_queries.jsonl").open()][200:300]:
-                rows.append({"qid": f"{ds}h_{r['seed_id']}", "query": r["query"],
+            for i, r in enumerate([json.loads(l) for l in (data / f"multihop_{ds}docs_queries.jsonl").open()][200:300]):
+                rows.append({"qid": f"{ds}h_{200 + i}", "query": r["query"],
                              "gold_ids": [str(g) for g in r["gold_ids"]], "tag": f"{ds}hop"})
         index = "hotpotqa_qwen8b" if corpus.endswith("qwen8b") else "hotpotqa"
         embed = qwen_embedder() if corpus.endswith("qwen8b") else gte_embedder()
