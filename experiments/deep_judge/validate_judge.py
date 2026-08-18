@@ -35,7 +35,11 @@ from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from search_as_code.harness import diagnostic_judge as dj
-from search_as_code.harness.diagnostic_judge import DIAGNOSTIC_PROMPT, parse_verdict
+from search_as_code.harness.diagnostic_judge import (
+    DIAGNOSTIC_PROMPT,
+    SUFFICIENCY_PROMPT,
+    parse_verdict,
+)
 from search_as_code.metrics import format_ci
 
 HERE = Path(__file__).parent
@@ -89,9 +93,9 @@ def render(e) -> str:
     return dj.render(e["query"], e["subfacts"], e["candidates"][:10], e["coverage"], sig)
 
 
-def run_one(llm, e):
+def run_one(llm, e, system=DIAGNOSTIC_PROMPT):
     try:
-        out = llm.complete(render(e), system=DIAGNOSTIC_PROMPT)
+        out = llm.complete(render(e), system=system)
         return parse_verdict(out)["pred_pass"]
     except Exception:
         return 1                      # a crashed judge defaults to PASS (the risky direction)
@@ -201,6 +205,8 @@ def main() -> int:
     ap.add_argument("--workers", type=int, default=8)
     ap.add_argument("--legacy-split", action="store_true",
                     help="the pre-DJ-6 leaky split, for comparison with published numbers")
+    ap.add_argument("--premise", default="coverage", choices=["coverage", "sufficiency"],
+                    help="which stop question the judge asks (fable.md §2b action 1)")
     a = ap.parse_args()
 
     from phase1.llm import LLM
@@ -214,8 +220,9 @@ def main() -> int:
         examples = examples[:a.n]
 
     llm = LLM()
+    system = SUFFICIENCY_PROMPT if a.premise == "sufficiency" else DIAGNOSTIC_PROMPT
     with ThreadPoolExecutor(max_workers=a.workers) as ex:
-        preds = list(ex.map(lambda e: run_one(llm, e), examples))
+        preds = list(ex.map(lambda e: run_one(llm, e, system), examples))
     golds = [e["oracle_pass"] for e in examples]
 
     cm = confusion(preds, golds)
@@ -241,12 +248,12 @@ def main() -> int:
         print(f"    min-CE > {t['threshold_fit_on_tune']:+.2f} (fit on tune) "
               f"balanced acc {t['test_balanced_acc']:.3f}  <- the floor the LLM must beat (DJ-9)")
 
-    out = {"split": a.split, "legacy_split": a.legacy_split, "confusion": cm,
+    out = {"split": a.split, "legacy_split": a.legacy_split, "premise": a.premise, "confusion": cm,
            "balanced_acc_ci_grouped": [round(mean, 4), round(lo, 4), round(hi, 4)],
            "always_pass_baseline": always_pass,
            "no_llm_references": bound,
            "n_queries": {"tune": len(tq), "test": len(teq), "overlap": len(tq & teq)}}
-    suffix = "_legacy" if a.legacy_split else ""
+    suffix = ("_legacy" if a.legacy_split else "") + ("_sufficiency" if a.premise == "sufficiency" else "")
     (HERE / f"judge_validation_{a.split}{suffix}.json").write_text(json.dumps(out, indent=2))
     print(f"\nwrote judge_validation_{a.split}{suffix}.json")
     return 0

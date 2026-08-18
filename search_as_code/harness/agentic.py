@@ -163,7 +163,7 @@ def _exec(code, session, query, top_k):
 
 def agentic_solve(session, query, *, gold=None, max_hops=10, generator=None, judge=None,
                   skill_lookup=None, reranker=None, embedder=None, judge_stop=None, top_k=10,
-                  capture=None, memory=None, os_first=True):
+                  capture=None, memory=None, os_first=True, max_subfacts=6, converge_stop=True):
     """LLM authors the retrieval strategy each hop (free structure); the DEEP JUDGE guides EVERY hop —
     its covered/missing/diagnosis/technique/next_query become the next hop's instructions — and MEMORY
     carries findings across hops (working) and winning strategies across queries (long-term, for skill
@@ -193,13 +193,18 @@ def agentic_solve(session, query, *, gold=None, max_hops=10, generator=None, jud
     pooled, codes, diagnosis, prior = [], [], "", ""
     fused: list = []
     got, stopped_by = 0, None
+    # Decompose ONCE, before the loop (it used to re-run per hop — one wasted LLM call/hop),
+    # capped by max_subfacts: on sparse-gold corpora (~3 golds/query) a 6-way decomposition
+    # guarantees the coverage-premise judge can never PASS (issues.md DJ-12 premise mismatch).
+    subfacts = [query]
+    try:
+        from .. import primitives as P
+        subfacts = [s for s in (P.decompose(query, session._require_generator()) or [query])
+                    if s.strip()][:max(1, max_subfacts)] or [query]
+    except Exception:
+        pass
+    prev_fused: list = []
     for hop in range(1, max_hops + 1):
-        subfacts = [query]                           # decomposition here is ONLY the judge's coverage lens
-        try:
-            from .. import primitives as P
-            subfacts = [s for s in (P.decompose(query, session._require_generator()) or [query]) if s.strip()][:6] or [query]
-        except Exception:
-            pass
         findings = memory.working_context(max_chars=600, kinds={"finding"})   # cross-hop memory
         key = diagnosis or query
         # inject each suggested skill's RECIPE (when_to_use), not just its name, so the model can APPLY it
@@ -231,6 +236,14 @@ def agentic_solve(session, query, *, gold=None, max_hops=10, generator=None, jud
         if not judge_stop and goldset and got == len(goldset):
             stopped_by = "oracle"
             break
+        # TASR-style convergence stop (arXiv 2606.13814, adapted to retrieval): from hop 3 on,
+        # if the latest hop left the fused top-k UNCHANGED, further hops are re-finding the
+        # same results — stop before burning another judge/author call. Costs zero LLM tokens
+        # and caps the damage of a judge that can never PASS (BrowseComp escalation rate 1.00).
+        if converge_stop and judge_stop and hop >= 3 and fused[:top_k] == prev_fused:
+            stopped_by = "converged"
+            break
+        prev_fused = fused[:top_k]
         # ALWAYS run the deep judge for its structured suggestion (guides the next hop in BOTH modes)
         sub_vecs = np.asarray(embedder(subfacts), dtype=np.float32)
         cov, cids, ctexts = _coverage(session, embedder, reranker, subfacts, sub_vecs, fused)

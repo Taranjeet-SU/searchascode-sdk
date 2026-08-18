@@ -60,11 +60,19 @@ class Session:
         reranker: Optional[Callable[[str, list[str]], list[float]]] = None,
         extractor: Optional[Callable[[list[str], dict, str], list[dict]]] = None,
         generator: Optional[Callable[[str], list[str]]] = None,
+        query_embedder: Optional[Embedder | Callable] = None,
         **connect_opts: Any,
     ):
+        # ``query_embedder`` — asymmetric encoding (P2-5): bge/e5/Qwen-style models need a
+        # DIFFERENT prefix/instruction for queries than for passages; getting this wrong costs
+        # more than every augmentation measured in this repo (Qwen3-8B BrowseComp R@10 0.149
+        # plain vs 0.277 instructed). ``embedder`` embeds passages (add / hyde docs / dedup);
+        # ``query_embedder`` embeds search queries; defaults to ``embedder`` (symmetric).
         self.store = connect(store, **connect_opts) if isinstance(store, str) else store
         self._caps = self.store.capabilities()
         self.embedder: Embedder = as_embedder(embedder) if embedder else HashEmbedder()
+        self.query_embedder: Embedder = (as_embedder(query_embedder) if query_embedder
+                                         else self.embedder)
         self.reranker = reranker
         self.extractor = extractor
         self.generator = generator  # LLM callable(prompt) -> list[str], for query-side primitives
@@ -437,7 +445,7 @@ class Session:
             v = self.store.embed_query(query)
             if v is not None:
                 return v
-        return self.embedder.embed([query])[0]
+        return self.query_embedder.embed([query])[0]
 
     def _keyword(self, query: str, top_k: int, flt: dict) -> ResultSet:
         if self._caps.keyword:
