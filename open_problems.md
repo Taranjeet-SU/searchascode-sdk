@@ -8,6 +8,10 @@ citations), what we did about it, and how our position compares to the state of 
 **The reassuring meta-finding:** in every case, the fix we arrived at independently from our own data
 matches the fix the current SOTA papers propose.
 
+> **Status annotations (2026-08-18):** this file was written once and had drifted (issues.md
+> OPM-1). Each problem now carries a dated **Status YYYY-MM-DD** line under its "Our status"
+> paragraph; the summary table's status column is historical — trust the dated lines.
+
 ## Summary
 
 | # | Open problem | Our evidence | Field's name / key paper | Our status vs literature |
@@ -41,6 +45,11 @@ embedding + length; our prior was 61–84%.
 **Our status.** Diagnosed and quantified. **Proposed fix (matches field): class rebalancing / focal
 loss** to force learning on rare actions — not yet run.
 
+**Status 2026-08-18:** still open — no rebalancing run anywhere (`grep class_weight` hits only the
+judge's LogReg). One mechanical confound removed since: with default labeling flags most templates
+literally *were* dense (SDK-A1); `explore/templates.available_templates` now refuses to label
+unavailable templates. The recommended path (`agentic_solve`) sidesteps the 16-way router entirely.
+
 ## 2. Routing ties a strong default on accuracy (its real value is cost)
 **What we saw.** A learned 16-way router ≈ always-dense: BEIR +0.006, HotpotQA +0.004, SU −0.003 on
 CV accuracy; realized routed-recall lifts only 0.552→0.617 (HotpotQA) / 0.576→0.602 (SU) vs an oracle
@@ -55,6 +64,11 @@ cost-baseline study.
 the *cost* angle — the right target is **3-class depth routing (skip work on easy queries)**, not
 16-way identity routing for recall.
 
+**Status 2026-08-18:** partially built — `harness/triage.py` is a rule-based 2-value depth router
+(single|multi), deliberately not learned, but **no experiment evaluates it** (cost saved / recall vs
+always-deep unmeasured). The fable.md WS4 escalation controller (dense-first, judge-gated, up to 10
+hops) is the depth-routing design now being executed.
+
 ## 3. CV classification accuracy is a misleading metric
 **What we saw.** §7 first reported the router "ties dense (+0.004)" using **CV accuracy** (did it name
 the exact cheapest winner). That penalizes a correct-but-non-cheapest pick. Switching to **realized
@@ -65,6 +79,10 @@ routed-recall** flipped the result to a real +6.5 / +2.7 pt lift. → [explore_l
 evaluation artifact.
 
 **Our status.** Caught and corrected; all headline numbers now use the realized task metric.
+
+**Status 2026-08-18:** done in the trainer (`explore/training.py::realized_recall`, marked as the
+primary metric). Residue: the pack manifest (`explore/engine.py:207-212`) still records only
+`cv_acc`/`vs_fixed`, and `docs/EXPLORE.md`'s quickstart still headlines CV accuracy.
 
 ## 4. Cross-encoder reranking drops multi-gold coverage
 **What we saw.** Adding a reranker over the fused union *lowered* all-golds on a clean SU comparison:
@@ -78,6 +96,10 @@ MMR shows the steepest recall penalty by suppressing complementary evidence
 
 **Our status.** Reproduced and **fixed**: default recipe is coverage-first RRF-fusion of decomposed
 sub-pools; rerank is reserved for single-gold precision (helps BrowseComp, hurts multi-gold).
+
+**Status 2026-08-18:** holds, and now confirmed as a proper **baseline control** (the P1-10 gap):
+dense→CE-rerank sits below plain dense on every 3/4-hop cell of both HotpotQA and SU
+(`experiments/fable_baselines/`). Coverage-first `_reserve` remains the shipped default.
 
 ## 5. Deep / iterative retrieval degrades vs one-shot
 **What we saw.** Legacy deep-SAC *loses* to one-shot on 5/6 cells (all-golds 0.522 vs 0.600) — a
@@ -93,6 +115,11 @@ distractors."*
 **Our status.** Reproduced; **partial fix** (`run_sac monotone=True`: hop-0 = one-shot recipe +
 RRF-fuse all hops) restores aggregate parity (0.611) but still loses on easy 2-hop. Full fix needs #6.
 
+**Status 2026-08-18:** `agentic_solve` is monotone-by-construction (pools accumulate,
+reserve-per-subfact fusion), removing the overwrite mechanism — but hop 1 is now a raw-OS probe, so
+this is not the same guarantee and no deep-vs-one-shot ablation has been re-run on it. The residual
+gap is the stop signal — see #6.
+
 ## 6. Unreliable stopping — the LLM self-judge
 **What we saw.** The per-hop LLM judge is the weak link: it rejects an already-correct hop-0 (forcing
 a diluting hop-2) or accepts a confidently-wrong hop. Deep on BrowseComp burned 34 searches for 0
@@ -105,6 +132,13 @@ judgments."* [Self-RAG](https://arxiv.org/pdf/2310.11511) uses reflection tokens
 
 **Our status.** Reproduced. **Proposed fix (matches SOTA): a value-based / QPP confidence gate**
 instead of the LLM self-judge (Stop-RAG's exact prescription) — not yet built.
+
+**Status 2026-08-18:** half-obsolete. The DiagnosticJudge IS the built, shipped stop
+(`agentic_solve` judge-stop), re-validated leak-free at **0.771 [0.666, 0.870]** balanced acc
+(grouped split + shipped renderer — the old 0.700 was a measurement artifact, DJ-6/DJ-14). The
+value-gate is now **measured**: a min-CE threshold fit on tune scores 0.738 held-out, LogReg 0.749 —
+the judge leads within CI. Remaining: ship the swappable StopGate (threshold/logreg/judge) and A/B
+it in-loop (fable.md WS2).
 
 ## 7. Multi-hop / deep-research coverage ceiling
 **What we saw.** all-golds@10 needs *all N* golds in the top-10; unsolved explodes 1%→20/31% from
@@ -119,6 +153,12 @@ is designed so single-retriever recall is near-floor.
 **Our status.** Reproduced; correctly framed as a **coverage / new-primitive problem, not a routing
 one** — no strategy selection helps when the golds aren't reachable.
 
+**Status 2026-08-18:** confirmed and sharpened: retriever strength is the lever (Qwen3-8B dense R@10
+0.149 vs gte-base 0.071; forged strategies buy ~0 on the strong retriever, hence the best-baseline
+gate). all_golds@10 is no longer literally 0 (gte-base 0.034; forged whole-query 0.048) but remains
+tiny; golds ARE reachable at depth (R@1000 0.85), which keeps the coverage framing. Full-text BM25
+does not rescue it (0.053) — bounds the BC-2 caveat.
+
 ## 8. Templates aren't orthogonal + synthetic-query bias
 **What we saw.** 5–7 of the 16 templates never win a single query; light tier takes 89–94% on the
 synthetic sets. But on BrowseComp's real research queries `hyde_rerank` wins 21% — the monopoly is
@@ -132,6 +172,12 @@ under vocabulary mismatch — corpus-dependent, exactly what we found.
 
 **Our status.** Diagnosed. **Proposed fix: fewer, orthogonal templates targeting distinct failure
 modes + difficulty-tier labels** (per §1–§3).
+
+**Status 2026-08-18:** the redesign was never done; instead the recommended path superseded the
+template system — `agentic_solve` authors the strategy per hop with no fixed templates. The 16-way
+router remains exported and is still `docs/EXPLORE.md`'s quickstart with no cross-reference to the
+agentic path (the real remaining gap). Tracked in fable.md WS3 ("wire the two explores together or
+rename").
 
 ---
 
