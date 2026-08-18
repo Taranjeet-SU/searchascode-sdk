@@ -436,10 +436,10 @@ def main():
         if a in ("sac_product", "tool_product"):
             out["arms"][a]["escalation_rate"] = round(
                 sum(r[a].get("escalated", 0) for r in rows_a) / len(rows_a), 3)
-        for tag in tags:
-            sub = [r for r in rows_a if r["tag"] == tag]
+        for tg in tags:                           # NOT `tag` — that names the output stem
+            sub = [r for r in rows_a if r["tag"] == tg]
             if sub:
-                out["by_tag"].setdefault(tag, {})[a] = {
+                out["by_tag"].setdefault(tg, {})[a] = {
                     m: round(sum(r[a][m] for r in sub) / len(sub), 4) for m in metrics}
 
     out["config"]["llm_model"] = common.LLM_MODEL
