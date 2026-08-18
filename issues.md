@@ -1935,3 +1935,20 @@ resolves (`core / opensearch / qdrant / chroma / faiss / learn / dev / all`); a 
 `pip install 'search-as-code[learn]'` brings sklearn and exposes the top-level entry points
 (`agentic_solve`, `explore`, `Harness`, `DiagnosticJudge`, `HarnessForge`, `triage`,
 `bootstrap_ci`); and `search_as_code/surface.py` is present in the wheel, so DOC-1 stays fixed.
+
+#### 🟥 AGT-1 `[C]` The author prompt commanded raw OpenSearch DSL on every backend — agentic explore scored 0.075 vs dense 0.800 on the memory-backed SU corpus
+Found by the first clean pipeline chain (2026-08-18, `ws1_pipeline_su.log`): stage-1 explore
+recall@20 = **0.075** while plain dense on the same train rows = **0.800** — the whole agentic
+loop was near-zero on SU. Mechanism: hop 1's forced raw-OS probe was correctly guarded
+(`agentic.py:186` `hasattr(session.store, "_search")`), but the static `AUTHOR_SYSTEM` prompt
+told the model on EVERY hop to call `session.store._search(body)` (with a worked example), and
+the judge's diagnosis hint pushed the same escalation — so on `MemoryStore` (no `_search`)
+every authored program raised `AttributeError`, `_exec` returned `[]`, and 10 hops burned for
+nothing. The dense-default gate absorbed the damage (stage 7 shipped dense: 0.669/0.787), which
+is the gate doing its job — but the loop itself was broken on exactly the backend-portability
+the product claims. Same class as SDK-A7 (authoring without introspecting what the backend
+supports).
+**FIXED** 2026-08-18 — `build_author_system(session)`: the raw-DSL call list, worked example,
+and diagnosis hint are included only when the store has `_search`; portable backends get a
+`mode='keyword'` exact-term escalation instead. Regression test asserts the memory-backend
+prompt contains no `_search`. SU pipeline re-run to confirm.

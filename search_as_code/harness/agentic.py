@@ -24,22 +24,32 @@ from .rag_techniques import SkillLookup
 
 _CODE = re.compile(r"```(?:python)?\s*(.*?)```", re.DOTALL)
 
-AUTHOR_SYSTEM = """You are a retrieval STRATEGIST. Write ONE Python function that retrieves the documents \
-answering the QUESTION from an OpenSearch index. Signature EXACTLY: def run(session, query, top_k):
+_AUTHOR_BASE = """You are a retrieval STRATEGIST. Write ONE Python function that retrieves the documents \
+answering the QUESTION. Signature EXACTLY: def run(session, query, top_k):
 
-Use ONLY these calls (each IS an OpenSearch query); each search returns a ResultSet with `.ids()`:
+Use ONLY these calls; each search returns a ResultSet with `.ids()`:
   session.search(q, top_k=k, mode='dense'|'keyword'|'hybrid')      # kNN / BM25 / both
   session.hyde_search(q, top_k=k)                                  # hallucinate an answer doc, embed it
-  session.store.query_fielded(q, ['title^2','text'], top_k=k)     # multi_match + boosts (guard: hasattr(session.store,'query_fielded'))
-  session.store._search(body)                                     # RAW OpenSearch DSL. Returns a dict;
-      # get ids with: [h['_id'] for h in r['hits']['hits']]
-These helpers are already in scope (do NOT import them):
+{backend_calls}These helpers are already in scope (do NOT import them):
   fuse_ids([ids_a, ids_b, ...]) -> list           # RRF-fuse several id lists
   rerank(session, query, ids, top_k=k) -> list    # cross-encoder rerank an id list
 
 DEFAULT = DENSE. For most questions a whole-query dense search is the single strongest move — start there:
     ids = session.search(query, top_k=top_k, mode='dense').ids()
-ESCALATE only when the judge says dense coverage is WEAK on an EXACT constraint (a year, a day, a phrase, a
+{escalation}
+YOU choose the STRATEGY. Most questions are ONE entity satisfying MANY constraints — keep the query WHOLE \
+(dense, escalate on the weak exact constraint, then rerank). DECOMPOSE into sub-questions + \
+fuse_ids ONLY when the answer genuinely needs SEVERAL different documents. Do NOT decompose by default just \
+because the judge mentioned a missing aspect — prefer dense + a targeted exact-term escalation for the \
+missing constraint. When the judge names a SUGGESTED technique with its recipe, APPLY that recipe. \
+ALWAYS return a list of ids. Return ONLY one ```python block```."""
+
+_OS_CALLS = """  session.store.query_fielded(q, ['title^2','text'], top_k=k)     # multi_match + boosts (guard: hasattr(session.store,'query_fielded'))
+  session.store._search(body)                                     # RAW OpenSearch DSL. Returns a dict;
+      # get ids with: [h['_id'] for h in r['hits']['hits']]
+"""
+
+_OS_ESCALATION = """ESCALATE only when the judge says dense coverage is WEAK on an EXACT constraint (a year, a day, a phrase, a
 proper name) — dense BLURS exact tokens, so author a RAW OpenSearch DSL query on the `text` field targeting
 those literal terms and FUSE it with the dense hits. This works even with NO metadata fields — everything is
 on `text`. Worked example (adapt the terms to the missing constraint):
@@ -48,14 +58,26 @@ on `text`. Worked example (adapt the terms to the missing constraint):
             "should": [{"term": {"text": "2002"}}, {"match": {"text": "Thursday Saturday"}}],
             "minimum_should_match": 1}}})
     dsl_ids = [h["_id"] for h in r["hits"]["hits"]]
-    ids = fuse_ids([session.search(query, top_k=top_k, mode='dense').ids(), dsl_ids])
+    ids = fuse_ids([session.search(query, top_k=top_k, mode='dense').ids(), dsl_ids])"""
 
-YOU choose the STRATEGY. Most questions are ONE entity satisfying MANY constraints — keep the query WHOLE \
-(dense, escalate to raw DSL on the weak exact constraint, then rerank). DECOMPOSE into sub-questions + \
-fuse_ids ONLY when the answer genuinely needs SEVERAL different documents. Do NOT decompose by default just \
-because the judge mentioned a missing aspect — prefer dense + a targeted raw-DSL escalation for the exact \
-constraint. When the judge names a SUGGESTED technique with its recipe, APPLY that recipe (esp. the \
-os_query / phrase-bool ones). ALWAYS return a list of ids. Return ONLY one ```python block```."""
+_PORTABLE_ESCALATION = """ESCALATE only when the judge says dense coverage is WEAK on an EXACT constraint (a year, a day, a phrase, a
+proper name) — dense BLURS exact tokens, so run a mode='keyword' (BM25) search on JUST those literal terms
+and FUSE it with the dense hits (this backend has NO raw-DSL endpoint — do NOT call session.store._search):
+    kw_ids = session.search("the exact year/name/phrase terms", top_k=top_k, mode='keyword').ids()
+    ids = fuse_ids([session.search(query, top_k=top_k, mode='dense').ids(), kw_ids])"""
+
+
+def build_author_system(session) -> str:
+    """Backend-aware author prompt. The old static prompt COMMANDED session.store._search on every
+    backend; on MemoryStore every authored program crashed with AttributeError hop after hop —
+    SU exploration scored 0.075 while plain dense scored 0.800 on the same rows (issues.md AGT-1)."""
+    has_dsl = hasattr(session.store, "_search")
+    return _AUTHOR_BASE.format(backend_calls=_OS_CALLS if has_dsl else "",
+                               escalation=_OS_ESCALATION if has_dsl else _PORTABLE_ESCALATION)
+
+
+#: backward-compat: the OpenSearch-flavored prompt under the old name
+AUTHOR_SYSTEM = _AUTHOR_BASE.format(backend_calls=_OS_CALLS, escalation=_OS_ESCALATION)
 
 
 AUTHOR_OS_SYSTEM = """You author the FIRST retrieval step as ONE raw OpenSearch query. Signature EXACTLY:
@@ -100,7 +122,7 @@ def _author_os_first(gen, query, top_k):
             "    return [h['_id'] for h in r['hits']['hits']]")
 
 
-def _author(gen, query, diagnosis, suggestions, prior, memory_wins="", findings=""):
+def _author(gen, query, diagnosis, suggestions, prior, memory_wins="", findings="", system=None):
     prompt = (f"QUESTION: {query}\n\n"
               f"MEMORY — strategies that WORKED on similar past queries (reuse the winning structure):\n{memory_wins or '(none yet)'}\n\n"
               f"FINDINGS so far — the deep judge's read of THIS query's earlier hops:\n{findings or '(first hop)'}\n\n"
@@ -109,7 +131,7 @@ def _author(gen, query, diagnosis, suggestions, prior, memory_wins="", findings=
               f"PRIOR results (id: snippet) — improve on these:\n{prior or '(none yet)'}\n\n"
               "Write def run(session, query, top_k): choosing the strategy that fits THIS question, "
               "acting on the judge's diagnosis (target the MISSING sub-fact with its SUGGESTED technique).")
-    raw = gen.complete(prompt, system=AUTHOR_SYSTEM)
+    raw = gen.complete(prompt, system=system or AUTHOR_SYSTEM)
     m = _CODE.search(raw)
     return (m.group(1) if m else raw).strip()
 
@@ -161,6 +183,8 @@ def agentic_solve(session, query, *, gold=None, max_hops=10, generator=None, jud
     if judge_stop is None:
         judge_stop = gold is None
     goldset = set(str(g) for g in (gold or []))
+    author_sys = build_author_system(session)       # backend-aware (AGT-1: no raw DSL on memory)
+    has_dsl = hasattr(session.store, "_search")
 
     # cross-query memory: strategies that worked on similar past queries (skill building)
     recalled = memory.recall(query, k=3, kind="skill_win")
@@ -186,7 +210,8 @@ def agentic_solve(session, query, *, gold=None, max_hops=10, generator=None, jud
         if hop == 1 and os_first and hasattr(session.store, "_search"):
             code = _author_os_first(generator, query, max(top_k, 30))
         else:
-            code = _author(generator, query, diagnosis, suggestions, prior, mem_wins, findings)
+            code = _author(generator, query, diagnosis, suggestions, prior, mem_wins, findings,
+                           system=author_sys)
         codes.append(code)
         try:
             ids = _exec(code, session, query, max(top_k, 30))
@@ -223,9 +248,11 @@ def agentic_solve(session, query, *, gold=None, max_hops=10, generator=None, jud
                      f"aspect {v.get('missing') or '?'} (why: {v.get('diagnosis') or 'weak coverage'}). "
                      f"Hint for the missing aspect: {v.get('technique') or 'hyde'} / query "
                      f"'{v.get('next_query') or subfacts[0]}'. Dense is your default; if the MISSING aspect is an "
-                     f"EXACT constraint (year/date/phrase/proper-name), ESCALATE — author a raw "
-                     f"session.store._search bool/match_phrase over `text` on those literal terms and fuse with "
-                     f"dense. Keep the query WHOLE unless it genuinely needs several different documents.")
+                     f"EXACT constraint (year/date/phrase/proper-name), ESCALATE — "
+                     + ("author a raw session.store._search bool/match_phrase over `text` on those literal "
+                        "terms and fuse with dense. " if has_dsl else
+                        "run a mode='keyword' search on just those literal terms and fuse with dense. ")
+                     + "Keep the query WHOLE unless it genuinely needs several different documents.")
         # DJ-11: the true gold-coverage count must NOT reach the prompt in judge-stop
         # ("no-oracle") mode — findings are recalled into the strategist prompt every hop,
         # so writing `covered got/len` leaked the oracle into the arm that claims not to see it.
