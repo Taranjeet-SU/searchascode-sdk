@@ -3,7 +3,7 @@
 ## Reporting a vulnerability
 
 Please report security issues privately through
-[GitHub Security Advisories](https://github.com/oro-jackson/searchascode-sdk/security/advisories/new)
+[GitHub Security Advisories](https://github.com/Taranjeet-SU/searchascode-sdk/security/advisories/new)
 rather than opening a public issue. We aim to acknowledge within a few working days.
 
 ## Scope and threat model
