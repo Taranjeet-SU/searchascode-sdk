@@ -22,11 +22,16 @@ from __future__ import annotations
 import json
 import re
 from dataclasses import asdict, dataclass, field
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 
 from .loop import fuse_ids
 from .skills import Skill
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
 
 # retriever aliases → built-in skill names the recipe composes
 _ALIAS = {"dense": "dense_lookup", "keyword": "keyword_search", "hybrid": "hybrid_search",
@@ -43,6 +48,9 @@ class LearnedSkill:
     cost: int = 1
     origin: str = "forged"          # forged | llm | user
     tags: list = field(default_factory=lambda: ["learned"])
+    #: FRG-4 — where this artifact came from and what it beat: {created, held_n, candidate_mean,
+    #: baselines, gate_baseline, delta_vs_baseline, accepted, corpus_fingerprint, supersedes, ...}
+    provenance: dict = field(default_factory=dict)
 
     def to_skill(self, registry) -> Skill:
         retrievers, combine = self.retrievers, self.combine
@@ -110,6 +118,7 @@ class CodePrimitive:
     code: str                           # defines `def run(session, query, top_k): -> ids | ResultSet`
     origin: str = "llm_code"
     tags: list = field(default_factory=lambda: ["learned", "code"])
+    provenance: dict = field(default_factory=dict)   # FRG-4; see LearnedSkill.provenance
 
     def to_skill(self, _registry=None) -> "Skill":
         ns: dict = {}
@@ -138,6 +147,7 @@ class LearnedSubagent:
     plan: list                      # ordered skill names the subagent tries
     base_prompt: str = ""
     tags: list = field(default_factory=lambda: ["learned"])
+    provenance: dict = field(default_factory=dict)   # FRG-4; see LearnedSkill.provenance
 
 
 class HarnessStore:
@@ -212,10 +222,23 @@ class HarnessForge:
             except Exception:
                 pass
 
+    def _archive_superseded(self, kind: str, record: dict) -> None:
+        """Overwriting a named artifact archives the old version to ``superseded.jsonl``
+        (append-only) instead of silently discarding it (FRG-4)."""
+        if self.store.path:
+            self.store.path.mkdir(parents=True, exist_ok=True)
+            with (self.store.path / "superseded.jsonl").open("a") as f:
+                f.write(json.dumps({"kind": kind, "archived": _now(), **record}) + "\n")
+
     def create_skill(self, name: str, when_to_use: str, retrievers, combine: str = "fuse",
-                     cost: int = 1, origin: str = "forged") -> str:
+                     cost: int = 1, origin: str = "forged", provenance: Optional[dict] = None) -> str:
+        prov = {"created": _now(), **(provenance or {})}
+        if name in self.store.skills:
+            old = self.store.skills[name]
+            self._archive_superseded("skill", asdict(old))
+            prov.setdefault("supersedes", old.provenance.get("created", "unversioned"))
         ls = LearnedSkill(name=name, when_to_use=when_to_use, retrievers=list(retrievers),
-                          combine=combine, cost=cost, origin=origin)
+                          combine=combine, cost=cost, origin=origin, provenance=prov)
         self.store.skills[name] = ls
         self.registry.register(ls.to_skill(self.registry))       # available online, this run
         self.store.save()
@@ -224,30 +247,114 @@ class HarnessForge:
     # a forged "primitive" is a composed reusable retrieval recipe — same mechanism as a skill
     create_primitive = create_skill
 
-    def create_code_primitive(self, name: str, when_to_use: str, code: str) -> str:
+    def create_code_primitive(self, name: str, when_to_use: str, code: str,
+                              provenance: Optional[dict] = None) -> str:
         """TRUE primitive creation: register + persist an LLM-AUTHORED retrieval function (arbitrary
         code, not a composition). Compiles + smoke-instantiates before accepting."""
-        cp = CodePrimitive(name=name, when_to_use=when_to_use, code=code)
+        prov = {"created": _now(), **(provenance or {})}
+        if name in self.store.code_primitives:
+            old = self.store.code_primitives[name]
+            self._archive_superseded("code_primitive", asdict(old))
+            prov.setdefault("supersedes", old.provenance.get("created", "unversioned"))
+        cp = CodePrimitive(name=name, when_to_use=when_to_use, code=code, provenance=prov)
         self.registry.register(cp.to_skill())        # raises if code doesn't compile / lacks run()
         self.store.code_primitives[name] = cp
         self.store.save()
         return name
 
-    def create_subagent(self, name: str, when_to_use: str, plan, base_prompt: str = "") -> str:
+    def create_subagent(self, name: str, when_to_use: str, plan, base_prompt: str = "",
+                        provenance: Optional[dict] = None) -> str:
+        prov = {"created": _now(), **(provenance or {})}
+        if name in self.store.subagents:
+            self._archive_superseded("subagent", asdict(self.store.subagents[name]))
         self.store.subagents[name] = LearnedSubagent(name=name, when_to_use=when_to_use,
-                                                     plan=list(plan), base_prompt=base_prompt)
+                                                     plan=list(plan), base_prompt=base_prompt,
+                                                     provenance=prov)
         self.store.save()
         return name
 
-    def refine_prompt(self, rule: str) -> None:
+    def refine_prompt(self, rule: str, supersedes: Optional[str] = None) -> None:
+        """Append an evidence-backed rule. ``supersedes``: a substring — any existing rule
+        containing it is RETIRED (archived), so the injected block can't accumulate the
+        mutually-contradictory instructions the audit found (FRG-4: 'decompose 1/2' +
+        'decompose 6/6' + 'whole-query 39/274' all live at once)."""
         rule = rule.strip()
-        if rule and rule not in self.store.learnings:
+        if not rule:
+            return
+        if supersedes:
+            retired = [r for r in self.store.learnings if supersedes in r and r != rule]
+            for r in retired:
+                self._archive_superseded("learning", {"rule": r, "superseded_by": rule})
+            self.store.learnings = [r for r in self.store.learnings if supersedes not in r or r == rule]
+        if rule not in self.store.learnings:
             self.store.learnings.append(rule)
             self.store.save()
 
     def remember(self, fact: str, **meta):
         if self.memory is not None:
             return self.memory.remember(fact, **meta)
+
+    # ---------------------------------------------------------------- the acceptance gate
+    #: fallback code per baseline mode — what the gate emits when the candidate loses
+    BASELINE_CODE = {
+        "dense": "def run(session, query, top_k):\n    return session.search(query, top_k=top_k, mode='dense').ids()",
+        "hybrid": "def run(session, query, top_k):\n    return session.search(query, top_k=top_k, mode='hybrid').ids()",
+        "keyword": "def run(session, query, top_k):\n    return session.search(query, top_k=top_k, mode='keyword').ids()",
+    }
+
+    def accept_code_primitive(self, name: str, when_to_use: str, code: str, *, session, held,
+                              baselines=("dense", "hybrid"), k: int = 20,
+                              require_significant: bool = False,
+                              extra_provenance: Optional[dict] = None) -> dict:
+        """The best-baseline acceptance gate (FRG-1/FRG-3; fable.md WS3).
+
+        Runs the candidate AND each baseline mode over ``held`` (rows with query/gold_ids),
+        gates on the paired-bootstrap delta vs the BEST baseline — not dense alone: the
+        fable_baselines measurement showed hybrid beats dense on every corpus, with the gap
+        widening with hop depth — and persists whichever side wins as ``name``, carrying full
+        provenance either way. A rejected candidate's code is kept in the provenance record.
+
+        Returns the provenance dict (``accepted`` tells you which side shipped).
+        """
+        from ..metrics import compare, recall_at_k
+
+        def _recalls(run_ids) -> list[float]:
+            out = []
+            for r in held:
+                try:
+                    ids = [str(i) for i in (run_ids(r["query"]) or [])][:k]
+                except Exception:
+                    ids = []
+                out.append(recall_at_k(ids, [str(g) for g in r["gold_ids"]], k))
+            return out
+
+        cand_skill = CodePrimitive(name=name, when_to_use=when_to_use, code=code).to_skill()
+        cand = _recalls(lambda q: cand_skill.run(session, q, top_k=k))
+        base = {b: _recalls(lambda q, m=b: session.search(q, top_k=k, mode=m).ids())
+                for b in baselines}
+        best_b = max(base, key=lambda b: sum(base[b]))
+        delta = compare(cand, base[best_b])
+        accepted = delta["delta"] > 0 and (delta["significant"] or not require_significant)
+        prov = {"created": _now(), "held_n": len(held), "k": k,
+                "candidate_mean": round(sum(cand) / max(1, len(cand)), 4),
+                "baseline_means": {b: round(sum(v) / max(1, len(v)), 4) for b, v in base.items()},
+                "gate_baseline": best_b,
+                "delta_vs_baseline": {kk: (round(vv, 4) if isinstance(vv, float) else vv)
+                                      for kk, vv in delta.items()},
+                "accepted": bool(accepted), **(extra_provenance or {})}
+        try:  # best-effort corpus identity, so a store can't silently serve another corpus
+            from ..explore.engine import corpus_fingerprint
+            prov["corpus_fingerprint"] = corpus_fingerprint(session.store)
+        except Exception:
+            pass
+        if accepted:
+            self.create_code_primitive(name, when_to_use, code, provenance=prov)
+        else:
+            self.create_code_primitive(
+                name, f"best-baseline fallback ({best_b}) — the authored candidate did not beat it",
+                self.BASELINE_CODE[best_b],
+                provenance={**prov, "fallback_of": best_b, "rejected_code": code})
+        return prov
 
 
 def author_code_primitive(gen, patterns: str, forge, session, test_query: str, gold,
