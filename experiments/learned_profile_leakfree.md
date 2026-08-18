@@ -13,16 +13,16 @@ The first 120 of the 150 evaluation queries were therefore exactly the mining se
 contamination**. `run_learn_sweep.sh` ran that pair for four datasets, so every
 learning-pipeline number in `MULTI_DATASET_REPORT.md` inherited it. (`issues.md` P2-1.)
 
-Fixed by [`phase2/splits.py`](../phase2/splits.py): one seeded, sorted, order-independent split
+Fixed by [`internal/legacy/phase2/splits.py`](../internal/legacy/phase2/splits.py): one seeded, sorted, order-independent split
 used by both passes. Sorting before shuffling matters — the two passes agreed silently *because*
 they both trusted dict insertion order.
 
 ## Method
 
 ```bash
-python -m phase2.learn_rules  --dataset <ds> --n 120 --max-cases 40 --split train
-python -m phase2.impact_eval  --dataset <ds> --n 150 --split train   # in-sample
-python -m phase2.impact_eval  --dataset <ds> --n 150 --split test    # held-out
+python -m internal.legacy.phase2.learn_rules  --dataset <ds> --n 120 --max-cases 40 --split train
+python -m internal.legacy.phase2.impact_eval  --dataset <ds> --n 150 --split train   # in-sample
+python -m internal.legacy.phase2.impact_eval  --dataset <ds> --n 150 --split test    # held-out
 ```
 
 Deltas carry paired bootstrap 95% CIs (`search_as_code.metrics.compare`). Logs:
@@ -69,5 +69,5 @@ Deltas carry paired bootstrap 95% CIs (`search_as_code.metrics.compare`). Logs:
 
 **Action taken:** both passes are now split-aware and default to mining on `train` / evaluating
 on `test`; `impact_eval` prints deltas with intervals and writes
-`phase2/runs/impact_<dataset>_<split>.json`. The claim should be removed from `CHANGELOG.md`
+`internal/legacy/phase2/runs/impact_<dataset>_<split>.json`. The claim should be removed from `CHANGELOG.md`
 and `MULTI_DATASET_REPORT.md` unless someone can reproduce it under a stated protocol.

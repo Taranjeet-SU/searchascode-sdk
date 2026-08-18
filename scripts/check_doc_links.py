@@ -31,6 +31,20 @@ def _tracked() -> set[str]:
 def main(argv: list[str]) -> int:
     public_only = "--public" in argv
     tracked = _tracked()
+
+    # Check what is COMMITTED, not what happens to be in the working tree. A guard that reads
+    # the working tree passes on edits that were never staged — which is exactly how the
+    # post-merge path fixes were lost (issues.md MRG-5): the merge commit took the index, the
+    # sed edits sat unstaged, and the link checker still went green.
+    if "--staged" in argv:
+        dirty = subprocess.run(["git", "diff", "--name-only"], cwd=ROOT,
+                               capture_output=True, text=True).stdout.split()
+        if dirty:
+            print("  - refusing to report on a dirty tree; these files have UNSTAGED edits "
+                  "that would not be committed:")
+            for f in dirty[:20]:
+                print(f"      {f}")
+            return 1
     md_files = sorted(p for p in ROOT.rglob("*.md")
                       if ".venv" not in p.parts and "node_modules" not in p.parts
                       and str(p.relative_to(ROOT)) in tracked)

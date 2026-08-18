@@ -35,7 +35,7 @@ guard:  ## refuse customer/internal artifacts in the tracked tree (GOV-1/2/3)
 	$(PY) scripts/check_no_customer_artifacts.py --check-tree
 
 docs-links:  ## check every relative link in the markdown resolves (DOC-6)
-	$(PY) scripts/check_doc_links.py
+	$(PY) scripts/check_doc_links.py --public --staged
 
 wheel:  ## build the wheel and smoke-test it in a clean venv (STR-1)
 	$(PY) scripts/smoke_wheel.py

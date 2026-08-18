@@ -16,7 +16,7 @@ from sentence_transformers import SentenceTransformer
 import search_as_code as sac
 from phase1 import common
 from phase1.llm import LLM
-from phase2 import beir
+from internal.legacy.phase2 import beir
 from search_as_code.explore import (
     Explorer,
     ProfilePack,

@@ -23,7 +23,7 @@ def main(dataset="fiqa", n=150, split="test"):
     q, qr, index = beir.eval_data(dataset)
     # Evaluate on the split the rules were NOT mined from. Reporting BOTH makes the
     # in-sample/held-out gap visible instead of hiding it (P2-1).
-    from phase2.splits import pick
+    from internal.legacy.phase2.splits import pick
     qids = pick(qr, split, n=None)[:n] if split != "all" else \
         [x for x in qr if any(v > 0 for v in qr[x].values())][:n]
     print(f"[impact] dataset={dataset} split={split} n_qids={len(qids)}", flush=True)

@@ -1603,3 +1603,27 @@ minus the audit fixes — meaning `main` had been shipping the GEN-1 (`out[0]`) 
 `\band\b`) defects this whole time. Long-lived parallel feature branches over a shared subsystem
 is the root cause; merging to `main` more often would have surfaced it as a small conflict instead
 of a 45-file one.
+
+#### 🟥 MRG-5 `[C]` Merge-time fixes were silently dropped: edits made after staging never reached the commit, and the guards passed anyway
+During the `deep-sac → main` merge I repaired the reorg's stale imports
+(`internal/legacy/phase2/{learn_rules,impact_eval,beir_qrels,beir_train}.py` →
+`from internal.legacy.phase2 ...`) and the path references in
+`experiments/learned_profile_leakfree.md`. Both edits were made **after** the corresponding
+files were staged, so `git commit` during the merge took the index and left them behind. They
+never shipped. `main` therefore still had:
+```bash
+grep -rn 'from phase2' internal/legacy/ --include='*.py'    # -> 5 hits after the merge
+python3 -c "from internal.legacy.phase2.splits import pick" # OK — misleading
+# the bad imports are INSIDE functions, so they only fail when called:
+#   ModuleNotFoundError: No module named 'phase2.splits'
+```
+Two compounding faults, both worth fixing rather than just noting:
+1. **The guards read the working tree, not the index.** `scripts/check_doc_links.py` reported
+   "All relative links resolve" on the merge branch because the unstaged sed *was* on disk. A
+   check that passes on uncommitted state gives false assurance precisely when it matters.
+   **FIXED**: `--staged` now refuses to report on a dirty tree, and `make check` uses it.
+2. **Function-level imports hide breakage from import-time checks.** The modules import fine and
+   only fail when the function runs, so neither CI (which does not cover `internal/`, CI-1) nor a
+   smoke import catches it.
+**FIXED** 2026-08-18 on `fix/post-merge-paths`. Cross-references MRG-1, which this entry shows
+was not actually fixed by the commit that claimed it.
