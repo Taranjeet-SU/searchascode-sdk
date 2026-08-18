@@ -1554,3 +1554,52 @@ Found by the new `scripts/check_doc_links.py --public`. `README.md` linked to `S
 DOC-6, five more instances. Resolved by tracking the genuinely-public docs and **de-linking**
 `experiments/browsecomp/RESULTS.md`, which GOV-1 says must not be published (a public doc must not
 link to a file we refuse to publish). **FIXED** 2026-08-17 `bf4ed25`.
+
+---
+
+## 16. Found while merging `feat/deep-sac` into `main` (2026-08-17)
+
+#### 🟥 MRG-1 `[C]` The `phase2/ → internal/legacy/phase2/` reorg moved files without updating their imports
+`internal/legacy/phase2/{beir_qrels,beir_train,learn_rules,impact_eval}.py` still read
+`from phase2 import beir` / `from phase2.splits import pick` after main's 32-file rename, while
+their siblings (`beir_run.py:21`, `impact_eval.py:18`) had been updated to
+`from internal.legacy.phase2 import beir`. So the moved modules were half-repointed and would
+`ModuleNotFoundError` at their new home. Nothing caught it because CI lints and type-checks only
+`search_as_code/` (CI-1) and `internal/legacy/` has no tests.
+```bash
+grep -rn '^\s*from phase2' internal/legacy/     # -> 5 hits before the fix
+```
+**FIXED** 2026-08-17 in the merge commit. **Underlying issue stands:** a rename of 32 tracked
+modules with no import check is exactly what `make check` should cover — widen ruff/mypy beyond
+`search_as_code/` (CI-1) or the next reorg breaks silently again.
+
+#### 🟧 MRG-2 `[C]` Deleting `benchmark_changelog.md` broke two public README links
+Main folded `benchmark_changelog.md` into `CHANGELOG.md` and deleted it, but `README.md` still
+linked to it twice — the same defect as DOC-6, reintroduced by the cleanup that was supposed to
+tidy it. Caught by `scripts/check_doc_links.py`, which did not exist when the deletion was made.
+**FIXED** 2026-08-17 (relinked to `CHANGELOG.md`). Argues for running the link checker on `main`
+too, not only on branches that happen to carry it.
+
+#### 🟥 MRG-3 `[A]` GOV-1 is live on `main`, and `.gitignore` cannot fix it
+`origin/main` tracks **26** `experiments/{browsecomp,su_multihop}` files, including
+`data/su_multihop_{2,3,4}docs.jsonl` (SearchUnify-derived) — the paths `.gitignore` labels
+"INTERNAL, do not push". `feat/deep-sac` had already untracked them, so **the merge pulled them
+back in**: a `.gitignore` entry does not untrack a tracked file, and a merge from a branch that
+still tracks it re-adds it. Demonstrated by the guard failing on a tree whose `.gitignore` lists
+those very paths:
+```bash
+git check-ignore experiments/browsecomp/RESULTS.md    # -> no output: tracked, so not ignored
+```
+Handled in the merge with `git rm --cached` on all 26 (files remain on disk; history untouched,
+per the untrack-going-forward decision). **Still open:** the data remains in `origin/main`'s
+history and in every existing clone. Removing it needs a history rewrite and a force-push — a
+decision for the repo owner, not a code change.
+
+#### 🟨 MRG-4 `[R]` Two independent lineages built the same harness, and `main` held the older copy of 17 files
+The merge base is `b57b0af`; `feat/agentic-explore` (→ main) and `feat/diagnostic-judge` (→
+deep-sac) each added `search_as_code/harness/*` separately, producing add/add conflicts on 45
+files. For **17** of them main's copy was byte-identical to pre-sweep deep-sac — the same code
+minus the audit fixes — meaning `main` had been shipping the GEN-1 (`out[0]`) and SDK-A4 (bare
+`\band\b`) defects this whole time. Long-lived parallel feature branches over a shared subsystem
+is the root cause; merging to `main` more often would have surfaced it as a small conflict instead
+of a 45-file one.
