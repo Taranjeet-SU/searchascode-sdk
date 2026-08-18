@@ -47,7 +47,7 @@ EF.K = 20
 from experiments.multi_hop_synth_queries.eval_fair import Tools, code_harness, tool_harness  # noqa: E402
 
 HERE = Path(__file__).parent
-ARMS = ["dense", "tool", "sac"]
+ARMS = ["dense", "tool", "sac", "tool_explored", "sac_explored"]
 QWEN_MODEL = "Qwen/Qwen3-Embedding-8B"
 QWEN_TASK = "Given a web search query, retrieve relevant passages that answer the query"
 
@@ -117,6 +117,38 @@ def recall_at(gold, ids, k):
     return len(g & top) / len(g), int(g <= top)
 
 
+def load_explore_seed(corpus):
+    """What explore→forge learned about THIS corpus: guidance text + the gate-selected forged
+    primitive as a runnable. The unseeded arms get eval_fair's generic multi-hop brief — which
+    says DECOMPOSE, the exact strategy explore found wrong on BrowseComp (whole-query, 0/30
+    decomposed; gate selected dense). Seeding is the explore-first workflow the SDK documents."""
+    from search_as_code.harness.forge import CodePrimitive, HarnessStore
+    stem = "browsecomp" if corpus.startswith("browsecomp") else "hotpot"
+    store_dir = Path(__file__).parents[1] / "deep_judge" / f"forge_store_{stem}_explored"
+    pipe_json = Path(__file__).parents[1] / "deep_judge" / f"explore_pipeline_{stem}.json"
+    if not store_dir.exists():
+        return "", None
+    store = HarnessStore(path=str(store_dir))
+    rules = [r for r in store.learnings if "discovered structure" in r][-1:]
+    selected = ""
+    try:
+        selected = json.loads(pipe_json.read_text()).get("selected_strategy", "")
+    except Exception:
+        pass
+    prim = next(iter(store.code_primitives.values()), None)
+    guidance = ("\n\nEXPLORE FINDINGS on THIS corpus (from a prior explore->forge run — these OVERRIDE "
+                "the generic strategy above): " + "; ".join(rules)
+                + (f". The held-out acceptance gate selected '{selected}' as the shipped strategy — "
+                   f"the authored alternatives did NOT beat it." if selected else "")
+                + " Prefer ONE whole-query search (the `forged` tool / forged(query) runs the vetted "
+                  "strategy); do NOT decompose unless that clearly fails.")
+    forged_fn = None
+    if prim is not None:
+        sk = CodePrimitive(name=prim.name, when_to_use=prim.when_to_use, code=prim.code).to_skill()
+        forged_fn = lambda session, q, k=20: sk.run(session, q, top_k=k)   # noqa: E731
+    return guidance, forged_fn
+
+
 def main():
     corpus = sys.argv[1] if len(sys.argv) > 1 else "browsecomp_qwen8b"
     n = int(sys.argv[2]) if len(sys.argv) > 2 else 100
@@ -133,6 +165,10 @@ def main():
                 and len(per[r["tag"]]) < n and (per[r["tag"]].append(r) or True)]
         rows = [r for tag in sorted(per) for r in per[tag]]
     chat = agents.lc_chat()
+    seed_guidance, forged_fn = load_explore_seed(corpus)
+    arms = ARMS if seed_guidance else ["dense", "tool", "sac"]
+    print(f"[cost] explore seed: {'LOADED' if seed_guidance else 'none'} "
+          f"(forged runnable: {bool(forged_fn)})", flush=True)
 
     # Crash-proof + resumable: per-query rows flush to the JSONL as they complete, and prior
     # rows are reloaded on restart (learned the hard way — a spend-limit 429 killed a run at
@@ -140,10 +176,17 @@ def main():
     pq_path = HERE / f"cost_{corpus}_perquery.jsonl"
     records = []
     if pq_path.exists():
-        records = [json.loads(ln) for ln in pq_path.open() if ln.strip()]
-        have = {r["qid"] for r in records}
+        by_qid = {}
+        for ln in pq_path.open():
+            if ln.strip():
+                r = json.loads(ln)
+                by_qid[r["qid"]] = r                  # last write wins (re-runs supersede)
+        records = list(by_qid.values())
+        # a row is done only if it carries EVERY arm of the current run (seeded arms re-run old rows)
+        have = {r["qid"] for r in records if all(a in r for a in arms)}
+        records = [r for r in records if r["qid"] in have]
         rows = [r for r in rows if r["qid"] not in have]
-        print(f"[cost] resuming: {len(records)} rows already done, {len(rows)} to go", flush=True)
+        print(f"[cost] resuming: {len(have)} complete rows kept, {len(rows)} to run", flush=True)
     pq_file = pq_path.open("a")
     print(f"[cost] corpus={corpus} n={len(rows)} workers={workers} budget={budget}", flush=True)
 
@@ -187,6 +230,33 @@ def main():
                       "in": sgen.usage.input_tokens, "in_cached": sgen.usage.cached_input_tokens,
                       "out": sgen.usage.output_tokens, "in_uncached_known": True}
 
+        # explore-SEEDED arms: same harnesses + the corpus knowledge explore/forge produced
+        if seed_guidance:
+            from experiments.multi_hop_synth_queries.eval_fair import CODE_SYS, TOOL_SYS
+            tgen2 = LLM()
+            tt2 = Tools(session, tgen2, budget, forged_skill=forged_fn)
+            t = time.monotonic()
+            tids2, tm2 = tool_harness(chat, tt2, q, system=TOOL_SYS + seed_guidance)
+            dt = time.monotonic() - t
+            r10, a10 = recall_at(gold, tids2, 10)
+            res["tool_explored"] = {"recall@10": r10, "all@10": a10, "latency_s": round(dt, 3),
+                                    "searches": tt2.searches, "turns": tm2["steps"],
+                                    "in": tm2["lc_in"] + tgen2.usage.input_tokens,
+                                    "in_cached": tgen2.usage.cached_input_tokens,
+                                    "out": tm2["lc_out"] + tgen2.usage.output_tokens,
+                                    "in_uncached_known": False}
+            sgen2 = LLM()
+            st2 = Tools(session, sgen2, budget, forged_skill=forged_fn)
+            t = time.monotonic()
+            sids2, sm2 = code_harness(sgen2, st2, q, system=CODE_SYS + seed_guidance)
+            dt = time.monotonic() - t
+            r10, a10 = recall_at(gold, sids2, 10)
+            res["sac_explored"] = {"recall@10": r10, "all@10": a10, "latency_s": round(dt, 3),
+                                   "searches": st2.searches, "turns": sm2["steps"],
+                                   "in": sgen2.usage.input_tokens,
+                                   "in_cached": sgen2.usage.cached_input_tokens,
+                                   "out": sgen2.usage.output_tokens, "in_uncached_known": True}
+
         with lock:
             records.append(res)
             pq_file.write(json.dumps(res) + "\n")
@@ -211,16 +281,20 @@ def main():
                                   "`in` is uncached with `in_cached` separate"]},
            "arms": {}, "by_tag": {}}
     tags = sorted({r["tag"] for r in records})
-    for a in ARMS:
-        agg = {m: sum(r[a][m] for r in records) / len(records) for m in metrics}
-        lat = [r[a]["latency_s"] for r in records]
+    for a in arms:
+        rows_a = [r for r in records if a in r]       # resumed rows may predate the seeded arms
+        if not rows_a:
+            continue
+        agg = {m: sum(r[a][m] for r in rows_a) / len(rows_a) for m in metrics}
+        lat = [r[a]["latency_s"] for r in rows_a]
         mean, lo, hi = bootstrap_ci(lat)
-        out["arms"][a] = {**{m: round(agg[m], 4) for m in metrics},
+        out["arms"][a] = {**{m: round(agg[m], 4) for m in metrics}, "n": len(rows_a),
                           "latency_ci": [round(mean, 2), round(lo, 2), round(hi, 2)]}
         for tag in tags:
-            sub = [r for r in records if r["tag"] == tag]
-            out["by_tag"].setdefault(tag, {})[a] = {
-                m: round(sum(r[a][m] for r in sub) / len(sub), 4) for m in metrics}
+            sub = [r for r in rows_a if r["tag"] == tag]
+            if sub:
+                out["by_tag"].setdefault(tag, {})[a] = {
+                    m: round(sum(r[a][m] for r in sub) / len(sub), 4) for m in metrics}
 
     stem = HERE / f"cost_{corpus}"
     stem.with_suffix(".json").write_text(json.dumps(out, indent=2))
@@ -229,9 +303,11 @@ def main():
     print(f"\n===== {corpus} cost (n={len(records)}, budget={budget}) =====")
     print(f"  {'arm':6s} {'r@10':>6s} {'lat_s':>7s} {'turns':>6s} {'srch':>5s} "
           f"{'in_tok':>8s} {'cached':>7s} {'out':>6s}")
-    for a in ARMS:
+    for a in arms:
+        if a not in out["arms"]:
+            continue
         r = out["arms"][a]
-        print(f"  {a:6s} {r['recall@10']:>6.3f} {r['latency_s']:>7.2f} {r['turns']:>6.2f} "
+        print(f"  {a:13s} {r['recall@10']:>6.3f} {r['latency_s']:>7.2f} {r['turns']:>6.2f} "
               f"{r['searches']:>5.1f} {int(r['in']):>8d} {int(r['in_cached']):>7d} {int(r['out']):>6d}")
     print(f"\nwrote {stem}.json + perquery ({time.time()-t0:.0f}s total)")
 
