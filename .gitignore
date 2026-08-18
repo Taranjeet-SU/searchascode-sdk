@@ -52,3 +52,4 @@ phase4/
 !phase4/metrics.py
 experiments/fable_baselines/baselines_su.json
 experiments/fable_baselines/baselines_browsecomp.json
+experiments/cost_tokens/cost_browsecomp*
