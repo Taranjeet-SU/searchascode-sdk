@@ -96,7 +96,7 @@ from .session import Session, route
 from .surface import SAC_SYSTEM  # the LLM-facing prompt surface ships with the wheel (DOC-1/SDK-R8)
 from .types import Capabilities, Document, Hit, ResultSet
 
-__version__ = "0.0.1"
+__version__ = "0.1.0"
 
 __all__ = [
     # data model
