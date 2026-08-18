@@ -35,6 +35,11 @@ summary a user should read before quoting anything.
   the README, and `HarnessForge.accept_code_primitive` persists the winning side under
   the requested name so gate-written stores cannot reproduce the mistake.
 
+- **Five stop/fusion mechanisms measured, four retired** (coverage judge, sufficiency-alone,
+  two CE guards, CE-replace fusion) before verified selection held the runtime floor exactly
+  (Δ=0.0000 vs dense per query, n=60, floor 11/11). The iteration table with every negative
+  result is in the README; the artifacts are in the research repo.
+
 ## How to check us
 
 Every measured delta in this repo's docs carries a paired-bootstrap confidence interval

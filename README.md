@@ -108,11 +108,18 @@ signal:
 | universal CE floor guard (τ=0.5) | missed weak-CE golds (kept 6/10 solved) | rejected |
 | per-corpus calibrated CE gate (TASR-style [4]) | best τ separates solved/unsolved at only 0.602 balanced accuracy here | rejected, kept as negative result |
 | CE-replace fusion (head-to-head displacement) | −0.036 vs dense, CI [−0.122, +0.052] — statistical tie | superseded |
-| **verified selection (sub-LM reads candidates)** [1] | *measurement in progress* | — |
+| **verified selection (sub-LM reads candidates)** [1] | **exact per-query tie with dense (Δ=0.0000, n=60), floor 11/11 solved queries kept** | **ships** |
 
 Every row has a runnable artifact behind it. This is what "self-auditing retrieval" means
 in practice: the failures are part of the documentation, because they are how you know the
 successes are real.
+
+The punchline: **reading beats scoring.** Five signal-based mechanisms could not protect the
+baseline's answers on a corpus whose golds defeat every retrieval score; one pass of sub-model
+*reads* held the floor perfectly. On corpora where the baseline is weak, the same escalation
+ladder gains +50% relative recall; where the baseline is strong, verified selection guarantees
+you keep it. Deeper gains on sparse-gold corpora need the full recursive tier [1] — that is the
+roadmap, stated plainly, not a promise buried in a footnote.
 
 ## 📦 Install
 
