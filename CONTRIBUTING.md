@@ -6,7 +6,7 @@ This is that file. Flask, mem0 and LangChain all ship one; the conventions below
 ## Setup
 
 ```bash
-git clone https://github.com/oro-jackson/searchascode-sdk.git
+git clone https://github.com/Taranjeet-SU/searchascode-sdk.git
 cd searchascode-sdk
 make install                 # pip install -e '.[dev]'
 pre-commit install           # file-hygiene + ruff + mypy on every commit

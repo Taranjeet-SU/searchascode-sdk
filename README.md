@@ -53,7 +53,7 @@ pip install 'search-as-code[opensearch]'   # + a backend (also: qdrant / chroma 
 <details><summary><b>Install from source (for development)</b></summary>
 
 ```bash
-git clone https://github.com/oro-jackson/searchascode-sdk.git
+git clone https://github.com/Taranjeet-SU/searchascode-sdk.git
 cd searchascode-sdk
 pip install -e '.[dev]'          # editable + test/lint/type tooling (pytest, ruff, mypy)
 ```
