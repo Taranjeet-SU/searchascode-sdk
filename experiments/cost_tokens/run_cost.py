@@ -44,10 +44,16 @@ from search_as_code.metrics import bootstrap_ci
 from experiments.multi_hop_synth_queries import eval_fair as EF
 
 EF.K = 20
-from experiments.multi_hop_synth_queries.eval_fair import Tools, code_harness, tool_harness  # noqa: E402
+from experiments.multi_hop_synth_queries.eval_fair import (  # noqa: E402
+    TOOL_SYS,
+    Tools,
+    code_harness,
+    tool_harness,
+)
 
 HERE = Path(__file__).parent
-ARMS = ["dense", "tool", "sac", "tool_explored", "sac_explored"]
+ARMS = ["dense", "tool", "sac", "tool_explored", "sac_explored", "sac_product", "tool_product"]
+PRODUCT_MAX_HOPS = 5      # the product flow's escalation cap; explore/judge-tuning use 10
 QWEN_MODEL = "Qwen/Qwen3-Embedding-8B"
 QWEN_TASK = "Given a web search query, retrieve relevant passages that answer the query"
 
@@ -181,6 +187,9 @@ def main():
         rows = [r for tag in sorted(per) for r in per[tag]]
     chat = agents.lc_chat()
     seed_guidance, forged_fn = load_explore_seed(corpus)
+    from search_as_code.harness.memory import AgentMemory as _AM
+    shared_mem = _AM(path=str(HERE / f"product_memory_{corpus}.jsonl"))   # cross-query skill wins
+    mem_lock = threading.Lock()
     arms = ARMS if seed_guidance else ["dense", "tool", "sac"]
     print(f"[cost] explore seed: {'LOADED' if seed_guidance else 'none'} "
           f"(forged runnable: {bool(forged_fn)})", flush=True)
@@ -247,9 +256,126 @@ def main():
                       "in": sgen.usage.input_tokens, "in_cached": sgen.usage.cached_input_tokens,
                       "out": sgen.usage.output_tokens, "in_uncached_known": True}
 
+        # THE PRODUCT FLOW, both harnesses: gate-selected baseline at hop 0 -> deep judge ->
+        # escalate ONLY on FAIL, judge between hops, cap PRODUCT_MAX_HOPS. This is the policy
+        # explore learned and the gate enforced — the arm the one-shot rows can't represent.
+        # (explore + oracle->judge tuning keep max_hops=10; these are SDK params — see examples.)
+        if seed_guidance and forged_fn is not None:
+            import numpy as np
+            import search_as_code.primitives as P
+            from search_as_code.harness import diagnostic_judge as djm
+            from search_as_code.harness.agentic import agentic_solve
+            from search_as_code.harness.diagnostic_judge import DiagnosticJudge
+            from search_as_code.harness.memory import AgentMemory
+            from search_as_code.harness.rag_techniques import SkillLookup
+            emb = session.embedder.embed              # Session wraps the fn; .embed is the call
+            skill = SkillLookup(emb)                  # "when to call what" recipes (as in the pipeline)
+            # per-query memory seeded from the shared cross-query store; wins harvested back
+            with mem_lock:
+                wins = shared_mem.recall(q, k=3, kind="skill_win")
+            per_q = AgentMemory()
+            for w in wins:
+                per_q.remember(w.content, kind="skill_win", **(w.meta or {}))
+            n_seeded = len(wins)
+
+            def judge_hop0(pgen, judge):
+                """baseline ids + the judge's verdict on them. -> (base_ids, verdict, subs)"""
+                base_ids = [str(i) for i in forged_fn(session, q, 50)]
+                try:
+                    subs = [s for s in (P.decompose(q, pgen.as_generator()) or [q]) if s.strip()][:6] or [q]
+                except Exception:
+                    subs = [q]
+                docs = {d.id: (d.text or "")[:700] for d in session.store.get(base_ids[:10])}
+                texts = [docs.get(i, "") for i in base_ids[:10]]
+                sub_vecs = np.asarray(emb(subs), dtype=np.float32)
+                cand_vecs = (np.asarray(emb(texts), dtype=np.float32) if texts
+                             else np.zeros((0, sub_vecs.shape[1]), np.float32))
+                cov = djm.coverage_signals(subs, sub_vecs, texts, cand_vecs, session.reranker)
+                csc = djm.candidate_scores(session.reranker, q, texts)
+                cands = [{"id": i, "score": s, "snippet": t_}
+                         for (i, t_), s in zip(zip(base_ids[:10], texts), csc)]
+                return base_ids, judge.judge(q, subs, cands, cov), subs
+
+            def rrf_ids(lists):
+                agg2: dict = {}
+                for lst in lists:
+                    for rank, did in enumerate(lst):
+                        agg2[did] = agg2.get(did, 0.0) + 1.0 / (60 + rank + 1)
+                return [d for d, _ in sorted(agg2.items(), key=lambda x: -x[1])]
+
+            # --- sac_product: escalation = judge-guided authored code (agentic_solve) ---
+            pgen = LLM()
+            judge = DiagnosticJudge(pgen)
+            t = time.monotonic()
+            base_ids, v, _ = judge_hop0(pgen, judge)
+            hops, esc = 0, 0
+            if v["verdict"] != "PASS":
+                esc = 1
+                res_p = agentic_solve(session, q, generator=pgen, judge=judge, judge_stop=True,
+                                      reranker=session.reranker, embedder=emb,
+                                      skill_lookup=skill, memory=per_q,
+                                      max_hops=PRODUCT_MAX_HOPS, top_k=20)
+                hops = res_p.get("hops", 0)
+                pids = rrf_ids([base_ids, [str(i) for i in res_p.get("ids") or []]])
+                with mem_lock:                        # cross-query learning: harvest new wins
+                    for m in per_q.longterm[n_seeded:]:
+                        shared_mem.remember(m.content, kind="skill_win", **(m.meta or {}))
+            else:
+                pids = base_ids
+            dt = time.monotonic() - t
+            r10, a10 = recall_at(gold, pids, 10)
+            res["sac_product"] = {"recall@10": r10, "all@10": a10, "latency_s": round(dt, 3),
+                                  "searches": 1 + hops, "turns": 1 + hops, "escalated": esc,
+                                  "in": pgen.usage.input_tokens, "in_cached": pgen.usage.cached_input_tokens,
+                                  "out": pgen.usage.output_tokens, "in_uncached_known": True}
+
+            # --- tool_product: SAME hop-0 + judge; escalation = tool-calling episodes,
+            #     judge between episodes, same PRODUCT_MAX_HOPS cap ---
+            tgen3 = LLM()
+            judge_t = DiagnosticJudge(tgen3)
+            t = time.monotonic()
+            base_ids, v, subs = judge_hop0(tgen3, judge_t)
+            pooled, hops, esc, lc_in, lc_out, tsearch, ep_steps = [base_ids], 0, 0, 0, 0, 0, 0
+            if v["verdict"] != "PASS":
+                esc = 1
+                for hop in range(1, PRODUCT_MAX_HOPS + 1):
+                    hint = (f"\nJudge diagnosis of current results: missing sub-fact "
+                            f"{v.get('missing') or '?'} ({v.get('diagnosis') or 'weak coverage'}); "
+                            f"suggested technique {v.get('technique') or 'hyde'}; "
+                            f"suggested query '{v.get('next_query') or subs[0]}'")
+                    tt3 = Tools(session, tgen3, budget, forged_skill=forged_fn)
+                    tids3, tm3 = tool_harness(chat, tt3, q + hint, system=TOOL_SYS + seed_guidance)
+                    lc_in += tm3["lc_in"]; lc_out += tm3["lc_out"]
+                    tsearch += tt3.searches; ep_steps += tm3["steps"]
+                    pooled.append([str(i) for i in tids3])
+                    hops = hop
+                    fused_now = rrf_ids(pooled)
+                    docs = {d.id: (d.text or "")[:700] for d in session.store.get(fused_now[:10])}
+                    texts = [docs.get(i, "") for i in fused_now[:10]]
+                    sub_vecs = np.asarray(emb(subs), dtype=np.float32)
+                    cand_vecs = (np.asarray(emb(texts), dtype=np.float32) if texts
+                                 else np.zeros((0, sub_vecs.shape[1]), np.float32))
+                    cov = djm.coverage_signals(subs, sub_vecs, texts, cand_vecs, session.reranker)
+                    csc = djm.candidate_scores(session.reranker, q, texts)
+                    cands = [{"id": i, "score": s, "snippet": t_}
+                             for (i, t_), s in zip(zip(fused_now[:10], texts), csc)]
+                    v = judge_t.judge(q, subs, cands, cov)
+                    if v["verdict"] == "PASS":
+                        break
+            tp_ids = rrf_ids(pooled)
+            dt = time.monotonic() - t
+            r10, a10 = recall_at(gold, tp_ids, 10)
+            res["tool_product"] = {"recall@10": r10, "all@10": a10, "latency_s": round(dt, 3),
+                                   "searches": 1 + tsearch, "turns": 1 + ep_steps + hops,
+                                   "escalated": esc,
+                                   "in": lc_in + tgen3.usage.input_tokens,
+                                   "in_cached": tgen3.usage.cached_input_tokens,
+                                   "out": lc_out + tgen3.usage.output_tokens,
+                                   "in_uncached_known": False}
+
         # explore-SEEDED arms: same harnesses + the corpus knowledge explore/forge produced
         if seed_guidance:
-            from experiments.multi_hop_synth_queries.eval_fair import CODE_SYS, TOOL_SYS
+            from experiments.multi_hop_synth_queries.eval_fair import CODE_SYS
             tgen2 = LLM()
             tt2 = Tools(session, tgen2, budget, forged_skill=forged_fn)
             t = time.monotonic()
@@ -307,6 +433,9 @@ def main():
         mean, lo, hi = bootstrap_ci(lat)
         out["arms"][a] = {**{m: round(agg[m], 4) for m in metrics}, "n": len(rows_a),
                           "latency_ci": [round(mean, 2), round(lo, 2), round(hi, 2)]}
+        if a in ("sac_product", "tool_product"):
+            out["arms"][a]["escalation_rate"] = round(
+                sum(r[a].get("escalated", 0) for r in rows_a) / len(rows_a), 3)
         for tag in tags:
             sub = [r for r in rows_a if r["tag"] == tag]
             if sub:
