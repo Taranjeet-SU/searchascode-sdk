@@ -8,7 +8,6 @@ queries, and reports recall@10/@20/all-golds@10 next to a plain dense baseline o
 from __future__ import annotations
 
 import json
-import os
 import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -35,19 +34,14 @@ def _recall(gold, ids):
 
 def main():
     corpus = sys.argv[1] if len(sys.argv) > 1 else "browsecomp"
-    # per-experiment isolation (default = old behavior): read the forge store + write results here (issues.md #1)
-    OUT = Path(os.environ.get("SAC_EXP_DIR", HERE)); OUT.mkdir(parents=True, exist_ok=True)
-    TAG = os.environ.get("SAC_TAG", corpus)
     workers = int(sys.argv[2]) if len(sys.argv) > 2 else 8
     dev = "cuda" if torch.cuda.is_available() else "cpu"
-    em = SentenceTransformer(os.environ.get("BC_EMB", common.EMB_MODEL), device=dev, trust_remote_code=True)
-    em.max_seq_length = int(os.environ.get("SAC_MAX_SEQ", 512))   # cap ctx: 8B defaults to 32K -> OOM on long in-mem docs (issues.md #5)
-    _DIM = em.get_sentence_embedding_dimension()
+    em = SentenceTransformer(common.EMB_MODEL, device=dev)
     embed = lambda t: em.encode(list(t), normalize_embeddings=True).tolist()  # noqa
     rr = sac.CrossEncoderReranker()
     gen = LLM()
     if corpus == "browsecomp":
-        store = sac.connect("opensearch", index=os.environ.get("BC_INDEX", "browsecomp"), dim=_DIM, hosts=[common.OS_HOST],
+        store = sac.connect("opensearch", index="browsecomp", dim=common.DIM, hosts=[common.OS_HOST],
                             text_field="text", vector_field="vector")
         from experiments.browsecomp import bc_common
         g, q = bc_common.load_golds(), bc_common.load_queries()
@@ -58,7 +52,7 @@ def main():
     session = sac.Session(store, embedder=embed, generator=gen.as_generator(), reranker=rr)
 
     reg = SkillRegistry(embedder=embed)
-    fstore = HarnessStore(path=str(OUT / f"forge_store_{TAG}_explored"))
+    fstore = HarnessStore(path=str(HERE / f"forge_store_{corpus}_explored"))
     HarnessForge(fstore, reg, AgentMemory())
     name = f"{corpus}_explored_primitive"
     prim = reg.get(name)
@@ -92,7 +86,7 @@ def main():
            "arms": {arm: {"recall@10": round(float(np.mean(v["r10"])), 4),
                           "recall@20": round(float(np.mean(v["r20"])), 4),
                           "all_golds@10": round(float(np.mean(v["all"])), 4)} for arm, v in agg.items()}}
-    (OUT / f"explore_full_{TAG}.json").write_text(json.dumps(out, indent=2))
+    (HERE / f"explore_full_{corpus}.json").write_text(json.dumps(out, indent=2))
     print(f"\n===== [{corpus}] FULL-DATA (n={len(rows)}) with forged primitive =====")
     for arm in ("dense", "forged"):
         e = out["arms"][arm]

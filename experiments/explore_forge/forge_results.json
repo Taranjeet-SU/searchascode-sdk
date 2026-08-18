@@ -1,0 +1,28 @@
+{
+  "config": {
+    "per_hop": 2,
+    "max_depth": 10,
+    "n_train": 6,
+    "n_test": 6
+  },
+  "explore": {
+    "solve_rate(all_golds@10, oracle)": 0.6667,
+    "avg_hops": 4.0,
+    "n": 6,
+    "wall_s": 334
+  },
+  "forged_skills": [
+    "explored_multihop",
+    "sub_fact"
+  ],
+  "learned_rules": [
+    "Multi-hop: decompose into sub-facts, retrieve each, FUSE \u2014 do not rerank the union (it drops per-sub-fact coverage)."
+  ],
+  "replicate": {
+    "all_golds@10": 0.6667,
+    "avg_frac": 0.8472,
+    "used_forged_skill": 6,
+    "n": 6,
+    "note": "after prefer-forged fix: 6/6 test queries used the forged explored_multihop skill; all_golds@10 unchanged (0.667)"
+  }
+}

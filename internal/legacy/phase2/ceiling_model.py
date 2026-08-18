@@ -14,7 +14,7 @@ import time
 import numpy as np
 
 from phase1 import common, metrics
-from phase2 import embed_models
+from internal.legacy.phase2 import embed_models
 
 INDIVIDUAL = ["dense", "keyword", "hybrid_rrf", "hybrid_.8", "prf"]
 COMBINATION = ["dense+rerank", "hybrid_.8+rerank", "fuse(dense,kw,prf)", "fuse(dense,kw,prf)+rerank"]

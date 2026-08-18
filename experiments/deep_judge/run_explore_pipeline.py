@@ -18,7 +18,6 @@ Stages (run before any analysis, per corpus):
 from __future__ import annotations
 
 import json
-import os
 import re
 import sys
 import threading
@@ -80,23 +79,18 @@ def forge_from_exploration(gen, session, winning, held_list, name, min_recall=0.
 
 def main():
     corpus = sys.argv[1] if len(sys.argv) > 1 else "browsecomp"
-    # per-experiment isolation (default = old behavior): output dir + artifact tag (see qwen8b_sac/issues.md #1)
-    OUT = Path(os.environ.get("SAC_EXP_DIR", HERE)); OUT.mkdir(parents=True, exist_ok=True)
-    TAG = os.environ.get("SAC_TAG", corpus)
     n_train = int(sys.argv[2]) if len(sys.argv) > 2 else 10
     n_val = int(sys.argv[3]) if len(sys.argv) > 3 else 8
     n_test = int(sys.argv[4]) if len(sys.argv) > 4 else 20
     max_hops = int(sys.argv[5]) if len(sys.argv) > 5 else 10
 
     dev = "cuda" if torch.cuda.is_available() else "cpu"
-    em = SentenceTransformer(os.environ.get("BC_EMB", common.EMB_MODEL), device=dev, trust_remote_code=True)
-    em.max_seq_length = int(os.environ.get("SAC_MAX_SEQ", 512))   # cap ctx: 8B defaults to 32K -> OOM on long in-mem docs (issues.md #5)
-    _DIM = em.get_sentence_embedding_dimension()
+    em = SentenceTransformer(common.EMB_MODEL, device=dev)
     embed = lambda t: em.encode(list(t), normalize_embeddings=True).tolist()  # noqa
     rr = sac.CrossEncoderReranker()
     gen = LLM()
     if corpus == "browsecomp":                       # use the OpenSearch-indexed BrowseComp (raw OS queries work)
-        store = sac.connect("opensearch", index=os.environ.get("BC_INDEX", "browsecomp"), dim=_DIM, hosts=[common.OS_HOST],
+        store = sac.connect("opensearch", index="browsecomp", dim=common.DIM, hosts=[common.OS_HOST],
                             text_field="text", vector_field="vector")
         from experiments.browsecomp import bc_common
         g, q = bc_common.load_golds(), bc_common.load_queries()
@@ -109,7 +103,7 @@ def main():
     judge = DiagnosticJudge(gen)                      # STAGE 2: the deep judge (tuned to the signal ceiling)
     skill = SkillLookup(embed)
     workers = int(sys.argv[6]) if len(sys.argv) > 6 else 8
-    shared = AgentMemory(path=str(OUT / f"explore_{TAG}_memory.jsonl"))   # cross-QUERY skill-wins (thread-safe)
+    shared = AgentMemory(path=str(HERE / f"explore_{corpus}_memory.jsonl"))   # cross-QUERY skill-wins (thread-safe)
     mlock = threading.Lock()
     print(f"[pipeline] corpus={corpus} train={len(train)} val={len(val)} test={len(test)} "
           f"max_hops={max_hops} workers={workers}", flush=True)
@@ -166,28 +160,14 @@ def main():
 
     # STAGE 4 — forge from raw winning queries (structure-preserving)
     reg = SkillRegistry(embedder=embed)
-    fstore = HarnessStore(path=str(OUT / f"forge_store_{TAG}_explored"))
+    fstore = HarnessStore(path=str(HERE / f"forge_store_{corpus}_explored"))
     forge = HarnessForge(fstore, reg, AgentMemory())
     name = f"{corpus}_explored_primitive"
     held_list = (test[:5] or train[:5])
-    # DENSE-DEFAULT baseline on the held set: the forged strategy must BEAT plain dense to be adopted,
-    # so explore LEARNS that dense is the right default and only keeps deep/raw-DSL structure where it helps.
-    def _dense_held(h):
-        try:
-            return _recall(h["gold_ids"], session.search(h["query"], top_k=20, mode="dense").ids())[0]
-        except Exception:
-            return 0.0
-    dense_held = float(np.mean([_dense_held(h) for h in held_list])) if held_list else 0.0
     code, ok, held_mean = forge_from_exploration(gen, session, winning, held_list, name)
-    DENSE_CODE = ("def run(session, query, top_k):\n"
-                  "    return session.search(query, top_k=top_k, mode='dense').ids()")
-    if (not ok) or held_mean <= dense_held:           # authored did NOT beat dense -> emit plain dense
-        code, ok, selected = DENSE_CODE, True, "dense-default"
-    else:
-        selected = "authored (beats dense)"
-    print(f"[stage4] dense-held={dense_held:.3f} authored-held={held_mean:.3f} -> SELECTED {selected}", flush=True)
+    print(f"[stage4] forge validation mean recall@20 over {len(held_list)} held = {held_mean:.3f}", flush=True)
     if ok:
-        forge.create_code_primitive(name, f"explored on {corpus}: {selected} reusable retriever", code)
+        forge.create_code_primitive(name, f"explored on {corpus}: structure-preserving reusable retriever", code)
     struct = "whole-query" if decomp < len(train) / 2 else "decompose"
     forge.create_skill(f"{corpus}_explored_skill", f"explored {struct} strategy for {corpus}",
                        (["hybrid", "rerank"] if struct == "whole-query" else ["decompose", "hyde", "rerank"]), combine="fuse")
@@ -224,7 +204,6 @@ def main():
     out = {"corpus": corpus, "max_hops": max_hops,
            "stage1_explore_recall@20": round(float(np.mean(ex_rec)), 3), "decomposed": f"{decomp}/{len(train)}",
            "discovered_structure": struct,
-           "stage4_dense_held@20": round(dense_held, 3), "stage4_selected": selected,
            "stage3_validate_judgestop@20": round(float(np.mean(vj)), 3), "stage3_oraclestop@20": round(float(np.mean(vo)), 3),
            "stage5_forge_on_train@20": round(float(np.mean(tr_rec)) if tr_rec else 0, 3),
            "stage7_test_recall@10": round(float(np.mean(te10)) if te10 else 0, 3),
@@ -232,7 +211,7 @@ def main():
            "artifacts": {"code_primitives": list(fstore.code_primitives), "skills": list(fstore.skills),
                          "subagents": list(fstore.subagents), "rules": fstore.learnings},
            "forged_code": code if ok else None}
-    (OUT / f"explore_pipeline_{TAG}.json").write_text(json.dumps(out, indent=2))
+    (HERE / f"explore_pipeline_{corpus}.json").write_text(json.dumps(out, indent=2))
     print(f"\n===== [{corpus}] explore pipeline =====")
     for k in ("discovered_structure", "stage1_explore_recall@20", "stage3_validate_judgestop@20",
               "stage3_oraclestop@20", "stage5_forge_on_train@20", "stage7_test_recall@10", "stage7_test_recall@20"):

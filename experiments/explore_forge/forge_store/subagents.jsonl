@@ -1,0 +1,1 @@
+{"name": "sub_fact", "when_to_use": "a single sub-fact of a multi-hop query", "plan": ["dense_lookup", "keyword_search"], "base_prompt": "", "tags": ["learned"]}

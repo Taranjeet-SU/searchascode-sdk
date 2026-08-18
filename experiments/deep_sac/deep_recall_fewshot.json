@@ -1,0 +1,204 @@
+{
+  "hotpotqa": {
+    "2hop": {
+      "n": 12,
+      "sac_deep": {
+        "recall@10": 0.7917,
+        "all_golds@10": 0.75,
+        "avg_hops": 2.0,
+        "avg_searches": 12.0,
+        "avg_in_tokens": 3216,
+        "avg_out_tokens": 963,
+        "avg_cost_usd": 0.00283,
+        "errors": 0
+      },
+      "sac_deep_explore": {
+        "recall@10": 0.7917,
+        "all_golds@10": 0.75,
+        "avg_hops": 2.0,
+        "avg_searches": 12.0,
+        "avg_in_tokens": 3575,
+        "avg_out_tokens": 985,
+        "avg_cost_usd": 0.00301,
+        "errors": 0
+      },
+      "sac_deep_fewshot": {
+        "recall@10": 0.875,
+        "all_golds@10": 0.8333,
+        "avg_hops": 1.75,
+        "avg_searches": 9.25,
+        "avg_in_tokens": 2695,
+        "avg_out_tokens": 690,
+        "avg_cost_usd": 0.00236,
+        "errors": 0
+      }
+    },
+    "3hop": {
+      "n": 12,
+      "sac_deep": {
+        "recall@10": 0.75,
+        "all_golds@10": 0.4167,
+        "avg_hops": 1.25,
+        "avg_searches": 3.75,
+        "avg_in_tokens": 1843,
+        "avg_out_tokens": 406,
+        "avg_cost_usd": 0.00139,
+        "errors": 0
+      },
+      "sac_deep_explore": {
+        "recall@10": 0.5,
+        "all_golds@10": 0.3333,
+        "avg_hops": 2.25,
+        "avg_searches": 15.17,
+        "avg_in_tokens": 4140,
+        "avg_out_tokens": 1264,
+        "avg_cost_usd": 0.00368,
+        "errors": 0
+      },
+      "sac_deep_fewshot": {
+        "recall@10": 0.75,
+        "all_golds@10": 0.4167,
+        "avg_hops": 1.25,
+        "avg_searches": 3.75,
+        "avg_in_tokens": 1575,
+        "avg_out_tokens": 372,
+        "avg_cost_usd": 0.00138,
+        "errors": 0
+      }
+    },
+    "4hop": {
+      "n": 12,
+      "sac_deep": {
+        "recall@10": 0.6667,
+        "all_golds@10": 0.3333,
+        "avg_hops": 1.0,
+        "avg_searches": 1.0,
+        "avg_in_tokens": 1347,
+        "avg_out_tokens": 201,
+        "avg_cost_usd": 0.00086,
+        "errors": 0
+      },
+      "sac_deep_explore": {
+        "recall@10": 0.4792,
+        "all_golds@10": 0.25,
+        "avg_hops": 2.25,
+        "avg_searches": 15.75,
+        "avg_in_tokens": 4194,
+        "avg_out_tokens": 1225,
+        "avg_cost_usd": 0.00364,
+        "errors": 0
+      },
+      "sac_deep_fewshot": {
+        "recall@10": 0.6667,
+        "all_golds@10": 0.3333,
+        "avg_hops": 1.5,
+        "avg_searches": 6.5,
+        "avg_in_tokens": 2382,
+        "avg_out_tokens": 630,
+        "avg_cost_usd": 0.00212,
+        "errors": 0
+      }
+    }
+  },
+  "su": {
+    "2hop": {
+      "n": 12,
+      "sac_deep": {
+        "recall@10": 0.9583,
+        "all_golds@10": 0.9167,
+        "avg_hops": 1.0,
+        "avg_searches": 1.0,
+        "avg_in_tokens": 1372,
+        "avg_out_tokens": 149,
+        "avg_cost_usd": 0.00079,
+        "errors": 0
+      },
+      "sac_deep_explore": {
+        "recall@10": 0.9583,
+        "all_golds@10": 0.9167,
+        "avg_hops": 1.0,
+        "avg_searches": 1.0,
+        "avg_in_tokens": 1617,
+        "avg_out_tokens": 171,
+        "avg_cost_usd": 0.00092,
+        "errors": 0
+      },
+      "sac_deep_fewshot": {
+        "recall@10": 0.9583,
+        "all_golds@10": 0.9167,
+        "avg_hops": 1.0,
+        "avg_searches": 1.0,
+        "avg_in_tokens": 1250,
+        "avg_out_tokens": 150,
+        "avg_cost_usd": 0.00086,
+        "errors": 0
+      }
+    },
+    "3hop": {
+      "n": 12,
+      "sac_deep": {
+        "recall@10": 0.7778,
+        "all_golds@10": 0.4167,
+        "avg_hops": 1.0,
+        "avg_searches": 1.0,
+        "avg_in_tokens": 1372,
+        "avg_out_tokens": 151,
+        "avg_cost_usd": 0.00079,
+        "errors": 0
+      },
+      "sac_deep_explore": {
+        "recall@10": 0.7778,
+        "all_golds@10": 0.4167,
+        "avg_hops": 1.0,
+        "avg_searches": 1.0,
+        "avg_in_tokens": 1617,
+        "avg_out_tokens": 173,
+        "avg_cost_usd": 0.00092,
+        "errors": 0
+      },
+      "sac_deep_fewshot": {
+        "recall@10": 0.7778,
+        "all_golds@10": 0.4167,
+        "avg_hops": 1.0,
+        "avg_searches": 1.0,
+        "avg_in_tokens": 995,
+        "avg_out_tokens": 153,
+        "avg_cost_usd": 0.00078,
+        "errors": 0
+      }
+    },
+    "4hop": {
+      "n": 12,
+      "sac_deep": {
+        "recall@10": 0.5833,
+        "all_golds@10": 0.1667,
+        "avg_hops": 1.0,
+        "avg_searches": 1.0,
+        "avg_in_tokens": 1388,
+        "avg_out_tokens": 165,
+        "avg_cost_usd": 0.00082,
+        "errors": 0
+      },
+      "sac_deep_explore": {
+        "recall@10": 0.5833,
+        "all_golds@10": 0.1667,
+        "avg_hops": 1.0,
+        "avg_searches": 1.0,
+        "avg_in_tokens": 1633,
+        "avg_out_tokens": 189,
+        "avg_cost_usd": 0.00096,
+        "errors": 0
+      },
+      "sac_deep_fewshot": {
+        "recall@10": 0.5833,
+        "all_golds@10": 0.1667,
+        "avg_hops": 1.0,
+        "avg_searches": 1.0,
+        "avg_in_tokens": 1139,
+        "avg_out_tokens": 162,
+        "avg_cost_usd": 0.00084,
+        "errors": 0
+      }
+    }
+  }
+}

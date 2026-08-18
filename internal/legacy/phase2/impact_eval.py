@@ -15,8 +15,8 @@ from sentence_transformers import SentenceTransformer
 
 import search_as_code as sac
 from phase1 import common
-from phase2 import beir
-from phase2.learned import LearnedProfile
+from internal.legacy.phase2 import beir
+from internal.legacy.phase2.learned import LearnedProfile
 
 
 def main(dataset="fiqa", n=150, split="test"):

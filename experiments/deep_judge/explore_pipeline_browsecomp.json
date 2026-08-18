@@ -1,0 +1,27 @@
+{
+  "corpus": "browsecomp",
+  "max_hops": 10,
+  "stage1_explore_recall@20": 0.089,
+  "decomposed": "39/274",
+  "discovered_structure": "whole-query",
+  "stage3_validate_judgestop@20": 0.054,
+  "stage3_oraclestop@20": 0.119,
+  "stage5_forge_on_train@20": 0,
+  "stage7_test_recall@10": 0,
+  "stage7_test_recall@20": 0,
+  "artifacts": {
+    "code_primitives": [],
+    "skills": [
+      "browsecomp_explored_skill"
+    ],
+    "subagents": [
+      "browsecomp_explored_agent"
+    ],
+    "rules": [
+      "[browsecomp] discovered structure = decompose (decomposed 1/2 in exploration)",
+      "[browsecomp] discovered structure = decompose (decomposed 6/6 in exploration)",
+      "[browsecomp] discovered structure = whole-query (decomposed 39/274 in exploration)"
+    ]
+  },
+  "forged_code": null
+}

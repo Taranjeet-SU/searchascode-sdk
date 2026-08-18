@@ -172,7 +172,7 @@ matched 5-arm multi-hop re-run: **~550 input tokens/query vs ~16,000**, 1 model 
 Reproduce with
 `python -m phase1.benchmark -n 100 --reranker cross-encoder/ms-marco-MiniLM-L-12-v2`
 (the ms-marco reranker is the one these numbers were measured with; see issues.md P1-14); full run log in
-[`benchmark_changelog.md`](benchmark_changelog.md), narrative in
+[`CHANGELOG.md`](CHANGELOG.md), narrative in
 [`phase1/RESULTS.md`](phase1/RESULTS.md).
 
 ## 🔍 Audit status — what these numbers do and don't support
@@ -253,7 +253,7 @@ Full map + placement rules: **[`STRUCTURE.md`](STRUCTURE.md)**. Quick orientatio
 | [`docs/CACHING.md`](docs/CACHING.md) | passing the SDK surface to the LLM efficiently |
 | [`docs/SELECTION.md`](docs/SELECTION.md) | exposing the SDK in the prompt + how the LLM picks the right primitive (55 sources) |
 | [`docs/RESEARCH.md`](docs/RESEARCH.md) | 150-source research base |
-| [`benchmark_changelog.md`](benchmark_changelog.md) | scalability / throughput / latency / token benchmarks |
+| [`CHANGELOG.md`](CHANGELOG.md) | scalability / throughput / latency / token benchmarks |
 | [`phase1/`](phase1/) | OpenSearch benchmark: base vs tool-calling vs SAC + live UI |
 
 ## 🖥️ Live trace UI

@@ -20,7 +20,6 @@ SU uses the user-authorized su_docs corpus. Nothing Altera-related is touched.
 from __future__ import annotations
 
 import json
-import os
 import sys
 import threading
 from concurrent.futures import ThreadPoolExecutor, as_completed
@@ -60,8 +59,7 @@ def build(corpus, embed, gen):
                 continue
             t = "" if pd.isna(r.get("title")) else str(r.get("title"))
             docs.append({"id": str(r["id"]), "text": (t + ". " + str(c)).strip()})
-        loader = sac.Session("memory", dim=int(os.environ.get("SAC_DIM", common.DIM)),
-                             embedder=embed, generator=gen.as_generator())
+        loader = sac.Session("memory", dim=common.DIM, embedder=embed, generator=gen.as_generator())
         loader.add(docs)
         store = loader.store
         rows = [json.loads(l) for l in (SU_DATA / "su_multihop_4docs.jsonl").open()]

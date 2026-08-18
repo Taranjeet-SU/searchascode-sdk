@@ -1,0 +1,1 @@
+{"name": "explored_multihop", "when_to_use": "multi-hop queries needing several docs (learned by oracle exploration on this corpus)", "retrievers": ["decompose", "dense", "keyword"], "combine": "fuse", "cost": 2, "origin": "forged", "tags": ["learned"]}
